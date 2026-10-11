@@ -372,8 +372,9 @@ account tabs as before.
   with fleet.py's own reader: never fetched on its own. A session that waits
   on a person reads `permission`, `question`, or `needs you` where it does
   not say, with how long; an open job blocked on the owner (its own words,
-  `blocked_on`, name the owner) reads how long and those words. Nothing
-  else is here: the title counts only these, and `n`/`N` jump to them.
+  `blocked_on`, name the owner) reads `owner`, how long and those words.
+  Only these two are counted in "n of N need you" and reached by `n`/`N`.
+  A job waiting on anyone else is not in this column.
   The order is who needs you, then an idle agent with no inbox watch,
   then who cannot be told, then the rest; the longest waiting first.
 - **Waiting on.** Each agent's longest-blocked job that waits on someone

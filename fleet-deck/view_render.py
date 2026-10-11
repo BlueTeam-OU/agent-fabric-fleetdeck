@@ -318,17 +318,15 @@ def attention_level(record: dict | None) -> str | None:
 
 
 def attention_words(data: dict, now: datetime.datetime) -> tuple[str, str]:
-    """(text, style) of the board's needs-you cell. The age comes before a
-    waiting job's words, which are the agent's own and get cut first."""
+    """(text, style) of the needs-you cell for fleet.py's attention level. A
+    job blocked on someone else (level waiting) is not the owner's: it is
+    drawn in the waiting-on column, and here as nothing."""
     level, reason = data.get("level"), data.get("reason")
     age = short_age(data.get("since"), now)
     if level == NEEDS_INPUT:
         word = reason if reason in NEEDS_REASONS else NEEDS_YOU
         return (f"{word} {age}" if age else word), NEEDS
-    if level == WAITS:
-        head = f"waiting {age}" if age else "waiting"
-        return (f"{head}: {reason}" if isinstance(reason, str) and reason else head), WAITING
-    if level == CLEAR:
+    if level in (WAITS, CLEAR):
         return NONE, DIM
     return "unknown", FAILED
 
@@ -378,8 +376,9 @@ def unwatched_since(a: Agent, now: datetime.datetime) -> str | None:
 # field (`waits_on` holds a message id, not a who): a job is the owner's
 # when the agent's own words name the owner, as the agent says it.
 
-# "owner" or "owner's" as a word, any case: "the owner arms #15", not "owners" or "co-owner".
-OWNER_WORD = re.compile(r"(?<![\w-])owner(?:'s)?(?![\w-])", re.IGNORECASE)
+# "owner" as a word, any case, with what may follow it ("owner's",
+# "owner-approved"): "the Owner arms #15", not "owners" or "co-owner".
+OWNER_WORD = re.compile(r"(?<![\w-])owner(?!\w)", re.IGNORECASE)
 
 
 def names_owner(job: dict) -> bool:
@@ -449,9 +448,10 @@ def needs_you_cell(a: Agent, now: datetime.datetime) -> tuple[str, str]:
     if level == OWNER_JOB:
         job = owner_job(a) or {}
         age = short_age(job.get("updated"), now)
-        # The words name the owner (that is why the job is here), so they
-        # carry the cell's meaning; the column is too narrow to repeat it.
-        return (f"{age}: {blocker_words(job)}" if age else blocker_words(job)), NEEDS
+        # A fixed word first: the agent's own, which name the owner, are what
+        # the narrow column cuts. Stale jobs keep their mark, as every cell's.
+        text = f"owner {age}: {blocker_words(job)}" if age else f"owner: {blocker_words(job)}"
+        return text, WARN if stale(a.sections.get("jobs")) else NEEDS
     if level == UNWATCHED:
         since = unwatched_since(a, now)
         age = short_age(since, now)
@@ -610,8 +610,20 @@ def board_columns(agents: list[Agent], width: int, compact: bool = False) -> lis
         widths = [login_w if c.key == "login" else c.width for c in cs]
         return 2 + sum(widths) + (len(cs) - 1)   # the marker, and one space between columns
 
+    base = list(cols)
+    dropped: list[Column] = []
     while need(cols) > width and any(c.drop for c in cols):
-        cols.remove(max((c for c in cols if c.drop), key=lambda c: c.drop))
+        gone = max((c for c in cols if c.drop), key=lambda c: c.drop)
+        cols.remove(gone)
+        dropped.append(gone)
+    # Columns tied on `drop` go one at a time, so the last one dropped can
+    # leave room for another of its tie (state and waiting on): that one
+    # comes back if it fits now. Columns of other ties stay dropped.
+    tie = dropped[-1].drop if dropped else None
+    for c in [d for d in dropped if d.drop == tie]:
+        trial = [x for x in base if x in cols or x is c]
+        if need(trial) <= width:
+            cols = trial
     # The flex column grows to JOB_MAX at most: past that, the numbers drift
     # so far from the agent's name that a row no longer reads as one.
     spare = max(0, min(width - need(cols), JOB_MAX - next(c.width for c in cols if c.flex)))

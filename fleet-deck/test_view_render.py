@@ -131,9 +131,14 @@ class Board(unittest.TestCase):
     def test_narrow_drops_the_least_needed_columns_and_keeps_agent_state_needs_you_job(self):
         for width in (60, 48):
             cols = [c.key for c, _ in vr.board_columns(fleet(), width)]
-            self.assertEqual(cols, ["login", "attention", "job"], "who needs the person outlasts the rest")
+            self.assertEqual(cols, ["login", "state", "attention", "job"] if width == 60 else ["login", "attention", "job"],
+                             "who needs the person outlasts the session's word")
             for line in texts(vr.board_lines(fleet(), {}, status(), 0, width, 20)):
                 self.assertLessEqual(len(line), width)
+        for width in range(58, 66):
+            want = ["login", "state", "attention", "job"] if width < 64 else ["login", "attention", "waiting", "job"]
+            self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), width)], want,
+                             f"at {width}, a tie on drop must not take a column that fits")
         self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), 80)][:5], ["login", "state", "attention", "waiting", "job"])
         self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), 70)], ["login", "attention", "waiting", "job"],
                          "the session's word goes before another agent's wait")
@@ -404,9 +409,8 @@ class Attention(unittest.TestCase):
         cell = lambda rec: vr.attention_cell(rec, NOW)
         self.assertEqual(cell(attention("needs_input", "permission", "2026-10-09T11:01:00Z")), ("permission 4m", vr.NEEDS))
         self.assertEqual(cell(attention("needs_input", None, None)), ("needs you", vr.NEEDS))
-        self.assertEqual(cell(attention("waiting", "owner arms #15", "2026-10-09T08:05:00Z")),
-                         ("waiting 3h: owner arms #15", vr.WAITING))
-        self.assertEqual(cell(attention("waiting")), ("waiting", vr.WAITING))
+        # A job blocked on someone else is the waiting-on column's, not this one's.
+        self.assertEqual(cell(attention("waiting", "python-dev-01's #204", "2026-10-09T08:05:00Z")), (vr.NONE, vr.DIM))
         self.assertEqual(cell(attention("none")), (vr.NONE, vr.DIM))
 
     def test_what_is_not_known_never_reads_as_nothing_waiting(self):
@@ -566,7 +570,10 @@ def blocked(login, *jobs, level="waiting"):
 class WaitingOn(unittest.TestCase):
     def test_a_blocker_naming_the_owner_needs_you_and_is_counted(self):
         a = blocked("a", ("j1", "the owner arms #15", "2026-10-09T08:05:00Z"))
-        self.assertEqual(vr.needs_you_cell(a, NOW), ("3h: the owner arms #15", vr.NEEDS))
+        self.assertEqual(vr.needs_you_cell(a, NOW), ("owner 3h: the owner arms #15", vr.NEEDS))
+        stale_jobs = blocked("s", ("j1", "the owner arms #15", "2026-10-09T08:05:00Z"))
+        stale_jobs.sections["jobs"] = dict(stale_jobs.sections["jobs"], status="stale", why="op:jobs: timed out")
+        self.assertEqual(vr.needs_you_cell(stale_jobs, NOW)[1], vr.WARN, "a stale job keeps its mark")
         self.assertEqual(vr.waiting_cell(a, NOW), (vr.NONE, vr.DIM), "said once, where it belongs")
         self.assertEqual(vr.board_title([a], NOW), "Fleet · 1 of 1 need you")
         self.assertEqual(vr.next_needing([a, blocked("b")], 1, 1), 0)
@@ -593,6 +600,8 @@ class WaitingOn(unittest.TestCase):
         self.assertEqual(vr.waiting_cell(a, NOW)[0], "5h: early")
         for words in ("co-owner sign-off", "owners of the repo"):
             self.assertIsNone(vr.owner_job(blocked("b", ("j1", words, "2026-10-09T06:00:00Z"))), words)
+        for words in ("Owner's merge", "OWNER arms #15", "owner-approved release"):
+            self.assertIsNotNone(vr.owner_job(blocked("b", ("j1", words, "2026-10-09T06:00:00Z"))), words)
 
     def test_unread_or_failed_jobs_say_so_in_the_column(self):
         a = blocked("a")
