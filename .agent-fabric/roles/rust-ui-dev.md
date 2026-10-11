@@ -58,5 +58,14 @@ resolved in that merge, keeping what the fork needs. The fork's own
 changes stay small, so a sync stays a small merge.
 
 **Never here.** herdr's agent-to-agent prompting between agents:
-GZCoord is the fleet's channel. A pane that starts an agent as the
+GZCoord is the fleet's channel. One exception, the deck's watch re-arm
+(fabric-coordinator, 2026-10-11, on rust-ui-dev-02's REPLY 01a12a7d):
+the deck controller may type one fixed text from its own code, with no
+part taken from any message, telling an agent its inbox watch is not
+running; only into a harness pane the deck itself labels, whose session
+the stream reports idle and whose screen shows Claude Code's empty
+prompt (no menu, no dialog, no typed text); only when that account has
+had no `gzcoord-inbox` process for 2 minutes or more; at most once per
+10 minutes per account; each one logged; and off unless `fleet-deck`
+is started with `--rearm-watch`. Anything wider is a new exception. A pane that starts an agent as the
 operator: every agent pane enters its login with `moveto`.
