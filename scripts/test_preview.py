@@ -33,7 +33,7 @@ class PreviewNotesTests(unittest.TestCase):
                 protocol=12,
                 notes=notes,
                 shas={
-                    "linux-x86_64": "deadbeef",
+                    "linux-x86_64": "b" * 64,
                     "linux-aarch64": "a" * 64,
                 },
                 retain=30,
@@ -48,7 +48,7 @@ class PreviewNotesTests(unittest.TestCase):
             )
             self.assertEqual(
                 data["assets"]["linux-x86_64"]["sha256"],
-                "deadbeef",
+                "b" * 64,
             )
             self.assertEqual(
                 data["assets"]["linux-aarch64"]["url"],
@@ -65,6 +65,24 @@ class PreviewNotesTests(unittest.TestCase):
                 data["builds"]["2026-06-02-abcdef123456"]["endpoint_generation"],
                 77,
             )
+
+    def test_every_preview_asset_requires_sha256(self):
+        for shas in ({}, {"linux-x86_64": "b" * 64}, {"linux-x86_64": "b" * 64, "linux-aarch64": "not-a-digest"}):
+            with self.subTest(shas=shas), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ValueError, "requires a SHA-256 digest"):
+                    preview.build_manifest(
+                        output=Path(tmp) / "preview.json",
+                        repo="BlueTeam-OU/agent-fabric-fleetdeck",
+                        tag="preview-test",
+                        build_id="test",
+                        commit="abcdef",
+                        built_at="2026-06-02T03:00:00Z",
+                        base_version="0.6.6",
+                        protocol=12,
+                        notes="test",
+                        shas=shas,
+                        retain=1,
+                    )
 
     def test_preview_range_base_advances_to_stable_tag(self):
         with (

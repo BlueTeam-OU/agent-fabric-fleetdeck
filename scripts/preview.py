@@ -115,12 +115,12 @@ def read_sha_file(path: Path | None) -> dict[str, str]:
 def asset_objects(urls: dict[str, str], shas: dict[str, str]) -> dict[str, dict[str, str]]:
     assets: dict[str, dict[str, str]] = {}
     for target in ASSET_TARGETS:
-        url = urls[target]
-        entry = {"url": url}
+        # Every preview asset carries its digest: an updater has nothing to
+        # verify a download against otherwise.
         sha = shas.get(target)
-        if sha:
-            entry["sha256"] = sha
-        assets[target] = entry
+        if not sha or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+            raise ValueError(f"{target} requires a SHA-256 digest")
+        assets[target] = {"url": urls[target], "sha256": sha}
     return assets
 
 
