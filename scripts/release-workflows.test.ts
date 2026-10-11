@@ -19,12 +19,15 @@ describe("official publishing workflow boundaries", () => {
   test("preview checks do not require a workstation Windows SDK", () => {
     const checks = preview.jobs.preflight.steps.find((step: any) => step.name === "Run checks");
     expect(checks.run.trim().split("\n")).toEqual(["just ci", "just docs-contract-test"]);
-    expect(preview.jobs.build.strategy.matrix.include).toContainEqual({
-      target: "x86_64-pc-windows-msvc",
-      os: "windows-latest",
-      name: "agent-fabric-fleetdeck-windows-x86_64.zip",
-    });
     expect(preview.jobs.publish.needs).toContain("build");
+  });
+
+  test("preview and release build Linux only: the fleet runs on Debian and Fedora", () => {
+    for (const workflow of [preview, release]) {
+      const targets = workflow.jobs.build.strategy.matrix.include.map((entry: any) => entry.target);
+      expect(targets.sort()).toEqual(["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]);
+      expect(JSON.stringify(workflow)).not.toMatch(/apple-darwin|pc-windows|macos-|windows-/);
+    }
   });
 
   test("each publishing job rechecks both actors before using credentials", () => {

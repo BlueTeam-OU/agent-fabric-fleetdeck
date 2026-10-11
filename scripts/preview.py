@@ -8,19 +8,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+# Debian and Fedora only: the preview publishes Linux binaries.
 ASSET_TARGETS = (
     "linux-x86_64",
     "linux-aarch64",
-    "macos-x86_64",
-    "macos-aarch64",
-    "windows-x86_64",
 )
 PACKAGE = "agent-fabric-fleetdeck"
 REPOSITORY = "BlueTeam-OU/agent-fabric-fleetdeck"
-EXPECTED_ASSET_NAMES = {
-    **{target: f"{PACKAGE}-{target}" for target in ASSET_TARGETS},
-    "windows-x86_64": f"{PACKAGE}-windows-x86_64.zip",
-}
+EXPECTED_ASSET_NAMES = {target: f"{PACKAGE}-{target}" for target in ASSET_TARGETS}
 ENDPOINT_PROTOCOL_SOURCE_PATH = Path("src/protocol/endpoint.rs")
 
 
@@ -120,16 +115,12 @@ def read_sha_file(path: Path | None) -> dict[str, str]:
 def asset_objects(urls: dict[str, str], shas: dict[str, str]) -> dict[str, dict[str, str]]:
     assets: dict[str, dict[str, str]] = {}
     for target in ASSET_TARGETS:
-        url = urls[target]
-        entry = {"url": url}
+        # Every preview asset carries its digest: an updater has nothing to
+        # verify a download against otherwise.
         sha = shas.get(target)
-        if sha:
-            entry["sha256"] = sha
-        if target.startswith("windows-"):
-            if not sha or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
-                raise ValueError(f"{target} requires a SHA-256 digest")
-            entry["format"] = "zip"
-        assets[target] = entry
+        if not sha or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+            raise ValueError(f"{target} requires a SHA-256 digest")
+        assets[target] = {"url": urls[target], "sha256": sha}
     return assets
 
 
