@@ -194,9 +194,10 @@ class ReleaseTests(unittest.TestCase):
         candidate = self.prepare()
         release.validate_diff(hotfix, candidate, "1.0.1")
         # Reproduce a developer git config with diff prefixes disabled; the
-        # explicit --default-prefix must keep the patch applicable to git apply -p1.
+        # explicit --src-prefix/--dst-prefix (which Debian 12's git 2.39 knows,
+        # unlike --default-prefix) must keep the patch applicable to git apply -p1.
         self.git("config", "diff.noprefix", "true")
-        patch = subprocess.check_output(["git", "diff", "--binary", "--default-prefix", hotfix, candidate])
+        patch = subprocess.check_output(["git", "diff", "--binary", "--src-prefix=a/", "--dst-prefix=b/", hotfix, candidate])
         self.git("checkout", "-q", "master")
         subprocess.run(["git", "apply", "--3way", "--index"], input=patch, check=True)
         self.assertEqual(Path("src/feature.rs").read_text(), "b and c\n")
