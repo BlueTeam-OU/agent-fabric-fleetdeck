@@ -11,6 +11,7 @@ from fabric_deck import (
     BOARD_DIR,
     PANE_MAP_REFRESH_S,
     NEW_WORKSPACE,
+    UNBOUND,
     RESEND_AFTER_S,
     RESTORE_SETTLE_S,
     Account,
@@ -267,13 +268,16 @@ class Harness:
     """A deck over a FakeHerdr, with the stream's records, a /proc tree and
     the record of what was shown as plain values a test sets."""
 
-    def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False):
+    def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False,
+                 roles=None, catalog=None):
         self.herdr = herdr or FakeHerdr()
         self.records = {}
         self.tree, self.argvs = {}, {}
         self.store = None if befores is None else dict(befores)
         self.logs = []
         self.logins = list(logins)
+        # moveto --list's role per login: rust-ui-dev unless a test says.
+        self.roles = dict(roles or {})
         self.instance = SERVER
         self.wall = NOW
 
@@ -282,11 +286,11 @@ class Harness:
 
         self.deck = Deck(
             herdr=self.herdr,
-            accounts=lambda: [Account(login, "rust-ui-dev") for login in self.logins],
+            accounts=lambda: [Account(login, self.roles.get(login, "rust-ui-dev")) for login in self.logins],
             records=self.records,
             modes=modes,
             cwd="/c",
-            catalog=None,
+            catalog=catalog,
             parents=lambda: dict(self.tree),
             argv=lambda pid: self.argvs.get(pid, []),
             load=lambda: None if self.store is None else dict(self.store),
@@ -426,6 +430,19 @@ class FleetTab(unittest.TestCase):
 
 
 class Restore(unittest.TestCase):
+    def test_an_account_with_no_role_bound_gets_its_tab_in_its_roles_workspace_once_bound(self):
+        h = Harness(roles={"ui": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertFalse(any(c[:2] == ("tab", "create") for c in h.herdr.calls), "no tab in New for good")
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        self.assertEqual(sum("no role bound yet" in line for line in h.logs), 1, "said once")
+        h.roles["ui"] = "rust-ui-dev"
+        h.deck.follow(h.at(2 * PANE_MAP_REFRESH_S + 2))
+        create = next(c for c in h.herdr.calls if c[:2] == ("tab", "create"))
+        workspace = create[create.index("--workspace") + 1]
+        labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
+        self.assertEqual(labels[workspace], "Rust Developer")
+
     def test_a_new_account_gets_a_three_pane_tab_its_harness_waiting_for_the_decision(self):
         h = Harness()
         h.deck.restore(0)

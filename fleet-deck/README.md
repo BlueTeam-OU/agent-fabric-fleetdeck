@@ -159,7 +159,10 @@ gets its tab within 10 s. One whose restore failed part-way is restored
 again whole within 10 s, and is followed in nothing until then.
 - **The tab.** A missing tab is created. On a host's first setup the role
   catalogue's group seeds the workspace; afterwards a new account goes to
-  its group's workspace if one still exists, else to `New`.
+  its group's workspace if one still exists, else to `New`. An account
+  whose role is not bound yet (`moveto --list` shows `-`) gets no tab until
+  it is: FleetDeck cannot move a tab to another workspace, so one made then
+  would stay in `New`. The deck's log says so once.
 - **A milestone-1 tab** (one unlabelled pane) keeps that pane as the
   harness and gains the shell and status panes.
 - **A tab split by hand** with no `harness` pane is left alone, and the
