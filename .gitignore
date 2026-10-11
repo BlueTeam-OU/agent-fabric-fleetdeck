@@ -28,3 +28,7 @@ __pycache__/
 
 /.wrangler/
 **/.wrangler/
+
+# Written by cargo metadata inside the vendored crate, which is outside
+# the workspace (CI's cargo-machete runs it); never committed.
+/vendor/portable-pty/Cargo.lock

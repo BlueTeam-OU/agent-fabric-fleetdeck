@@ -129,3 +129,21 @@ On Windows, also run:
 ```sh
 cargo test --manifest-path vendor/portable-pty/Cargo.toml windows_environment_rejects_malformed_entries
 ```
+
+## Manifest-only: cargo-machete exceptions
+
+status: active
+
+local files:
+
+- `vendor/portable-pty/Cargo.toml` (the `[package.metadata.cargo-machete]`
+  table at its end)
+
+reason: CI's supply chain job runs cargo-machete over this crate, which is
+excluded from the workspace so that `cargo metadata` can read it. It names
+two upstream dependencies unused: `serde`, a false positive (the code
+`serde_derive` generates under `serde_support` names it), and `bitflags`
+(Windows only), which upstream's source does not use. Both stay as vendored.
+No source or dependency changes, so there is no patch file.
+
+re-vendoring: append the table again, or cargo-machete names both.
