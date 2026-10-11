@@ -493,6 +493,54 @@ class Attention(unittest.TestCase):
         self.assertIn("  waiting on something not a person, since unknown", texts(vr.attention_body(attention("waiting"), NOW, 100)))
 
 
+def watched(login, state="idle", level="none", running=False, missing="2026-10-09T11:02:00Z"):
+    """An agent as the views see it: states, attention, and the derived watch record."""
+    return vr.Agent(login, "develop-qzapp", "agent", {
+        "states": ok("op:states", "2026-10-09T11:00:22Z", {"state": state, "sessions": [{"session": "s", "state": state}]}),
+        "attention": attention(level),
+        "watch": ok("derived:proc", "2026-10-09T11:04:50Z",
+                    {"running": running, "missing_since": missing if running is False else None}),
+    })
+
+
+class InboxWatch(unittest.TestCase):
+    def test_an_idle_agent_without_a_watch_for_two_minutes_is_flagged_with_how_long(self):
+        self.assertEqual(vr.needs_you_cell(watched("a"), NOW), ("inbox off 3m", vr.WAITING))
+        long = watched("a", missing="2026-10-08T12:00:00Z")
+        row = texts([vr.board_row(long, vr.board_columns([long], 140), False, NOW)])[0]
+        self.assertIn("inbox off 23h", row, "the age is never the cut")
+
+    def test_a_short_gap_an_unknown_watch_or_a_busy_session_is_not_flagged(self):
+        self.assertEqual(vr.needs_you_cell(watched("a", missing="2026-10-09T11:04:00Z"), NOW), (vr.NONE, vr.DIM))
+        self.assertEqual(vr.needs_you_cell(watched("a", running=None), NOW), (vr.NONE, vr.DIM),
+                         "a watch fleet.py does not report is unknown, never missing")
+        self.assertEqual(vr.needs_you_cell(watched("a", running=True), NOW), (vr.NONE, vr.DIM))
+        stale = watched("a", running=None)
+        stale.sections["watch"]["data"]["missing_since"] = "2026-10-09T11:00:00Z"
+        self.assertIsNone(vr.unwatched_since(stale, NOW), "an earlier missing read does not flag an unknown watch")
+        self.assertIsNone(vr.unwatched_since(watched("a", state="working"), NOW))
+
+    def test_what_asks_for_the_person_wins_over_the_flag(self):
+        text, style = vr.needs_you_cell(watched("a", level="needs_input"), NOW)
+        self.assertEqual((text, style), (vr.NEEDS_YOU, vr.NEEDS))
+
+    def test_the_flag_ranks_after_waiting_and_before_what_is_not_known(self):
+        agents = [agent("clear", attention("none")), agent("unknown", None), watched("unwatched"),
+                  agent("waits", attention("waiting", "x", "2026-10-09T09:00:00Z"))]
+        self.assertEqual([a.login for a in vr.board_order(agents, True, NOW)],
+                         ["waits", "unwatched", "unknown", "clear"])
+
+    def test_the_title_counts_the_flagged(self):
+        self.assertEqual(vr.board_title([watched("a"), watched("b", running=True)], NOW),
+                         "Fleet · 0 of 2 need you, 1 no inbox watch")
+
+    def test_the_agent_view_says_running_missing_since_or_unknown(self):
+        lines = lambda a: texts(vr.agent_body(a, vr.Samples(), NOW, 100))
+        self.assertIn("  inbox watch running", lines(watched("a", running=True)))
+        self.assertIn("  inbox watch not running, missing since 11:02Z (3 min ago)", lines(watched("a")))
+        self.assertIn("  inbox watch unknown", lines(watched("a", running=None)))
+
+
 class Values(unittest.TestCase):
     def test_clock_and_age(self):
         self.assertEqual(vr.clock("2026-10-09T10:57:46Z", NOW), "10:57Z")

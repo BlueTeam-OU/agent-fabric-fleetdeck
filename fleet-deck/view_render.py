@@ -332,6 +332,46 @@ def attention_words(data: dict, now: datetime.datetime) -> tuple[str, str]:
     return "unknown", FAILED
 
 
+# ── the inbox watch ──────────────────────────────────────────────────
+#
+# An idle agent whose account runs no `gzcoord-inbox` watch reads no message
+# until a person wakes it. The board flags it; nothing is typed into its
+# session (the owner, 2026-10-11). The fact is fleet.py's proc data
+# `inbox_watch` (true, false, or null where it could not be read); the view
+# derives a `watch` record with the time the watch was first read missing.
+
+# A watch missing for less than this is a session between two runs of it.
+UNWATCHED_AFTER_S = 120
+UNWATCHED = "no inbox watch"
+# The board cell's word: short enough that "inbox off 23h" and a stale mark
+# fit the needs-you column whole; the title and the agent view say it in full.
+UNWATCHED_CELL = "inbox off"
+
+
+def unwatched_since(a: Agent, now: datetime.datetime) -> str | None:
+    """When an idle agent's inbox watch was first read missing, once that is
+    UNWATCHED_AFTER_S ago and nothing else asks for the person; else None.
+    A watch not known (null, unread) is never flagged as missing."""
+    if (ok_data(a.sections.get("states")) or {}).get("state") != "idle":
+        return None
+    if attention_level(a.sections.get("attention")) != CLEAR:
+        return None
+    data = ok_data(a.sections.get("watch")) or {}
+    since = data.get("missing_since")
+    first = parse_utc(since)
+    if data.get("running") is not False or first is None:
+        return None
+    return since if (now - first).total_seconds() >= UNWATCHED_AFTER_S else None
+
+
+def needs_you_cell(a: Agent, now: datetime.datetime) -> tuple[str, str]:
+    since = unwatched_since(a, now)
+    if since is not None:
+        age = short_age(since, now)
+        return (f"{UNWATCHED_CELL} {age}" if age else UNWATCHED_CELL), WAITING
+    return attention_cell(a.sections.get("attention"), now)
+
+
 def attention_cell(record: dict | None, now: datetime.datetime) -> tuple[str, str]:
     text, style = cell(record, lambda d: attention_words(d, now)[0])
     if style == NORMAL:
@@ -340,11 +380,12 @@ def attention_cell(record: dict | None, now: datetime.datetime) -> tuple[str, st
 
 
 # The needs-you order: who waits on the person, then on something else,
-# then what is not known (it may be either), then the rest.
-RANK = {NEEDS_INPUT: 0, WAITS: 1, None: 2, CLEAR: 3}
+# then an idle agent with no inbox watch, then what is not known (it may be
+# any of them), then the rest.
+RANK = {NEEDS_INPUT: 0, WAITS: 1, UNWATCHED: 2, None: 3, CLEAR: 4}
 
 
-def board_order(agents: list[Agent], needs_first: bool) -> list[Agent]:
+def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime | None = None) -> list[Agent]:
     """The board's rows: the registry's order, or the needs-you order, the
     longest waiting first within a level (an unknown since last). Stable,
     so equals keep the registry's order."""
@@ -355,6 +396,9 @@ def board_order(agents: list[Agent], needs_first: bool) -> list[Agent]:
         rec = a.sections.get("attention")
         level = attention_level(rec)
         since = (ok_data(rec) or {}).get("since") if level in (NEEDS_INPUT, WAITS) else None
+        unwatched = unwatched_since(a, now) if now is not None else None
+        if unwatched is not None:
+            level, since = UNWATCHED, unwatched
         known = parse_utc(since)
         return RANK[level], 0 if known else 1, known.isoformat() if known else ""
     return sorted(agents, key=key)
@@ -450,7 +494,7 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
     return {
         "login": (a.login, BOLD),
         "state": cell(s.get("states"), state_word),
-        "attention": attention_cell(s.get("attention"), now),
+        "attention": needs_you_cell(a, now),
         "job": cell(jobs, lambda d: job_label(current_job(open_jobs(d)))),
         "jobs": jobs_cell,
         "rss": cell(s.get("proc"), lambda d: size_kb(d.get("rss_kb"))),
@@ -631,11 +675,13 @@ def oldest_at(records) -> str | None:
     return min(stamps)[1] if stamps else None
 
 
-def board_title(agents: list[Agent]) -> str:
+def board_title(agents: list[Agent], now: datetime.datetime | None = None) -> str:
     # Short: on a narrow pane the status line's live/paused comes after it.
     need, unknown = needs_count(agents)
     title = f"Fleet · {need} of {len(agents)} need you"
-    return title + (f", {unknown} not known" if unknown else "")
+    unwatched = sum(1 for a in agents if now is not None and unwatched_since(a, now) is not None)
+    return (title + (f", {unknown} not known" if unknown else "")
+            + (f", {unwatched} {UNWATCHED}" if unwatched else ""))
 
 
 def board_keys(needs_first: bool, compact: bool) -> str:
@@ -652,7 +698,7 @@ def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
     footer: host memory, what was not read, a notice, the keys. `agents`
     are in the order drawn (board_order)."""
     cols = board_columns(agents, width, compact)
-    top = [status_line(board_title(agents), st, width), board_header(cols)]
+    top = [status_line(board_title(agents, st.now), st, width), board_header(cols)]
     footer = [host_line(h, r) for h, r in sorted(hosts.items())]
     footer += failure_lines(agents, BOARD_SECTIONS, width, limit=3, now=st.now)
     if notice:
@@ -801,7 +847,7 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
         out.append([("  waits on ", DIM), (fit(f"{j.get('blocked_on')} ({j.get('id')})", max(0, width - 11)), WARN)])
     out.append([("", NORMAL)])
 
-    out += attention_body(s.get("attention"), now, width)
+    out += attention_body(s.get("attention"), now, width, watch_line(a, now))
 
     proc = s.get("proc")
     out.append(heading("Resources", proc, now))
@@ -882,7 +928,22 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
     return [clip(line, width) for line in out]
 
 
-def attention_body(rec: dict | None, now: datetime.datetime, width: int) -> list[Line]:
+def watch_line(a: Agent, now: datetime.datetime) -> Line:
+    """The agent view's word on the inbox watch: running, missing and since
+    when, or not known (fleet.py does not report it, or could not read it)."""
+    data = ok_data(a.sections.get("watch")) or {}
+    running, since = data.get("running"), data.get("missing_since")
+    if running is True:
+        return [("  inbox watch running", NORMAL)]
+    if running is False and parse_utc(since):
+        flagged = unwatched_since(a, now) is not None
+        return [("  inbox watch not running", WAITING if flagged else NORMAL),
+                (f", missing since {clock(since, now)} ({age(since, now)})", NORMAL)]
+    return [("  inbox watch unknown", DIM)]
+
+
+def attention_body(rec: dict | None, now: datetime.datetime, width: int,
+                   watch: Line | None = None) -> list[Line]:
     """The attention panel: whether the person is wanted and since when,
     and the session's context and output, each unknown where fleet.py could
     not tell. A waiting job's words are above, under Session."""
@@ -918,6 +979,8 @@ def attention_body(rec: dict | None, now: datetime.datetime, width: int) -> list
             out.append([("  output quiet: nothing written in 30 s, which is not idle", NORMAL)])
         else:
             out.append([("  output unknown", DIM)])
+    if watch is not None:
+        out.append(watch)
     out.append([("", NORMAL)])
     return out
 
