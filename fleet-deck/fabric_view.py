@@ -201,12 +201,15 @@ class Store:
         # been missing, as far as this view has read.
         self.watch_missing: dict[str, str] = {}
 
-    def put(self, section: str, records: dict[str, dict]) -> None:
+    def put(self, section: str, records: dict[str, dict], fetched: bool = True) -> None:
+        """Records to show. Only a fetched proc read times a missing watch:
+        fleet.py's cache, put at open, may be days old, and the watch may
+        have run any number of times since it was written."""
         self.records.setdefault(section, {}).update(records)
-        if section == "proc":
+        if section == "proc" and fetched:
             for login, rec in records.items():
                 running = inbox_watch(rec)
-                if running is False and isinstance(rec.get("at"), str):
+                if running is False and vr.parse_utc(rec.get("at")) is not None:
                     self.watch_missing.setdefault(login, rec["at"])
                 elif running is True:
                     self.watch_missing.pop(login, None)
@@ -538,7 +541,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         if s in fleet.SECTIONS and derived(fleet, s):
             continue    # no cache of its own: told from its inputs' records
         try:
-            store.put(s, cached_records(fleet, s, env))
+            store.put(s, cached_records(fleet, s, env), fetched=False)
         except Exception:  # noqa: BLE001 — a cache that cannot be read is an empty one
             pass
     results: "queue.Queue[Result]" = queue.Queue()

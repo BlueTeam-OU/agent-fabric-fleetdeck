@@ -381,13 +381,14 @@ account tabs as before.
   has its word beside it.
 - **No inbox watch.** An agent whose session is idle, that nothing else
   has asked for the person, and whose account has run no `gzcoord-inbox`
-  watch (`--until-delivery` or `--wait`) for 2 minutes or more reads
+  watch (as fleet.py's `inbox_watch` reports it) for 2 minutes or more reads
   `inbox off` and how long, in cyan, after who waits and before who cannot
   be told; the title counts it. It reads no message until a person wakes
   it: the deck types nothing into a session. The fact is fleet.py's proc
   `inbox_watch`; while fleet.py does not report it, every watch is unknown
   and nothing is flagged. The 2 minutes count from the first proc read
-  this view made that found the watch missing.
+  this view fetched that found the watch missing, never from fleet.py's
+  cache; a stale session state is not idle.
 - **Compare.** A value that was not read has no bar and reads `…` or `?`,
   and is listed after the rest; the footer says why. "Jobs done" counts
   jobs closed as done, never dropped: fleet.py's `done_total`. Without

@@ -343,8 +343,9 @@ def attention_words(data: dict, now: datetime.datetime) -> tuple[str, str]:
 # A watch missing for less than this is a session between two runs of it.
 UNWATCHED_AFTER_S = 120
 UNWATCHED = "no inbox watch"
-# The board cell's word: short enough that "inbox off 23h" and a stale mark
-# fit the needs-you column whole; the title and the agent view say it in full.
+# The board cell's word: short enough that "inbox off 23h" fits the needs-you
+# column whole; the title and the agent view say it in full. The flag is
+# never stale: only an ok proc read can raise it.
 UNWATCHED_CELL = "inbox off"
 
 
@@ -352,7 +353,9 @@ def unwatched_since(a: Agent, now: datetime.datetime) -> str | None:
     """When an idle agent's inbox watch was first read missing, once that is
     UNWATCHED_AFTER_S ago and nothing else asks for the person; else None.
     A watch not known (null, unread) is never flagged as missing."""
-    if (ok_data(a.sections.get("states")) or {}).get("state") != "idle":
+    states = a.sections.get("states")
+    # A stale idle may be over: the last good value is not the session now.
+    if not isinstance(states, dict) or states.get("status") != "ok" or (ok_data(states) or {}).get("state") != "idle":
         return None
     if attention_level(a.sections.get("attention")) != CLEAR:
         return None
@@ -385,7 +388,7 @@ def attention_cell(record: dict | None, now: datetime.datetime) -> tuple[str, st
 RANK = {NEEDS_INPUT: 0, WAITS: 1, UNWATCHED: 2, None: 3, CLEAR: 4}
 
 
-def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime | None = None) -> list[Agent]:
+def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime) -> list[Agent]:
     """The board's rows: the registry's order, or the needs-you order, the
     longest waiting first within a level (an unknown since last). Stable,
     so equals keep the registry's order."""
@@ -396,7 +399,7 @@ def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime |
         rec = a.sections.get("attention")
         level = attention_level(rec)
         since = (ok_data(rec) or {}).get("since") if level in (NEEDS_INPUT, WAITS) else None
-        unwatched = unwatched_since(a, now) if now is not None else None
+        unwatched = unwatched_since(a, now)
         if unwatched is not None:
             level, since = UNWATCHED, unwatched
         known = parse_utc(since)
@@ -675,11 +678,11 @@ def oldest_at(records) -> str | None:
     return min(stamps)[1] if stamps else None
 
 
-def board_title(agents: list[Agent], now: datetime.datetime | None = None) -> str:
+def board_title(agents: list[Agent], now: datetime.datetime) -> str:
     # Short: on a narrow pane the status line's live/paused comes after it.
     need, unknown = needs_count(agents)
     title = f"Fleet · {need} of {len(agents)} need you"
-    unwatched = sum(1 for a in agents if now is not None and unwatched_since(a, now) is not None)
+    unwatched = sum(1 for a in agents if unwatched_since(a, now) is not None)
     return (title + (f", {unknown} not known" if unknown else "")
             + (f", {unwatched} {UNWATCHED}" if unwatched else ""))
 

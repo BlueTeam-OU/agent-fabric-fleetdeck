@@ -426,9 +426,9 @@ class Attention(unittest.TestCase):
                   agent("asks-late", attention("needs_input", "question", "2026-10-09T11:00:00Z")),
                   agent("asks-unknown", attention("needs_input")),
                   agent("asks-early", attention("needs_input", "permission", "2026-10-09T10:00:00Z"))]
-        self.assertEqual([a.login for a in vr.board_order(agents, True)],
+        self.assertEqual([a.login for a in vr.board_order(agents, True, NOW)],
                          ["asks-early", "asks-late", "asks-unknown", "waits", "unread", "clear"])
-        self.assertEqual(vr.board_order(agents, False), agents)
+        self.assertEqual(vr.board_order(agents, False, NOW), agents)
 
     def test_n_and_N_go_round_the_agents_that_need_the_person(self):
         agents = [agent("a", attention("needs_input")), agent("b", attention("waiting")),
@@ -440,8 +440,8 @@ class Attention(unittest.TestCase):
 
     def test_the_title_counts_who_needs_you_and_what_is_not_known(self):
         agents = [agent("a", attention("needs_input")), agent("b", None), agent("c", attention("none"))]
-        self.assertEqual(vr.board_title(agents), "Fleet · 1 of 3 need you, 1 not known")
-        self.assertEqual(vr.board_title(agents[2:]), "Fleet · 0 of 1 need you")
+        self.assertEqual(vr.board_title(agents, NOW), "Fleet · 1 of 3 need you, 1 not known")
+        self.assertEqual(vr.board_title(agents[2:], NOW), "Fleet · 0 of 1 need you")
 
     def test_compact_keeps_who_whether_and_what_and_the_keys_say_what_they_change_to(self):
         self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), 140, compact=True)], ["login", "attention", "job"])
@@ -519,6 +519,11 @@ class InboxWatch(unittest.TestCase):
         stale.sections["watch"]["data"]["missing_since"] = "2026-10-09T11:00:00Z"
         self.assertIsNone(vr.unwatched_since(stale, NOW), "an earlier missing read does not flag an unknown watch")
         self.assertIsNone(vr.unwatched_since(watched("a", state="working"), NOW))
+
+    def test_a_stale_idle_is_not_idle(self):
+        a = watched("a")
+        a.sections["states"] = dict(a.sections["states"], status="stale", why="op:states: timed out")
+        self.assertIsNone(vr.unwatched_since(a, NOW))
 
     def test_what_asks_for_the_person_wins_over_the_flag(self):
         text, style = vr.needs_you_cell(watched("a", level="needs_input"), NOW)
