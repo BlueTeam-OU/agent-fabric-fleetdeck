@@ -51,6 +51,13 @@ with every command spelled `agent-fabric-fleetdeck`.
 - **No `herdr` alias.** FleetDeck installs no `herdr` command. On a host
   that also has Herdr, an alias would hide one product behind the other's
   name.
+- **One exception, asked for by name.** `fleet-deck/install --from-herdr`
+  hands the panes of a running server of *this fork's* pre-rename `herdr`
+  build to FleetDeck ("Moving an existing installation"). It first checks
+  that `herdr` is the fork's build, without contacting any server: the
+  fork's default config template carries `socket_access`, and upstream
+  Herdr's does not. An upstream Herdr is refused before anything is built.
+  Without the flag, the installer only names a `herdr` it finds on PATH.
 
 ## Kept from Herdr on purpose
 
@@ -74,13 +81,18 @@ The fork ran as `herdr`, and it still does until FleetDeck is installed.
 Nothing is moved until you ask.
 
 **On the fleet's operator login, one command does the steps below.** Run
-`<checkout>/fleet-deck/install` from an ordinary terminal (`--dry-run`
-first). It builds and installs the binary, copies the herdr config when
-FleetDeck has none, and links `fleet-deck`. Then it asks the running
-`herdr` server, through `herdr`'s own CLI, to hand its panes to
+`<checkout>/fleet-deck/install --from-herdr` from an ordinary terminal
+(`--dry-run` first). It builds and installs the binary, copies the herdr
+config when FleetDeck has none, and links `fleet-deck`. Then, once it has
+checked that `herdr` is this fork's build, it asks the running `herdr`
+server, through `herdr`'s own CLI, to hand its panes to
 `agent-fabric-fleetdeck` by live handoff, so no agent is stopped
-(`fleet-deck/README.md`). This is the one place FleetDeck takes over a
-Herdr server, and only because you ran it.
+(`fleet-deck/README.md`).
+
+The agents keep running, but each one's integration hooks still report to
+herdr's socket through `herdr` (a pane's environment is fixed when it
+starts). Their state falls back to screen detection until each agent is
+restarted under FleetDeck. Keep `herdr` installed until then.
 
 By hand, as the login that runs it:
 
@@ -103,13 +115,16 @@ By hand, as the login that runs it:
 4. **Start FleetDeck.** `fleet-deck` starts `agent-fabric-fleetdeck`'s
    server and rebuilds the agent tabs. A `herdr` server that is still
    running keeps its panes until you stop it with `herdr server stop`.
-   The two do not see each other.
+   The two do not see each other; only `--from-herdr` above moves panes
+   from one to the other.
 5. **Rename the variables in your own scripts.** Installer variables are
    `AGENT_FABRIC_FLEETDECK_*` (table above). A script that runs `herdr …`
    against the fork now runs `agent-fabric-fleetdeck …`.
 
-Sessions are not migrated. Copying `session.json` across is possible while
-no server runs, but the fleet deck rebuilds its tabs anyway.
+By hand, sessions are not migrated. Copying `session.json` across is
+possible while no server runs, but the fleet deck rebuilds its tabs anyway.
+The installer's `--from-herdr` handoff is the one path that moves a running
+session.
 
 ## Known limits
 

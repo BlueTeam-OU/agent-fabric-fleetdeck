@@ -56,17 +56,21 @@ fleet-deck start     # starts what is missing, without attaching
   inside a pane (a FleetDeck popup is the operator's own and may).
 - **Install**, and after each update of this checkout, run this on the
   operator's login, from an ordinary terminal (not a pane):
-  `<this checkout>/fleet-deck/install` (`--dry-run` shows the steps).
+  `<this checkout>/fleet-deck/install` (`--dry-run` shows the steps; add
+  `--from-herdr` the first time, while the fork still runs as `herdr`).
   - It builds `agent-fabric-fleetdeck` once (`--jobs 4` by default), installs it
     into `~/.local/bin` by rename, and links `fleet-deck` beside it.
   - If FleetDeck has no config yet, it copies `~/.config/herdr/config.toml`
     across. An existing config is never overwritten.
   - It then hands the running server's panes to the new binary by live
-    handoff. A running FleetDeck server is handed off by its own CLI. A
-    running `herdr` server from before the rename is handed off by `herdr`'s
-    CLI, and its panes keep running under FleetDeck's directories.
-    Afterwards, attach with `agent-fabric-fleetdeck` and run
-    `fleet-deck restart`.
+    handoff. A running FleetDeck server is handed off by its own CLI. With
+    `--from-herdr`, a running `herdr` server of this fork from before the
+    rename is handed off by `herdr`'s CLI, once the installer has checked
+    that `herdr` is the fork's build (an upstream Herdr is refused), and its
+    panes keep running under FleetDeck's directories. Afterwards, attach
+    with `agent-fabric-fleetdeck` and run `fleet-deck restart`. Agents moved
+    from `herdr` report state through their hooks again only once each is
+    restarted under FleetDeck; keep `herdr` installed until then.
   - It never stops a server or a pane. A refused or failed handoff leaves the
     old server and every pane as they were.
 
