@@ -1949,8 +1949,10 @@ mod windows_records {
         chord("altgr+shift", true, false, false, true),
     ];
 
-    /// The letter a `vkNN` key name stands for (VK_A..VK_Z), as the client
-    /// resolves a Ctrl chord to its base-layout key; other names have none.
+    /// The letter a `vkNN` key name stands for (VK_A..VK_Z): a Ctrl chord that
+    /// types no character reaches the client as that letter (it falls back to
+    /// the virtual key). Other names have none. A layout where Ctrl+Alt+letter
+    /// types a character would need its own mapping here.
     fn letter_of_virtual_key(name: &str) -> Option<String> {
         let vk = u8::from_str_radix(name.strip_prefix("vk")?, 16).ok()?;
         (0x41..=0x5a)

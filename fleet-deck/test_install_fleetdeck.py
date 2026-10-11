@@ -85,6 +85,9 @@ class PlanTest(unittest.TestCase):
             self.assertEqual(commands(steps), [])
             self.assertTrue(steps[0].refuse)
             self.assertNotIn("no server is running", steps[0].say)
+            self.assertNotIn("None", steps[0].say)
+        self.assertIn("no `herdr` on PATH", no_herdr[0].say)
+        self.assertIn("gave no answer", unanswered[0].say)
 
     def test_without_the_flag_a_herdr_on_path_is_only_named(self):
         steps = steps_for(herdr_on_path=HERDR)

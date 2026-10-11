@@ -58,9 +58,11 @@ ci-tests filter='all()':
 fleet-deck-test:
     cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view test_install_fleetdeck
 
+# Unquoted, so the line reads the same under sh and cmd.exe.
 [macos]
+[windows]
 fleet-deck-test:
-    @echo "fleet-deck-test: not run; the Fleet Deck runs only on Linux (fleet-deck/README.md)"
+    @echo fleet-deck-test: not run, the Fleet Deck runs only on Linux, see fleet-deck/README.md
 
 # Download the Windows SDK once (requires xwin; prompts for Microsoft's SDK license)
 [unix]
