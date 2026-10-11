@@ -37,7 +37,7 @@ class UnixInstallerTests(unittest.TestCase):
             "uname",
             """#!/bin/sh
 case "$1" in
-  -s) echo Linux ;;
+  -s) echo "${FAKE_UNAME_KERNEL:-Linux}" ;;
   -m) echo x86_64 ;;
   -o)
     [ "${FAKE_UNAME_OS_UNAVAILABLE:-}" != "1" ] || exit 1
@@ -171,6 +171,17 @@ exec {sha256sum} "$@"
         self.assertIn("Android/Termux is not currently supported", result.stderr)
         self.assertFalse((self.root / "curl-called").exists())
         self.assertEqual(installed.read_bytes(), b"existing-herdr\n")
+
+    def test_macos_is_rejected_before_any_download(self) -> None:
+        result = self._run_installer(
+            self.expected_sha256,
+            extra_env={"FAKE_UNAME_KERNEL": "Darwin"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("built for Linux only", result.stderr)
+        self.assertFalse((self.root / "curl-called").exists())
+        self.assertFalse((self.install_dir / "agent-fabric-fleetdeck").exists())
 
     def test_missing_uname_operating_system_flag_keeps_linux_supported(self) -> None:
         result = self._run_installer(

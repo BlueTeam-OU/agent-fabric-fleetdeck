@@ -30,6 +30,19 @@ describe("official publishing workflow boundaries", () => {
     }
   });
 
+  test("a release never commits Herdr's README over FleetDeck's", () => {
+    const steps = release.jobs["update-latest-json"].steps;
+    const publish = steps.find((step: any) => step.name === "Publish tagged documentation and update distribution manifest").run;
+    const lines = publish.split("\n").map((line: string) => line.trim());
+    const copied = lines.indexOf('node scripts/docs/versions.mjs publish "$GITHUB_REF_NAME"');
+    expect(copied).toBeGreaterThanOrEqual(0);
+    expect(lines.indexOf("git checkout -- README.md README.zh-CN.md")).toBeGreaterThan(copied);
+    const commit = steps.find((step: any) => step.name === "Commit release distribution").run;
+    const staged = commit.split("\n").filter((line: string) => line.trim().startsWith("git add"));
+    expect(staged.length).toBeGreaterThan(0);
+    for (const line of staged) expect(line).not.toMatch(/README/);
+  });
+
   test("each publishing job rechecks both actors before using credentials", () => {
     for (const [workflow, names] of [
       [preview, ["preflight", "publish"]],

@@ -20,9 +20,15 @@ ALLOWED_TYPES = {
 SUBJECT_RE = re.compile(r"^(?P<kind>[a-z]+)(?:\([^)]+\))?!?:\s+\S")
 
 
-def git_subjects(rev_range: str) -> list[str]:
+def git_subjects(rev_range: str, cwd: Path | None = None) -> list[str]:
+    # Merge commits are skipped: every PR lands as a merge commit
+    # ("Merge pull request #N from ..."), which the fork's remit requires,
+    # so a push to master would otherwise always fail. The commits a merge
+    # brings in are still checked.
     output = subprocess.check_output(
-        ["git", "log", "--pretty=format:%s", rev_range], text=True
+        ["git", "log", "--no-merges", "--pretty=format:%s", rev_range],
+        text=True,
+        cwd=cwd,
     ).strip()
     return [line.strip() for line in output.splitlines() if line.strip()]
 

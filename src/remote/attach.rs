@@ -1314,16 +1314,17 @@ fn prepare_discovered_remote_herdr(
     live_handoff_enabled: bool,
     require_surface_interest: bool,
 ) -> io::Result<PreparedRemoteHerdr> {
+    let override_binary = remote_binary_override_path()?;
     if remote_herdr.platform.is_windows() {
         return prepare_windows_remote_herdr(
             ssh,
             remote_herdr,
             candidates,
+            override_binary,
             live_handoff_enabled,
             require_surface_interest,
         );
     }
-    let override_binary = remote_binary_override_path()?;
 
     if override_binary.is_none() {
         for candidate in candidates {
@@ -1348,6 +1349,13 @@ fn prepare_discovered_remote_herdr(
         }
     }
 
+    let offered_source = offered_install_source(
+        &ssh.destination(),
+        &remote_herdr.platform,
+        override_binary.as_deref(),
+        local_binary_can_seed_remote(&remote_herdr.platform),
+    )?;
+
     let mut stop_after_install_approved = false;
     if let Some(status_probe_herdr) = candidates.first().or_else(|| {
         remote_binary_exists(ssh, &remote_herdr)
@@ -1362,11 +1370,7 @@ fn prepare_discovered_remote_herdr(
         )?;
     }
     if !stop_after_install_approved {
-        confirm_remote_install(
-            &ssh.destination(),
-            &remote_herdr,
-            &install_source_description(&remote_herdr.platform, override_binary.as_deref()),
-        )?;
+        confirm_remote_install(&ssh.destination(), &remote_herdr, &offered_source)?;
     }
     let source = resolve_install_source(&remote_herdr.platform, override_binary)?;
     let install_result = ssh.install_herdr(&remote_herdr, &source.path);
@@ -1413,10 +1417,10 @@ fn prepare_windows_remote_herdr(
     ssh: &RemoteSsh,
     remote_herdr: RemoteHerdr,
     candidates: &[RemoteHerdr],
+    override_package: Option<PathBuf>,
     live_handoff_enabled: bool,
     require_surface_interest: bool,
 ) -> io::Result<PreparedRemoteHerdr> {
-    let override_package = remote_binary_override_path()?;
     let custom_package = override_package.is_some();
     if !custom_package {
         for candidate in candidates {
@@ -1433,6 +1437,14 @@ fn prepare_windows_remote_herdr(
         }
     }
 
+    // Never the local binary: Windows needs the whole package.
+    let offered_source = offered_install_source(
+        &ssh.destination(),
+        &remote_herdr.platform,
+        override_package.as_deref(),
+        false,
+    )?;
+
     let stop_after_install_approved = if let Some(candidate) = candidates.first() {
         confirm_remote_install_with_running_server(
             ssh,
@@ -1444,11 +1456,7 @@ fn prepare_windows_remote_herdr(
         false
     };
     if !stop_after_install_approved {
-        confirm_remote_install(
-            &ssh.destination(),
-            &remote_herdr,
-            &install_source_description(&remote_herdr.platform, override_package.as_deref()),
-        )?;
+        confirm_remote_install(&ssh.destination(), &remote_herdr, &offered_source)?;
     }
     // Windows needs the complete package, including its app-local ConPTY runtime.
     let source = match override_package {
@@ -1849,33 +1857,39 @@ fn remote_binary_override_path() -> io::Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
-fn install_source_description(platform: &RemotePlatform, override_binary: Option<&Path>) -> String {
-    install_source_description_for(
-        platform,
-        override_binary,
-        local_binary_can_seed_remote(platform),
-    )
-}
-
-fn install_source_description_for(
+/// What the install prompt names as the binary's source. The only way to that
+/// text, so a remote whose platform no FleetDeck release is built for is
+/// refused here, before the person is asked to approve a download that would
+/// fail only after they said yes.
+fn offered_install_source(
+    destination: &str,
     platform: &RemotePlatform,
     override_binary: Option<&Path>,
     local_binary_can_seed_remote: bool,
-) -> String {
+) -> io::Result<String> {
     if let Some(path) = override_binary {
-        return format!("{REMOTE_BINARY_ENV_VAR} ({})", path.display());
+        return Ok(format!("{REMOTE_BINARY_ENV_VAR} ({})", path.display()));
     }
 
     if local_binary_can_seed_remote {
-        "the current local agent-fabric-fleetdeck binary".to_string()
-    } else {
-        format!(
-            "the {} {} asset for {}",
-            current_version(),
-            current_channel(),
-            platform.asset_key()
-        )
+        return Ok("the current local agent-fabric-fleetdeck binary".to_string());
     }
+
+    let asset_key = platform.asset_key();
+    if !crate::update::RELEASED_TARGETS.contains(&asset_key.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "{destination} is {asset_key}, and FleetDeck releases are built for Linux only ({}); install an agent-fabric-fleetdeck built for {asset_key} on that host, or set {REMOTE_BINARY_ENV_VAR} to one",
+                crate::update::RELEASED_TARGETS.join(", ")
+            ),
+        ));
+    }
+    Ok(format!(
+        "the {} {} asset for {asset_key}",
+        current_version(),
+        current_channel(),
+    ))
 }
 
 fn resolve_install_source(
@@ -1886,11 +1900,8 @@ fn resolve_install_source(
         return Ok(InstallSource::persistent(path));
     }
 
-    if *platform == RemotePlatform::local() {
-        let path = std::env::current_exe()?;
-        if !crate::update::is_package_manager_managed_exe_path(&path) {
-            return Ok(InstallSource::persistent(path));
-        }
+    if local_binary_can_seed_remote(platform) {
+        return Ok(InstallSource::persistent(std::env::current_exe()?));
     }
 
     download_release_asset(platform)
@@ -5547,41 +5558,118 @@ function Get-Process {
         )));
     }
 
+    fn macos_aarch64() -> RemotePlatform {
+        RemotePlatform::from_uname("Darwin", "arm64").expect("macOS")
+    }
+
     #[test]
-    fn install_source_description_uses_override_binary() {
+    fn offered_install_source_names_the_override_binary() {
         let platform = RemotePlatform {
             os: "linux",
             arch: "aarch64",
         };
         assert_eq!(
-            install_source_description_for(&platform, Some(Path::new("/tmp/herdr-aarch64")), false),
+            offered_install_source(
+                "example",
+                &platform,
+                Some(Path::new("/tmp/herdr-aarch64")),
+                false
+            )
+            .expect("an override is always offered"),
             "HERDR_REMOTE_BINARY (/tmp/herdr-aarch64)"
         );
     }
 
     #[test]
-    fn install_source_description_uses_local_binary_when_allowed() {
-        let platform = RemotePlatform::local();
-
+    fn offered_install_source_names_the_local_binary_when_it_can_seed() {
         assert_eq!(
-            install_source_description_for(&platform, None, true),
+            offered_install_source("example", &RemotePlatform::local(), None, true)
+                .expect("a seedable local binary is offered"),
             "the current local agent-fabric-fleetdeck binary"
         );
     }
 
     #[test]
-    fn install_source_description_uses_release_asset_when_local_binary_cannot_seed_remote() {
-        let platform = RemotePlatform::local();
+    fn offered_install_source_names_the_release_asset_of_a_linux_remote() {
+        for arch in ["x86_64", "aarch64"] {
+            let platform = RemotePlatform { os: "linux", arch };
+            assert_eq!(
+                offered_install_source("example", &platform, None, false)
+                    .expect("a released target"),
+                format!(
+                    "the {} {} asset for linux-{arch}",
+                    current_version(),
+                    current_channel(),
+                )
+            );
+        }
+    }
 
-        assert_eq!(
-            install_source_description_for(&platform, None, false),
-            format!(
-                "the {} {} asset for {}",
-                current_version(),
-                current_channel(),
-                platform.asset_key()
-            )
+    #[test]
+    fn a_macos_remote_needing_a_release_asset_is_refused_naming_its_platform_and_the_way_round() {
+        let err = offered_install_source("mac (session default)", &macos_aarch64(), None, false)
+            .expect_err("no macOS release exists");
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("mac (session default) is macos-aarch64,"),
+            "{message}"
         );
+        assert!(message.contains("linux-x86_64, linux-aarch64"), "{message}");
+        assert!(message.contains(REMOTE_BINARY_ENV_VAR), "{message}");
+    }
+
+    #[test]
+    fn a_macos_remote_is_still_offered_an_override_or_a_seeding_local_binary() {
+        offered_install_source("mac", &macos_aarch64(), Some(Path::new("/tmp/fd")), false)
+            .expect("an override needs no release");
+        offered_install_source("mac", &macos_aarch64(), None, true)
+            .expect("a macOS client seeds a macOS remote");
+    }
+
+    fn windows_remote() -> RemoteHerdr {
+        RemoteHerdr::for_platform(RemotePlatform {
+            os: "windows",
+            arch: "x86_64",
+        })
+    }
+
+    #[test]
+    fn a_windows_remote_is_refused_before_the_install_is_offered() {
+        // No candidate and no override: the next step would ask the person to
+        // approve a download of an asset no release carries.
+        let ssh = RemoteSsh::new_noninteractive("win".into());
+        let err = match prepare_windows_remote_herdr(&ssh, windows_remote(), &[], None, false, true)
+        {
+            Ok(_) => panic!("a Windows remote with nothing installed was prepared"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
+        assert!(err.to_string().contains("is windows-x86_64,"), "{err}");
+    }
+
+    #[test]
+    fn a_windows_remote_with_an_override_package_reaches_the_install_prompt() {
+        // The prompt itself cannot be answered here (stdin is not a
+        // terminal), so it fails, but not with the refusal.
+        assert!(
+            !std::io::IsTerminal::is_terminal(&io::stdin()),
+            "this test needs a stdin that is not a terminal (nextest gives one; with cargo test, add </dev/null)"
+        );
+        let ssh = RemoteSsh::new_noninteractive("win".into());
+        let override_package = Some(PathBuf::from("/tmp/fd-windows.zip"));
+        let err = match prepare_windows_remote_herdr(
+            &ssh,
+            windows_remote(),
+            &[],
+            override_package,
+            false,
+            true,
+        ) {
+            Ok(_) => panic!("an install was approved without a terminal"),
+            Err(err) => err,
+        };
+        assert_ne!(err.kind(), io::ErrorKind::Unsupported, "{err}");
     }
 
     #[test]

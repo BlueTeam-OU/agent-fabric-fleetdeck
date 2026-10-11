@@ -205,6 +205,30 @@ class ConventionalCommitTests(unittest.TestCase):
                 "fix(update): switch channel",
             )
 
+    def test_range_skips_merge_commits_but_checks_what_they_bring_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def git(*args: str) -> str:
+                return subprocess.check_output(
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=repo, text=True,
+                ).strip()
+
+            git("init", "-q", "-b", "master")
+            git("commit", "-q", "--allow-empty", "-m", "chore: base")
+            base = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "topic")
+            git("commit", "-q", "--allow-empty", "-m", "fix: on the topic")
+            git("commit", "-q", "--allow-empty", "-m", "not conventional")
+            git("checkout", "-q", "master")
+            git("merge", "-q", "--no-ff", "-m", "Merge pull request #1 from x/topic", "topic")
+            head = git("rev-parse", "HEAD")
+
+            subjects = conventional_commits.git_subjects(f"{base}..{head}", cwd=repo)
+            self.assertEqual(sorted(subjects), ["fix: on the topic", "not conventional"])
+
 
 if __name__ == "__main__":
     unittest.main()

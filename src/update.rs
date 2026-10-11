@@ -2483,6 +2483,14 @@ fn homebrew_release_notes_body_from_manifest(
     format!("### Changed\n- v{version} is available through Homebrew.")
 }
 
+/// What a FleetDeck release ships, by the owner's rule of 2026-10-11:
+/// Debian and Fedora, x86-64 and aarch64, and nothing else (the release
+/// workflow, .github/workflows/release.yml, names each asset
+/// `agent-fabric-fleetdeck-<target>`). The macOS and Windows code inherited
+/// from upstream stays, compile-gated, so an upstream sync stays a small
+/// merge; what a person meets must not offer a download that cannot exist.
+pub(crate) const RELEASED_TARGETS: [&str; 2] = ["linux-x86_64", "linux-aarch64"];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -4017,12 +4025,6 @@ mod tests {
         let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
         assert_release_manifest(&json, &manifest);
     }
-
-    /// What a FleetDeck release ships, by the owner's rule of 2026-10-11:
-    /// Debian and Fedora, x86-64 and aarch64, and nothing else (the release
-    /// workflow, .github/workflows/release.yml, names each asset
-    /// `agent-fabric-fleetdeck-<target>`).
-    const RELEASED_TARGETS: [&str; 2] = ["linux-x86_64", "linux-aarch64"];
 
     #[test]
     fn checked_in_distribution_manifest_matches_update_schema() {

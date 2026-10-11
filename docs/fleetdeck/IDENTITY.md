@@ -16,14 +16,27 @@ versioning policy and the fork's provenance are in
 | Default worktree directory | `~/.herdr/worktrees` | `~/.agent-fabric-fleetdeck/worktrees` |
 | Update manifests | `herdr.dev/latest.json`, `/preview.json` | `distribution/latest.json`, `distribution/preview.json` on this repository's `master`, read through `raw.githubusercontent.com` |
 | Agent-detection catalog | `herdr.dev/agent-detection/` | `distribution/agent-detection/` on this repository's `master` |
-| Release assets | `herdr-<os>-<arch>`, `herdr-windows-x86_64.zip` (holding `herdr.exe`) | `agent-fabric-fleetdeck-<os>-<arch>`, `agent-fabric-fleetdeck-windows-x86_64.zip` (holding `agent-fabric-fleetdeck.exe`) |
+| Platforms released | Linux, macOS, Windows | Linux only: Debian and Fedora (the owner, 2026-10-11) |
+| Release assets | `herdr-<os>-<arch>`, `herdr-windows-x86_64.zip` (holding `herdr.exe`) | `agent-fabric-fleetdeck-linux-x86_64`, `agent-fabric-fleetdeck-linux-aarch64` |
 | Release tags | Herdr's `v*`, `preview-*` (kept, never released here) | `v<version>` and `preview-<date>-<sha>` whose source is the `agent-fabric-fleetdeck` package |
-| Installer variables | `HERDR_INSTALL_DIR`, `HERDR_HOME`, `HERDR_CHANNEL`, `HERDR_MANIFEST_URL`, `HERDR_EXPECTED_BUILD_ID`, `HERDR_INSTALLER_URL` (install.cmd) | `AGENT_FABRIC_FLEETDECK_INSTALL_DIR`, `…_HOME`, `…_CHANNEL`, `…_MANIFEST_URL`, `…_EXPECTED_BUILD_ID`, `…_INSTALLER_URL` |
-| Windows install | `%LOCALAPPDATA%\Programs\Herdr`, `~\.herdr` | `%LOCALAPPDATA%\Programs\FleetDeck`, `~\.agent-fabric-fleetdeck` |
+| Installer variables | `HERDR_INSTALL_DIR`, `HERDR_HOME`, `HERDR_CHANNEL`, `HERDR_MANIFEST_URL`, `HERDR_EXPECTED_BUILD_ID`, `HERDR_INSTALLER_URL` (install.cmd) | `AGENT_FABRIC_FLEETDECK_INSTALL_DIR` (`install.sh`) |
 | Remote (`--remote`) binary | `herdr`, installed to `~/.local/bin/herdr` | `agent-fabric-fleetdeck`, installed to `~/.local/bin/agent-fabric-fleetdeck` |
 | Nix flake output | `herdr` | `agent-fabric-fleetdeck` |
 | Log target (`HERDR_LOG` filter) | `herdr=debug` | `agent_fabric_fleetdeck=debug` (the crate's name; the default is `=info`) |
-| Windows notification identity | `Herdr.Desktop` and its activator CLSID | `AgentFabric.FleetDeck` with its own CLSID |
+
+Herdr's macOS and Windows code is kept, compile-gated, so upstream
+imports stay small; it is renamed the same way (the Windows install
+directory is `%LOCALAPPDATA%\Programs\FleetDeck`, the notification
+identity `AgentFabric.FleetDeck`, and the Windows installers
+`install.ps1` and `install.cmd` read `AGENT_FABRIC_FLEETDECK_HOME`,
+`…_CHANNEL`, `…_MANIFEST_URL`, `…_EXPECTED_BUILD_ID` and
+`…_INSTALLER_URL`). No FleetDeck build for either is published, and no
+FleetDeck document links those installers. `install.sh` refuses macOS
+before it downloads anything. `--remote` refuses a Windows host that has
+no FleetDeck installed and no `HERDR_REMOTE_BINARY`, and a macOS host
+likewise unless the client can copy itself there: a macOS build of the
+host's architecture that Homebrew, mise or Nix did not install. Both
+refusals come before it offers an install.
 
 Help, usage lines, errors and notices name the command
 `agent-fabric-fleetdeck` and the product FleetDeck. `--version` prints
@@ -69,7 +82,7 @@ with every command spelled `agent-fabric-fleetdeck`.
 | File names inside FleetDeck's own directories: `herdr.sock`, `herdr-client.sock`, `herdr-server.log`, `herdr-client.log` | They are already separated by the directory. Renaming them would break nothing and would gain nothing. |
 | Config keys and values (`[ui.toast.herdr]`, right-click target `herdr`) | Config compatibility. A Herdr `config.toml` is valid FleetDeck config. |
 | Build-time `HERDR_BUILD_CHANNEL`, `HERDR_BUILD_ID`, `HERDR_BUILD_COMMIT`; test and debug variables | Internal to the build and the tests. No person sets them. |
-| `skills/herdr/SKILL.md`, `docs/next/`, `docs/preview/`, `docs/versions/`, `CHANGELOG.md`, `README.zh-CN.md`, `AGENTS.md`, `CONTRIBUTING.md` | Herdr's documentation and history. They describe Herdr, which is why the command is rewritten at print time and this file exists. Keeping them verbatim keeps upstream imports small. |
+| `skills/herdr/SKILL.md`, `docs/next/`, `docs/preview/`, `docs/versions/`, `CHANGELOG.md`, `README.zh-CN.md`, `AGENTS.md`, `CONTRIBUTING.md` | Herdr's documentation and history. They describe Herdr, with its macOS and Windows installs, Homebrew and `herdr.dev` links, which is why the command is rewritten at print time and this file exists. Keeping them verbatim keeps upstream imports small. FleetDeck has no website and publishes none of them: its documentation is `README.md`, `docs/fleetdeck/`, `fleet-deck/README.md`, `--help` and `--skill`. |
 | The Homebrew and mise detection in `src/update.rs` | It only matches a binary named `herdr` in a Homebrew Cellar or a mise install. FleetDeck has no formula or mise backend, so a FleetDeck binary never matches and the code is inert. No FleetDeck formula is implied. |
 | `vendor/`, `crates/ghostty-vt`, copyright and licence notices | Third-party and upstream attribution. |
 | `distribution/agent-guide.md` | Herdr's setup guide for agents, which Herdr publishes. It is no longer linked from FleetDeck's help. |
@@ -131,16 +144,11 @@ session.
 - **Plugin version gates** (`min_herdr_version`) compare against
   FleetDeck's version. A plugin that needs a Herdr feature FleetDeck has not
   imported can pass the gate.
-- **Windows** is checked by CI on every pull request: the build, clippy
-  and tests (`check (windows-latest)`), and the ConPTY package with its
-  PowerShell 5.1 installer and repair test (`Windows ConPTY package`).
-  The ARM64 installer test (`Windows ARM64 installer`) runs only on pull
-  requests that change `distribution/install.ps1`,
-  `distribution/preview.json` or the test itself, and it skips with a
-  warning until a FleetDeck preview with a Windows asset is published.
-  Nobody has run FleetDeck by hand on a Windows desktop; before a release
-  ships Windows assets, it must be checked there.
-- **Herdr's documentation** in `docs/` still says `herdr`.
+- **macOS and Windows** are neither built nor tested by CI, which runs on
+  Linux only. Nothing checks that the kept code still builds there; a
+  build from source on either is untested.
+- **Herdr's documentation** in `docs/` still says `herdr`, and teaches
+  installs FleetDeck does not offer.
 
 ## Setup that is not in the repository
 
