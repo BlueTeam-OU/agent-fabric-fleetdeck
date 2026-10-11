@@ -32,6 +32,14 @@ STALE_AFTER_S = 2 * 600
 LIVE_ORDER = ("blocked", "working", "idle")
 LIVE_STATES = frozenset(LIVE_ORDER)
 
+# Why a blocked session waits on a person, as agent-fabric's session-state
+# hook records it on the stream (fleet-deck-attention s3, agent-fabric #188):
+# a permission prompt, or an input or elicitation dialog.
+REASONS = frozenset({"permission", "question"})
+# The word for a session that waits on a person and does not say why (an
+# older hook): the level itself, never a guessed reason.
+NEEDS_YOU = "needs you"
+
 # moveto's modes, as the last argument of its `sudo ... enter` hand-off.
 WAIT, RESUME, WATCH, PLAIN = "--wait", "--resume", "--watch", ""
 MODES = frozenset({WAIT, RESUME, WATCH})
@@ -71,6 +79,9 @@ class Live:
     count: int
     state: str  # the live session state that most wants a person, or "none"
     fresh: bool
+    # Why that session waits on a person, while it is blocked and the stream
+    # says; None otherwise.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,13 +129,18 @@ SAME_SESSION_S = 5
 
 
 def live_from_record(sessions, ts_age_s: float | None) -> Live | None:
-    """`sessions` are (session, state) pairs of the newest record; None when
-    the account has no record."""
+    """`sessions` are (session, state) or (session, state, reason) tuples of
+    the newest record; None when the account has no record. The reason is
+    the first blocked session's, as fleet.py takes the first listed among
+    equals for the attention it derives, so the tab and the board agree."""
     if ts_age_s is None:
         return None
-    states = [state for _, state in sessions if state in LIVE_STATES]
-    top = next((s for s in LIVE_ORDER if s in states), "none")
-    return Live(count=len(states), state=top, fresh=ts_age_s <= STALE_AFTER_S)
+    live = [s for s in sessions if s[1] in LIVE_STATES]
+    top = next((state for state in LIVE_ORDER if any(s[1] == state for s in live)), "none")
+    first_blocked = next((s for s in live if s[1] == "blocked"), None)
+    reason = first_blocked[2] if first_blocked is not None and len(first_blocked) > 2 else None
+    return Live(count=len(live), state=top, fresh=ts_age_s <= STALE_AFTER_S,
+                reason=reason if reason in REASONS else None)
 
 
 def step(track: Track, seen: Seen, live: Live | None, now: float) -> tuple[Track, Arm | None]:
@@ -319,6 +335,10 @@ def display(track: Track, live: Live | None) -> Shown:
     if track.state is State.RUNNING:
         # herdr's own agent name and the session's state; a harness whose
         # session has not posted yet is starting: working.
+        if live.count >= 1 and live.state == "blocked":
+            # herdr marks blocked by colour alone in the default agent row;
+            # the word says the person is wanted, and for what.
+            return Shown("blocked", live.reason or NEEDS_YOU)
         return Shown(live.state if live.count >= 1 else "working", "")
     if track.state is State.STARTING:
         return Shown("working", "restoring")

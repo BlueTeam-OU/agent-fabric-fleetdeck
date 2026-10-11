@@ -34,6 +34,7 @@ from deck_tabs import (
     MODES,
     PANE_ROLES,
     PLAIN,
+    REASONS,
     RESTORE_WAIT_S,
     RESUME,
     SHELL,
@@ -165,6 +166,9 @@ class Session:
     session: str
     state: str
     since: str
+    # Why a blocked session waits on a person (deck_tabs.REASONS), when the
+    # stream says; any other value is read as not said.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,7 +202,8 @@ def parse_state_line(line: str) -> StateRecord | None:
         return None
     rows = row.get("sessions")
     sessions = tuple(
-        Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""))
+        Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""),
+                s.get("reason") if s.get("reason") in REASONS else None)
         for s in (rows if isinstance(rows, list) else [])
         if isinstance(s, dict) and isinstance(s.get("session"), str) and s["session"]
     )
@@ -251,7 +256,7 @@ def live_of(record: StateRecord | None, now_utc: datetime.datetime) -> Live | No
     if posted is None:
         return None
     age = (now_utc - posted).total_seconds()
-    return live_from_record([(s.session, s.state) for s in record.sessions], age)
+    return live_from_record([(s.session, s.state, s.reason) for s in record.sessions], age)
 
 
 def printable(text: str) -> str:

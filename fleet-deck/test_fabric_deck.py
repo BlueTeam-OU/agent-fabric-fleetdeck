@@ -105,6 +105,14 @@ class Records(unittest.TestCase):
         self.assertEqual(odd.sessions, (Session("s1", "unknown", ""),))
         self.assertEqual(parse_state_line('{"address":"h/ui",%s,"sessions":{}}' % ts).sessions, ())
 
+    def test_a_blocked_sessions_reason_is_kept_only_as_a_known_word(self):
+        ts = '"ts":"2026-10-08T05:00:00Z"'
+        parsed = parse_state_line(
+            '{"address":"h/ui",%s,"sessions":[{"session":"s1","state":"blocked","reason":"permission"},'
+            '{"session":"s2","state":"blocked","reason":"\\u001b[2J"},{"session":"s3","state":"blocked","reason":7}]}' % ts
+        )
+        self.assertEqual([x.reason for x in parsed.sessions], ["permission", None, None])
+
     def test_the_streams_no_record_row_is_no_record(self):
         # ctl.mjs stateRow for an account with nothing on the channel: no ts.
         row = ('{"address":"develop-qzapp/ui","role":"rust-ui-dev","state":"unknown",'
