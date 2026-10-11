@@ -212,17 +212,13 @@ jobs:
         run: |
           set -euo pipefail
           cp target/${{ matrix.target }}/release/agent-fabric-fleetdeck ${{ matrix.name }}
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            file ${{ matrix.name }} > BUILD_INFO.txt
-            ldd ${{ matrix.name }} > LDD_INFO.txt 2>&1 || true
-            cat LDD_INFO.txt >> BUILD_INFO.txt
-            grep -Eq "statically linked|not a dynamic executable" LDD_INFO.txt
-            if nm -u ${{ matrix.name }} 2>/dev/null | grep -E '(__cxa|GLIBCXX|CXXABI|_ZSt)'; then
-              echo "error: Linux artifact has unresolved C++ runtime symbols" >&2
-              exit 1
-            fi
-          else
-            file ${{ matrix.name }} > BUILD_INFO.txt
+          file ${{ matrix.name }} > BUILD_INFO.txt
+          ldd ${{ matrix.name }} > LDD_INFO.txt 2>&1 || true
+          cat LDD_INFO.txt >> BUILD_INFO.txt
+          grep -Eq "statically linked|not a dynamic executable" LDD_INFO.txt
+          if nm -u ${{ matrix.name }} 2>/dev/null | grep -E '(__cxa|GLIBCXX|CXXABI|_ZSt)'; then
+            echo "error: Linux artifact has unresolved C++ runtime symbols" >&2
+            exit 1
           fi
           python3 - <<'PY' | tee ${{ matrix.name }}.sha256
           import hashlib, pathlib
@@ -297,7 +293,7 @@ jobs:
           result = {}
           for path in pathlib.Path('artifacts').glob('agent-fabric-fleetdeck-*/*.sha256'):
               digest, name = path.read_text().split()[:2]
-              target = name.removeprefix('agent-fabric-fleetdeck-').removesuffix('.exe').removesuffix('.zip')
+              target = name.removeprefix('agent-fabric-fleetdeck-')
               result[target] = digest
           pathlib.Path('preview-sha256.json').write_text(json.dumps(result, indent=2) + '\n')
           PY

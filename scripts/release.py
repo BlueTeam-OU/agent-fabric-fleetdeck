@@ -79,7 +79,7 @@ def published_preview(tag: str, repo: str) -> str:
         or payload.get("immutable") is not True
         or not ASSETS.issubset({asset["name"] for asset in payload.get("assets", [])})
     ):
-        raise ValueError(f"{tag} must be an immutable published preview with all five assets")
+        raise ValueError(f"{tag} must be an immutable published preview with all of its {len(ASSETS)} assets")
     # Resolve the remote tag too: a local tag must not substitute different source.
     remote = git("ls-remote", f"https://github.com/{repo}.git", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
     refs = dict(line.split()[::-1] for line in remote.splitlines())
