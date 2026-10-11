@@ -181,6 +181,54 @@ class AttentionWithFleetPy(unittest.TestCase):
         self.assertEqual(fv.vr.attention_cell(a.sections["attention"], now), (fv.vr.NOT_READ, fv.vr.FAILED))
 
 
+class InboxWatch(unittest.TestCase):
+    def proc(self, at, watch="absent"):
+        data = {"rss_kb": 1}
+        if watch != "absent":
+            data["inbox_watch"] = watch
+        return {"status": "ok", "src": "proc-local", "at": at, "data": data}
+
+    def test_the_store_keeps_when_the_watch_was_first_read_missing_until_it_runs(self):
+        store = fv.Store()
+        store.put("proc", {"a": self.proc("2026-10-09T11:00:00Z", False)})
+        store.put("proc", {"a": self.proc("2026-10-09T11:01:00Z", False)})
+        self.assertEqual(store.watch_missing["a"], "2026-10-09T11:00:00Z")
+        store.put("proc", {"a": self.proc("2026-10-09T11:02:00Z", None)})
+        self.assertEqual(store.watch_missing["a"], "2026-10-09T11:00:00Z", "an unread watch does not reset it")
+        store.put("proc", {"a": self.proc("2026-10-09T11:03:00Z", True)})
+        self.assertNotIn("a", store.watch_missing)
+
+    def test_the_cache_put_at_open_times_nothing_the_first_fetched_read_does(self):
+        store = fv.Store()
+        store.put("proc", {"a": self.proc("2026-10-09T12:00:00Z", False)}, fetched=False)
+        self.assertNotIn("a", store.watch_missing, "a cache may be days old")
+        store.put("proc", {"a": self.proc("2026-10-11T11:59:55Z", False)})
+        self.assertEqual(store.watch_missing["a"], "2026-10-11T11:59:55Z")
+
+    def test_a_read_time_that_is_not_one_is_not_kept(self):
+        store = fv.Store()
+        store.put("proc", {"a": self.proc("yesterday", False)})
+        self.assertNotIn("a", store.watch_missing)
+
+    def test_agents_of_draws_the_watch_from_proc_and_the_missing_time(self):
+        from types import SimpleNamespace
+        store = fv.Store()
+        store.put("proc", {"a": self.proc("2026-10-09T11:00:00Z", False)})
+        placements = {"a": SimpleNamespace(host="h", kind="agent")}
+        shown = fv.agents_of(placements, store, ("states", "proc"), {})[0]
+        self.assertEqual(shown.sections["watch"]["data"],
+                         {"running": False, "missing_since": "2026-10-09T11:00:00Z"})
+        self.assertNotIn("watch", fv.agents_of(placements, store, ("states",), {})[0].sections)
+
+    def test_a_fleet_py_without_inbox_watch_reads_unknown(self):
+        self.assertIsNone(fv.inbox_watch(self.proc("t")))
+        self.assertIsNone(fv.inbox_watch({"status": "failed", "why": "x"}))
+        self.assertIsNone(fv.watch_of(None, None))
+        rec = fv.watch_of(self.proc("t", False), "2026-10-09T11:00:00Z")
+        self.assertEqual(rec["data"], {"running": False, "missing_since": "2026-10-09T11:00:00Z"})
+        self.assertEqual(fv.watch_of(self.proc("t"), "x")["data"], {"running": None, "missing_since": None})
+
+
 class Navigation(unittest.TestCase):
     def test_the_fleet_tabs_screens_are_a_key_away_and_esc_leaves_prs_for_where_it_was(self):
         nav = fv.Nav(fv.BOARD)

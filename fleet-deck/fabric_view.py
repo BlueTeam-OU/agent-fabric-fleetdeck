@@ -196,9 +196,23 @@ class Store:
     def __init__(self) -> None:
         self.records: dict[str, dict[str, dict]] = {}
         self.fetched = False
+        # login -> the read time (`at`) of the first proc record that found
+        # no inbox watch, since the watch was last seen: how long it has
+        # been missing, as far as this view has read.
+        self.watch_missing: dict[str, str] = {}
 
-    def put(self, section: str, records: dict[str, dict]) -> None:
+    def put(self, section: str, records: dict[str, dict], fetched: bool = True) -> None:
+        """Records to show. Only a fetched proc read times a missing watch:
+        fleet.py's cache, put at open, may be days old, and the watch may
+        have run any number of times since it was written."""
         self.records.setdefault(section, {}).update(records)
+        if section == "proc" and fetched:
+            for login, rec in records.items():
+                running = inbox_watch(rec)
+                if running is False and vr.parse_utc(rec.get("at")) is not None:
+                    self.watch_missing.setdefault(login, rec["at"])
+                elif running is True:
+                    self.watch_missing.pop(login, None)
 
     def get(self, section: str, login: str) -> dict | None:
         return self.records.get(section, {}).get(login)
@@ -297,6 +311,25 @@ class View:
             self.whys.pop(result.section, None)
 
 
+def inbox_watch(rec: dict | None) -> bool | None:
+    """fleet.py's proc `inbox_watch`: True, False, or None where it is not
+    reported (a fleet.py from before it, a stale or failed read, null)."""
+    if not isinstance(rec, dict) or rec.get("status") != "ok":
+        return None
+    value = (vr.ok_data(rec) or {}).get("inbox_watch")
+    return value if isinstance(value, bool) else None
+
+
+def watch_of(proc: dict | None, missing_since: str | None) -> dict | None:
+    """The `watch` record the views draw: the proc read's answer and, when
+    missing, since when. None while proc is unread."""
+    if proc is None:
+        return None
+    running = inbox_watch(proc)
+    return {"status": "ok", "src": "derived:proc", "at": proc.get("at"),
+            "data": {"running": running, "missing_since": missing_since if running is False else None}}
+
+
 def derived(fleet, section: str) -> bool:
     spec = fleet.SECTIONS.get(section)
     return bool(getattr(spec, "derives", ()))
@@ -336,6 +369,8 @@ def agents_of(placements, store: Store, sections: tuple[str, ...], whys: dict[st
         for s, reader in DERIVE.items():
             if s in sections and s not in whys and fleet is not None:
                 recs[s] = reader(fleet, recs, now)
+        if "proc" in sections:
+            recs["watch"] = watch_of(recs.get("proc"), store.watch_missing.get(login))
         out.append(vr.Agent(login, a.host, a.kind, recs))
     return out
 
@@ -506,7 +541,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         if s in fleet.SECTIONS and derived(fleet, s):
             continue    # no cache of its own: told from its inputs' records
         try:
-            store.put(s, cached_records(fleet, s, env))
+            store.put(s, cached_records(fleet, s, env), fetched=False)
         except Exception:  # noqa: BLE001 — a cache that cannot be read is an empty one
             pass
     results: "queue.Queue[Result]" = queue.Queue()
@@ -604,7 +639,7 @@ def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool |
     sections, so its status line says how old what it shows is."""
     agents = agents_of(placements, store, view.sections, view.whys, view.fleet)
     if nav.screen == BOARD:
-        nav.place(vr.board_order(agents, nav.needs_first))
+        nav.place(vr.board_order(agents, nav.needs_first, datetime.datetime.now(datetime.timezone.utc)))
         return vr.board_lines(nav.rows, host_records(agents), status(view, agents, focused, store),
                               nav.selected, width, height, nav.needs_first, nav.compact, nav.notice)
     if nav.screen == COMPARE:

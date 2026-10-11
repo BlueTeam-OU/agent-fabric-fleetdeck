@@ -354,7 +354,7 @@ account tabs as before.
 | **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, open jobs; largest first, scaled to the largest, labelled "operational, not a score" |
 | **plan** | `p` in the fleet tab | each plan the coordinator keeps (agent-fabric ADR-047): its steps on a board by state (to do, queued, doing, delivered, done, and any other state), and a Gantt below |
 | **PRs** | a popup (`fabric.fleet.prs`), or `P` in the fleet tab | in-flight pull requests by owner, each with its repository, title, work and fix commits, checks, review, armed, and the gate's verdict |
-| **agent** | an overlay over the tab it was opened from, or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
+| **agent** | an overlay over the tab it was opened from, or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing, whether its inbox watch runs; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
 
 - **Keys.** ↑/↓ (or j/k), PgUp/PgDn, Home/End move. Enter on the board opens
   that agent, and Esc goes back to the board. In the fleet tab, `b`, `c`,
@@ -379,6 +379,16 @@ account tabs as before.
   agent view a context share or output activity not reported reads unknown,
   never 0 or quiet. Every colour (magenta for needs you, cyan for waiting)
   has its word beside it.
+- **No inbox watch.** An agent whose session is idle, that nothing else
+  has asked for the person, and whose account has run no `gzcoord-inbox`
+  watch (as fleet.py's `inbox_watch` reports it) for 2 minutes or more reads
+  `inbox off` and how long, in cyan, after who waits and before who cannot
+  be told; the title counts it. It reads no message until a person wakes
+  it: the deck types nothing into a session. The fact is fleet.py's proc
+  `inbox_watch`; while fleet.py does not report it, every watch is unknown
+  and nothing is flagged. The 2 minutes count from the first proc read
+  this view fetched that found the watch missing, never from fleet.py's
+  cache; a stale session state is not idle.
 - **Compare.** A value that was not read has no bar and reads `…` or `?`,
   and is listed after the rest; the footer says why. "Jobs done" counts
   jobs closed as done, never dropped: fleet.py's `done_total`. Without
