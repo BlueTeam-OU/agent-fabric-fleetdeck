@@ -234,6 +234,7 @@ impl HeadlessServer {
                 | Method::PaneSplit(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
+                | Method::TabMoveToWorkspace(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
                 | Method::WorktreeCreate(_)
@@ -300,6 +301,7 @@ impl HeadlessServer {
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
                 | Method::TabClose(_)
+                | Method::TabMoveToWorkspace(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
                 | Method::WorkspaceClose(_)
@@ -889,11 +891,23 @@ impl HeadlessServer {
             &msg.request.method,
             api::schema::Method::PaneMove(params) if params.focus
         );
-        let response_proxy = (agent_focus_target.is_some() || inspect_pane_move).then(|| {
-            let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
-            let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
-            (original, proxy_rx)
-        });
+        // The tab's id before the move: a move answers with the tab under a
+        // new id, a tab already in its target with the same one. Positions
+        // cannot tell: the target can sit where the source tab was.
+        let tab_move_from = match &msg.request.method {
+            api::schema::Method::TabMoveToWorkspace(params) if params.focus => self
+                .app
+                .parse_tab_id(&params.tab_id)
+                .and_then(|(ws_idx, tab_idx)| self.app.public_tab_id(ws_idx, tab_idx)),
+            _ => None,
+        };
+        let inspect_tab_move = tab_move_from.is_some();
+        let response_proxy =
+            (agent_focus_target.is_some() || inspect_pane_move || inspect_tab_move).then(|| {
+                let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
+                let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
+                (original, proxy_rx)
+            });
         let reconcile = Self::shell_locations_may_need_reconcile(&msg.request.method);
         let changed = self.handle_api_request_with_shutdown_check_inner(msg, false, false);
         let create_focus_requested = create_request.is_some_and(|method| {
@@ -926,12 +940,17 @@ impl HeadlessServer {
             })
             .flatten();
         let target_changed = self.default_shell_target() != target_before;
+        let tab_move_focus_succeeded = matches!(
+            (&proxied_result, &tab_move_from),
+            (Some(api::schema::ResponseResult::TabInfo { tab }), Some(from)) if &tab.tab_id != from
+        );
         let explicit_focus_succeeded = successful_agent_focus_target
             .or(explicit_public_focus_target)
             .is_some_and(|target| self.default_shell_target() == Some(target));
         let public_focus_succeeded = explicit_focus_succeeded
             || (create_focus_requested && target_changed)
-            || pane_move_focus_succeeded;
+            || pane_move_focus_succeeded
+            || tab_move_focus_succeeded;
         if public_focus_succeeded {
             self.focus_all_shell_clients_on_default_target();
         }

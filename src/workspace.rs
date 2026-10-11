@@ -972,6 +972,43 @@ impl Workspace {
         self.unregister_pane(pane_id);
     }
 
+    /// Takes a whole tab out for a move to another workspace: its panes'
+    /// public numbers are released here, and its live panes go with it.
+    pub(crate) fn take_tab_for_move(&mut self, tab_idx: usize) -> Option<TakenTab> {
+        if tab_idx >= self.tabs.len() {
+            return None;
+        }
+        let tab = self.tabs.remove(tab_idx);
+        for pane_id in tab.layout.pane_ids() {
+            self.unregister_pane(pane_id);
+        }
+        self.adjust_active_tab_after_removal(tab_idx);
+        Some(TakenTab {
+            tab,
+            workspace_empty: self.tabs.is_empty(),
+        })
+    }
+
+    /// Inserts a tab taken from another workspace at `insert_idx` (the end
+    /// when none, clamped to the end), returning its index. It takes this
+    /// workspace's next tab number and a new public number for each pane,
+    /// in layout order, as a tab made here would; the active tab stays the
+    /// one that was active.
+    pub(crate) fn insert_moved_tab(&mut self, mut tab: Tab, insert_idx: Option<usize>) -> usize {
+        tab.number = self.next_public_tab_number;
+        self.next_public_tab_number += 1;
+        for pane_id in tab.layout.pane_ids() {
+            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
+        }
+        let idx = insert_idx.unwrap_or(self.tabs.len()).min(self.tabs.len());
+        let active_root_pane = self.tabs.get(self.active_tab).map(|tab| tab.root_pane);
+        self.tabs.insert(idx, tab);
+        self.active_tab = active_root_pane
+            .and_then(|root_pane| self.tabs.iter().position(|tab| tab.root_pane == root_pane))
+            .unwrap_or(idx);
+        idx
+    }
+
     pub fn public_pane_number(&self, pane_id: PaneId) -> Option<usize> {
         self.public_pane_numbers.get(&pane_id).copied()
     }
@@ -1162,6 +1199,11 @@ impl Workspace {
 pub(crate) struct TakenPane {
     pub moved: MovedPane,
     pub removed_tab_idx: Option<usize>,
+    pub workspace_empty: bool,
+}
+
+pub(crate) struct TakenTab {
+    pub tab: Tab,
     pub workspace_empty: bool,
 }
 

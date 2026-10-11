@@ -1165,7 +1165,8 @@ impl App {
 
         let mut closed_workspace_id = None;
         if source_workspace_empty && cross_workspace {
-            self.state.workspaces.remove(source_ws_idx);
+            let closed = self.state.workspaces.remove(source_ws_idx);
+            crate::logging::workspace_closed(&closed.id);
             closed_workspace_id = Some(previous_workspace_id.clone());
             if self.state.workspaces.is_empty() {
                 self.state.active = None;
@@ -1269,6 +1270,11 @@ impl App {
         };
 
         if focus || self.state.active.is_none() {
+            let previous_focus = crate::app::AppState::follow_moved_panes(
+                previous_focus,
+                &[moved_pane_id],
+                &self.public_workspace_id(target_ws_idx),
+            );
             self.state
                 .switch_workspace_tab(target_ws_idx, target_tab_idx);
             self.state
@@ -3381,6 +3387,34 @@ mod tests {
             Some(&source_terminal)
         );
     }
+    #[test]
+    fn api_pane_move_of_the_focused_pane_across_workspace_with_focus_keeps_focus_record_valid() {
+        let mut app = app_with_linked_worktree();
+        app.state.workspaces = vec![Workspace::test_new("source"), Workspace::test_new("other")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let source = app.state.workspaces[0].tabs[0].root_pane;
+        let pane_id = app.public_pane_id(0, source).unwrap();
+        let target_workspace_id = app.public_workspace_id(1);
+
+        app.handle_pane_move(
+            "req".into(),
+            PaneMoveParams {
+                pane_id,
+                destination: PaneMoveDestination::NewTab {
+                    workspace_id: Some(target_workspace_id),
+                    label: None,
+                },
+                focus: true,
+            },
+        );
+
+        // The emptied source closed: a focus record naming it would name a
+        // workspace that no longer exists.
+        app.state.assert_invariants_for_test();
+    }
+
     #[test]
     fn api_pane_move_to_existing_tab_across_workspace_reassigns_public_pane_id() {
         let mut app = app_with_linked_worktree();

@@ -12,6 +12,8 @@ mod surface_delta_tests;
 mod surface_interest_tests;
 #[path = "surface_scroll.rs"]
 mod surface_scroll_tests;
+#[path = "tab_move.rs"]
+mod tab_move_tests;
 mod transition_sounds;
 
 fn client_shell_projection(

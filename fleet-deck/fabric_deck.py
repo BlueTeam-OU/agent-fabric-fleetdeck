@@ -709,12 +709,14 @@ class Deck:
         if not SAFE_LOGIN.match(login):
             self._say(login, f"{login!r}: not a plain login; its tab is left alone")
             return True
+        if tab is not None and not tab.undetermined:
+            tab = self._to_role_workspace(account, tab, workspace_labels)
         if tab is None and account.role == UNBOUND:
             if first_setup:
                 self.seed_on_bind.add(login)
-            # A tab is made once and herdr cannot move it to another workspace:
-            # made now, it would sit in New for good, though its role's group
-            # is known as soon as the role is bound. So it waits for the role.
+            # Its role's group is known as soon as the role is bound, so the
+            # tab waits and is made there once, rather than in New and moved
+            # later: a FleetDeck from before tab move cannot move it at all.
             self._say(f"unbound:{login}", f"{login}: no role bound yet; its tab is made in its "
                       f"role's workspace once one is (fabric-role bind, as {login})")
             return False
@@ -759,6 +761,34 @@ class Deck:
             self.unsettled.discard(login)
             self.tracks[login] = classify(seen, self.live(login)) or Track(State.IDLE)
         return True
+
+    def _to_role_workspace(self, account, tab: AccountTab, workspace_labels) -> AccountTab:
+        """A tab in New whose role's workspace exists is moved there, its
+        panes running (FleetDeck's tab move): the account appeared before
+        its role was bound, or before this deck waited for one. Only at a
+        restore, before its panes are followed: a moved tab's panes get new
+        public ids. A tab a person put anywhere else is theirs."""
+        seeded = seed_workspace(account.role, self.catalog)
+        if seeded == NEW_WORKSPACE or seeded not in workspace_labels:
+            return tab
+        ids: dict[str, str] = {}
+        for workspace in self.herdr.workspaces():
+            # The first of a label, as ensure_workspace and account_tabs take it.
+            ids.setdefault(workspace.get("label"), workspace["workspace_id"])
+        if ids.get(NEW_WORKSPACE) != tab.workspace_id or seeded not in ids:
+            return tab
+        login = account.login
+        try:
+            self.herdr.call("tab", "move", tab.tab_id, "--workspace", ids[seeded])
+        except Exception as error:  # a FleetDeck without tab move: the tab stays, said once
+            self._say(f"move:{login}", f"{login}: its tab stays in {NEW_WORKSPACE}: "
+                      f"{printable(str(error))}")
+            return tab
+        self.log(f"{login}: moved its tab from {NEW_WORKSPACE} to {seeded}")
+        moved = self.herdr.account_tabs({login}).get(login)
+        if moved is None:
+            raise DeckError(f"{login}: its tab was not found after the move")
+        return moved
 
     def _fleet_tab_holds(self, tab_id: str) -> str:
         """`board` when the board's view runs in the tab; `remnant` when its

@@ -899,6 +899,43 @@ impl AppState {
         self.pane_id_aliases.remove(&pane_id.raw());
     }
 
+    /// A focus target taken before a move, pointed at `workspace_id` when it
+    /// names a pane that moved there: recorded as it was, it would name the
+    /// pane in a workspace that no longer holds it (or no longer exists).
+    pub(crate) fn follow_moved_panes(
+        target: Option<PaneFocusTarget>,
+        panes: &[PaneId],
+        workspace_id: &str,
+    ) -> Option<PaneFocusTarget> {
+        target.map(|mut focus| {
+            if panes.contains(&focus.pane_id) {
+                focus.workspace_id = workspace_id.to_string();
+            }
+            focus
+        })
+    }
+
+    /// Points what names a pane by its workspace (the previous focus, the
+    /// toast's target, a pending agent notification) at `workspace_id`, for
+    /// panes that moved there: each still names a live pane, now elsewhere.
+    pub(crate) fn retarget_pane_references(&mut self, panes: &[PaneId], workspace_id: &str) {
+        if let Some(focus) = self.previous_pane_focus.as_mut() {
+            if panes.contains(&focus.pane_id) {
+                focus.workspace_id = workspace_id.to_string();
+            }
+        }
+        if let Some(target) = self.toast.as_mut().and_then(|toast| toast.target.as_mut()) {
+            if panes.contains(&target.pane_id) {
+                target.workspace_id = workspace_id.to_string();
+            }
+        }
+        for pane_id in panes {
+            if let Some(notification) = self.pending_agent_notifications.get_mut(pane_id) {
+                notification.workspace_id = workspace_id.to_string();
+            }
+        }
+    }
+
     pub(crate) fn pane_exposes_host_cursor(
         &self,
         _ws_idx: usize,
