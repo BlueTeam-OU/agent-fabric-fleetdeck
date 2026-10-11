@@ -3929,6 +3929,11 @@ mod tests {
 
     /// A released manifest naming `targets`, as the release flow writes one.
     fn release_manifest_json(targets: &[&str]) -> String {
+        release_manifest_json_summed(targets, targets)
+    }
+
+    /// As [`release_manifest_json`], with checksums for `summed` only.
+    fn release_manifest_json_summed(targets: &[&str], summed: &[&str]) -> String {
         let url = |t: &str| {
             format!("https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v1.0.0/agent-fabric-fleetdeck-{t}")
         };
@@ -3936,7 +3941,7 @@ mod tests {
             .iter()
             .map(|t| format!("\"{t}\": \"{}\"", url(t)))
             .collect();
-        let sums: Vec<String> = targets
+        let sums: Vec<String> = summed
             .iter()
             .map(|t| format!("\"{t}\": \"{}\"", "a".repeat(64)))
             .collect();
@@ -3957,6 +3962,28 @@ mod tests {
     #[should_panic(expected = "missing asset URL for linux-aarch64")]
     fn a_release_manifest_without_the_aarch64_asset_is_refused() {
         let json = release_manifest_json(&["linux-x86_64", "macos-aarch64"]);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for linux-aarch64")]
+    fn a_release_manifest_without_the_aarch64_checksum_is_refused() {
+        let json = release_manifest_json_summed(&RELEASED_TARGETS, &["linux-x86_64"]);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for 1.0.0 linux-aarch64")]
+    fn a_listed_release_without_its_aarch64_checksum_is_refused() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&release_manifest_json(&RELEASED_TARGETS)).expect("json");
+        value["releases"]["1.0.0"]["sha256"]
+            .as_object_mut()
+            .expect("the release's checksums")
+            .remove("linux-aarch64");
+        let json = value.to_string();
         let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
         assert_release_manifest(&json, &manifest);
     }
@@ -4051,6 +4078,14 @@ mod tests {
                 assert!(
                     url.ends_with(&format!("agent-fabric-fleetdeck-{target}")),
                     "unexpected asset name for {version} {target}: {url}"
+                );
+                assert!(
+                    release
+                        .get("sha256")
+                        .and_then(|sums| sums.get(target))
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|sum| sum.len() == 64),
+                    "missing SHA-256 checksum for {version} {target}"
                 );
             }
         }
