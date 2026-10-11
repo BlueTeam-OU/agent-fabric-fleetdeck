@@ -4150,9 +4150,7 @@ mod tests {
         #[cfg(windows)]
         assert_eq!(
             completed.reported_cwd,
-            Some(std::path::PathBuf::from(
-                "\\tmp\\agent-fabric-fleetdeck repo"
-            ))
+            Some(std::path::PathBuf::from("\\tmp\\herdr repo"))
         );
 
         let latest = pane.process_pty_bytes(
