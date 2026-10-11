@@ -25,6 +25,10 @@ include = [
 
 [workspace]
 members = ["crates/ghostty-vt"]
+# The vendored portable-pty enters the build through [patch.crates-io], not
+# as a member; excluding it makes it its own root, so tools that run
+# `cargo metadata` inside it (cargo-machete) can read it.
+exclude = ["vendor/portable-pty"]
 default-members = [".", "crates/ghostty-vt"]
 
 [dependencies]
