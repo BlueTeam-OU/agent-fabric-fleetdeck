@@ -19,7 +19,7 @@ versioning policy and the fork's provenance are in
 | Platforms released | Linux, macOS, Windows | Linux only: Debian and Fedora (the owner, 2026-10-11) |
 | Release assets | `herdr-<os>-<arch>`, `herdr-windows-x86_64.zip` (holding `herdr.exe`) | `agent-fabric-fleetdeck-linux-x86_64`, `agent-fabric-fleetdeck-linux-aarch64` |
 | Release tags | Herdr's `v*`, `preview-*` (kept, never released here) | `v<version>` and `preview-<date>-<sha>` whose source is the `agent-fabric-fleetdeck` package |
-| Installer variables | `HERDR_INSTALL_DIR`, `HERDR_HOME`, `HERDR_CHANNEL`, `HERDR_MANIFEST_URL`, `HERDR_EXPECTED_BUILD_ID`, `HERDR_INSTALLER_URL` (install.cmd) | `AGENT_FABRIC_FLEETDECK_INSTALL_DIR`, `…_HOME`, `…_CHANNEL`, `…_MANIFEST_URL`, `…_EXPECTED_BUILD_ID`, `…_INSTALLER_URL` |
+| Installer variables | `HERDR_INSTALL_DIR`, `HERDR_HOME`, `HERDR_CHANNEL`, `HERDR_MANIFEST_URL`, `HERDR_EXPECTED_BUILD_ID`, `HERDR_INSTALLER_URL` (install.cmd) | `AGENT_FABRIC_FLEETDECK_INSTALL_DIR` (`install.sh`) |
 | Remote (`--remote`) binary | `herdr`, installed to `~/.local/bin/herdr` | `agent-fabric-fleetdeck`, installed to `~/.local/bin/agent-fabric-fleetdeck` |
 | Nix flake output | `herdr` | `agent-fabric-fleetdeck` |
 | Log target (`HERDR_LOG` filter) | `herdr=debug` | `agent_fabric_fleetdeck=debug` (the crate's name; the default is `=info`) |
@@ -27,11 +27,15 @@ versioning policy and the fork's provenance are in
 Herdr's macOS and Windows code is kept, compile-gated, so upstream
 imports stay small; it is renamed the same way (the Windows install
 directory is `%LOCALAPPDATA%\Programs\FleetDeck`, the notification
-identity `AgentFabric.FleetDeck`). No FleetDeck build for either is
-published, so nothing a person meets offers one: `install.sh` refuses
-macOS before it downloads anything, and `--remote` refuses a macOS or
-Windows host that has no FleetDeck installed and no
-`HERDR_REMOTE_BINARY`, before it offers an install.
+identity `AgentFabric.FleetDeck`, and the Windows installers
+`install.ps1` and `install.cmd` read `AGENT_FABRIC_FLEETDECK_HOME`,
+`…_CHANNEL`, `…_MANIFEST_URL`, `…_EXPECTED_BUILD_ID` and
+`…_INSTALLER_URL`). No FleetDeck build for either is published, and no
+FleetDeck document links those installers. `install.sh` refuses macOS
+before it downloads anything. `--remote` refuses a Windows host that has
+no FleetDeck installed and no `HERDR_REMOTE_BINARY`, and a macOS host
+likewise unless the client is itself a macOS build, which it copies
+there; both refusals come before it offers an install.
 
 Help, usage lines, errors and notices name the command
 `agent-fabric-fleetdeck` and the product FleetDeck. `--version` prints
