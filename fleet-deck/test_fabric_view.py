@@ -104,6 +104,83 @@ class Records(unittest.TestCase):
         self.assertIs(fv.agents_of(placements, store, ("jobs",), {})[0].sections["jobs"], old)
 
 
+def agent(login, level):
+    data = {"level": level, "reason": None, "since": None}
+    rec = {"status": "ok", "src": "derived:states+jobs", "at": "2026-10-09T11:00:00Z", "data": data} if level else None
+    return fv.vr.Agent(login, "h", "agent", {"attention": rec})
+
+
+class Attention(unittest.TestCase):
+    """attention is told from states and jobs with fleet.py's own reader."""
+
+    def fleet(self, reader=None):
+        from types import SimpleNamespace
+        sections = {"states": SimpleNamespace(ttl=30, derives=()), "jobs": SimpleNamespace(ttl=30, derives=()),
+                    "attention": SimpleNamespace(ttl=0, derives=("states", "jobs"))}
+        return SimpleNamespace(SECTIONS=sections, attention_record=reader)
+
+    def test_it_is_never_fetched_on_its_own(self):
+        import queue
+        view = fv.View(self.fleet(), ("states", "attention", "jobs"), None, fv.Store(), queue.Queue())
+        self.assertEqual(sorted(view.refresher.due(0, True)), ["jobs", "states"])
+        self.assertNotIn("attention", view.whys)
+
+    def test_unread_inputs_are_unknown_and_a_reader_that_fails_is_a_failure(self):
+        from types import SimpleNamespace
+        placements = {"alice": SimpleNamespace(host="h", kind="agent")}
+        store = fv.Store()
+        seen = []
+        fleet = self.fleet(lambda st, jo, now: seen.append((st, jo)) or {"status": "ok", "data": {"level": "none"}})
+        self.assertIsNone(fv.agents_of(placements, store, ("states", "jobs", "attention"), {}, fleet)[0].sections["attention"])
+        store.put("states", {"alice": {"status": "ok", "at": "t", "data": {}}})
+        store.put("jobs", {"alice": {"status": "ok", "at": "t", "data": {}}})
+        shown = fv.agents_of(placements, store, ("states", "jobs", "attention"), {}, fleet)[0]
+        self.assertEqual(shown.sections["attention"]["data"], {"level": "none"})
+        self.assertEqual(seen[0], (store.get("states", "alice"), store.get("jobs", "alice")))
+
+        def broken(*_):
+            raise KeyError("data")
+        shown = fv.agents_of(placements, store, ("states", "jobs", "attention"), {}, self.fleet(broken))[0]
+        self.assertEqual(shown.sections["attention"]["status"], "failed")
+
+    def test_a_fleet_py_without_attention_is_said(self):
+        import queue
+        from types import SimpleNamespace
+        fleet = SimpleNamespace(SECTIONS={"states": SimpleNamespace(ttl=30)})
+        view = fv.View(fleet, ("states", "attention"), None, fv.Store(), queue.Queue())
+        self.assertIn("serves no attention section", view.whys["attention"])
+
+
+AGENT_FABRIC = os.environ.get("AGENT_FABRIC_ROOT") or os.path.join(os.path.dirname(__file__), "..", "..", "agent-fabric")
+
+
+@unittest.skipUnless(os.path.isfile(os.path.join(AGENT_FABRIC, "tools", "fabric", "fleet.py")),
+                     "no agent-fabric checkout beside this one (set AGENT_FABRIC_ROOT)")
+class AttentionWithFleetPy(unittest.TestCase):
+    """The real fleet.py: what the board draws is what fabric-fleet --json says."""
+
+    def test_a_blocked_session_reads_as_its_reason_on_the_board(self):
+        from types import SimpleNamespace
+        fleet = fv.import_fleet(AGENT_FABRIC)
+        if not hasattr(fleet, "attention_record"):
+            self.skipTest("this agent-fabric checkout predates the attention section")
+        at = "2026-10-09T11:00:22Z"
+        store = fv.Store()
+        store.put("states", {"alice": {"status": "ok", "src": "op:states", "at": at, "data": {
+            "state": "blocked", "reason": "permission", "since": "2026-10-09T11:00:00Z",
+            "sessions": [{"session": "s", "state": "blocked"}]}}})
+        store.put("jobs", {"alice": {"status": "ok", "src": "op:jobs", "at": at, "data": {"jobs": {"status": "ok", "jobs": [
+            {"id": "j1", "state": "queued", "updated": at}]}}}})
+        a = fv.agents_of({"alice": SimpleNamespace(host="h", kind="agent")}, store, ("states", "jobs", "attention"), {}, fleet)[0]
+        self.assertEqual(a.sections["attention"]["data"]["level"], "needs_input")
+        self.assertIsNone(a.sections["attention"]["data"]["context_pct"], "not sampled is unknown, never 0")
+        now = fv.vr.parse_utc("2026-10-09T11:05:00Z")
+        self.assertEqual(fv.vr.attention_cell(a.sections["attention"], now), ("permission 5m", fv.vr.NEEDS))
+        store.put("states", {"alice": {"status": "ok", "src": "op:states", "at": at, "data": {"state": "unknown"}}})
+        a = fv.agents_of({"alice": SimpleNamespace(host="h", kind="agent")}, store, ("states", "jobs", "attention"), {}, fleet)[0]
+        self.assertEqual(fv.vr.attention_cell(a.sections["attention"], now), (fv.vr.NOT_READ, fv.vr.FAILED))
+
+
 class Navigation(unittest.TestCase):
     def test_the_fleet_tabs_screens_are_a_key_away_and_esc_leaves_prs_for_where_it_was(self):
         nav = fv.Nav(fv.BOARD)
@@ -142,6 +219,43 @@ class Navigation(unittest.TestCase):
         self.assertEqual(nav.selected, 2)
         self.assertEqual(nav.key(fv.ENTER, 3, 10), fv.OPEN_AGENT)
         self.assertIsNone(fv.Nav(fv.BOARD).key(fv.ENTER, rows=0, page=10))
+
+    def test_the_selection_follows_its_agent_when_the_order_changes(self):
+        nav = fv.Nav(fv.BOARD)
+        rows = [agent("a", "none"), agent("b", "none"), agent("c", "none")]
+        nav.place(rows)
+        nav.key(fv.DOWN, 3, 10)
+        self.assertEqual(nav.login, "b")
+        nav.place([rows[1], rows[0], rows[2]])     # b now needs the person, and leads
+        self.assertEqual((nav.selected, nav.login), (0, "b"))
+        nav.place([rows[0], rows[2]])               # b left the registry
+        self.assertEqual((nav.selected, nav.login), (0, "a"))
+
+    def test_n_and_N_jump_to_who_needs_the_person_and_say_when_nobody_does(self):
+        nav = fv.Nav(fv.BOARD)
+        nav.place([agent("a", "needs_input"), agent("b", "waiting"), agent("c", "needs_input")])
+        nav.key("n", 3, 10)
+        self.assertEqual(nav.login, "c")
+        nav.key("n", 3, 10)
+        self.assertEqual(nav.login, "a")
+        nav.key("N", 3, 10)
+        self.assertEqual(nav.login, "c")
+        nav.place([agent("a", "waiting"), agent("b", None)])
+        nav.key("n", 2, 10)
+        self.assertEqual((nav.login, nav.notice), ("b", "none known to need you; 1 cannot be told (? on the board)"),
+                         "an agent that cannot be told may need you")
+        nav.place([agent("a", "waiting")])
+        nav.key("n", 1, 10)
+        self.assertEqual(nav.notice, "no agent needs you now")
+        nav.key(fv.DOWN, 2, 10)
+        self.assertIsNone(nav.notice, "the notice lasts until the next key")
+
+    def test_s_and_v_switch_the_order_and_the_density(self):
+        nav = fv.Nav(fv.BOARD)
+        self.assertEqual((nav.needs_first, nav.compact), (True, False))
+        nav.key("s", 3, 10)
+        nav.key("v", 3, 10)
+        self.assertEqual((nav.needs_first, nav.compact), (False, True))
 
     def test_arrows_are_parsed(self):
         self.assertEqual(fv.parse_input(b"\x1b[C\x1b[D\x1bOC", final=False)[0], [fv.RIGHT, fv.LEFT, fv.RIGHT])

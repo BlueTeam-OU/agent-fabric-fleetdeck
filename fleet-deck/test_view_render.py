@@ -109,7 +109,7 @@ class Board(unittest.TestCase):
                          "j34 (blocked) Fleet Deck: one tab per agent")
 
     def test_failed_unread_and_absent_cells_say_which_they_are(self):
-        cells = vr.board_cells(fleet()[1])
+        cells = vr.board_cells(fleet()[1], NOW)
         self.assertEqual(cells["job"], (vr.NOT_READ, vr.FAILED))
         self.assertEqual(cells["jobs"], (f"{vr.UNREAD}/{vr.NOT_READ}", vr.FAILED))
         self.assertEqual(cells["state"][0], "no session")
@@ -128,10 +128,11 @@ class Board(unittest.TestCase):
         lines = texts(vr.board_lines(fleet(), {"develop-qzapp": HOST}, status(), 0, 140, 20))
         self.assertIn("develop-qzapp: memory 19.5 of 31.2 GB used swap 2.0 GB pressure some 0.4% full 0.0%", lines)
 
-    def test_narrow_drops_the_least_needed_columns_and_keeps_agent_state_job(self):
+    def test_narrow_drops_the_least_needed_columns_and_keeps_agent_state_needs_you_job(self):
         for width in (60, 48):
             cols = [c.key for c, _ in vr.board_columns(fleet(), width)]
-            self.assertEqual(cols[:3], ["login", "state", "job"])
+            self.assertEqual(cols[:4] if width == 60 else cols, ["login", "state", "attention", "job"] if width == 60
+                             else ["login", "attention", "job"], "who needs the person outlasts the session's word")
             for line in texts(vr.board_lines(fleet(), {}, status(), 0, width, 20)):
                 self.assertLessEqual(len(line), width)
         self.assertNotIn("tokens", [c.key for c, _ in vr.board_columns(fleet(), 60)])
@@ -148,7 +149,7 @@ class Board(unittest.TestCase):
         self.assertEqual(widths["job"], vr.JOB_MAX)
 
     def test_the_selected_row_is_reversed_whole(self):
-        row = vr.board_row(fleet()[1], vr.board_columns(fleet(), 140), True)
+        row = vr.board_row(fleet()[1], vr.board_columns(fleet(), 140), True, NOW)
         self.assertEqual({style for _, style in row}, {vr.SELECTED})
         self.assertIn(vr.NOT_READ, vr.line_text(row))
 
@@ -175,7 +176,7 @@ class Board(unittest.TestCase):
 
     def test_unread_cells_before_any_answer(self):
         bare = vr.Agent("x", "h", "agent", {})
-        self.assertTrue(all(t == vr.UNREAD for k, (t, _) in vr.board_cells(bare).items() if k not in ("login", "jobs")))
+        self.assertTrue(all(t == vr.UNREAD for k, (t, _) in vr.board_cells(bare, NOW).items() if k not in ("login", "jobs")))
 
 
 class Stale(unittest.TestCase):
@@ -188,7 +189,7 @@ class Stale(unittest.TestCase):
 
     def test_a_stale_value_is_marked_in_words_on_the_board_and_the_footer_says_whose_since_when_and_why(self):
         a = vr.Agent("arch", "h", "agent", {"proc": self.stale(PROC)})
-        self.assertEqual(vr.board_cells(a)["rss"], (vr.size_kb(531684), vr.WARN))
+        self.assertEqual(vr.board_cells(a, NOW)["rss"], (vr.size_kb(531684), vr.WARN))
         lines = vr.board_lines([a, vr.Agent("b", "h", "agent", {"proc": PROC})], {"h": None}, status(), 0, 140, 20)
         rows = texts(lines)
         self.assertIn(vr.size_kb(531684) + vr.STALE, next(r for r in rows if r.startswith("> arch")))  # selected
@@ -196,15 +197,15 @@ class Stale(unittest.TestCase):
 
     def test_stale_jobs_mark_the_closed_open_cell(self):
         a = vr.Agent("arch", "h", "agent", {"jobs": self.stale(JOBS), "closed_jobs": CLOSED})
-        self.assertEqual(vr.board_cells(a)["jobs"], ("23/3", vr.WARN))
-        row = texts([vr.board_row(a, vr.board_columns([a], 140), False)])[0]
+        self.assertEqual(vr.board_cells(a, NOW)["jobs"], ("23/3", vr.WARN))
+        row = texts([vr.board_row(a, vr.board_columns([a], 140), False, NOW)])[0]
         self.assertIn("23/3~", row)
 
     def test_a_stale_value_cut_to_its_column_keeps_its_mark(self):
         a = vr.Agent("arch", "h", "agent", {"states": self.stale(STATES), "jobs": self.stale(JOBS),
                                             "prs": self.stale(PRS)})
         cols = vr.board_columns([a], 80)
-        segments = vr.board_row(a, cols, True)[1:]       # one per column, after the marker
+        segments = vr.board_row(a, cols, True, NOW)[1:]       # one per column, after the marker
         for (c, w), (text, _) in zip(cols, segments):
             cell = text[1:] if text.startswith(" ") else text
             self.assertEqual(vr.cells(cell), w, c.key)
@@ -384,6 +385,100 @@ class WhysOnScreen(unittest.TestCase):
         self.assertEqual(only_host[-1], "? also not read: usage, host; why for usage in each agent's view (Enter)")
 
 
+def attention(level, reason=None, since=None, **more):
+    """fleet.py's attention record (agent-fabric tools/fabric/fleet.py, ATTENTION)."""
+    data = {"level": level, "reason": reason, "since": since, "blocked": 0, "pending": 0,
+            "context_pct": None, "context_at": None, "output": None}
+    data.update(more)
+    return ok("derived:states+jobs", "2026-10-09T11:00:22Z", data)
+
+
+def agent(login, rec):
+    return vr.Agent(login, "develop-qzapp", "agent", {"attention": rec})
+
+
+class Attention(unittest.TestCase):
+    def test_the_cell_says_the_reason_or_the_levels_word_with_its_age(self):
+        cell = lambda rec: vr.attention_cell(rec, NOW)
+        self.assertEqual(cell(attention("needs_input", "permission", "2026-10-09T11:01:00Z")), ("permission 4m", vr.NEEDS))
+        self.assertEqual(cell(attention("needs_input", None, None)), ("needs you", vr.NEEDS))
+        self.assertEqual(cell(attention("waiting", "owner arms #15", "2026-10-09T08:05:00Z")),
+                         ("waiting 3h: owner arms #15", vr.WAITING))
+        self.assertEqual(cell(attention("waiting")), ("waiting", vr.WAITING))
+        self.assertEqual(cell(attention("none")), (vr.NONE, vr.DIM))
+
+    def test_what_is_not_known_never_reads_as_nothing_waiting(self):
+        self.assertEqual(vr.attention_cell(None, NOW), (vr.UNREAD, vr.DIM))
+        self.assertEqual(vr.attention_cell(bad("derived:states+jobs", "states: not known"), NOW), (vr.NOT_READ, vr.FAILED))
+        self.assertEqual(vr.attention_cell(attention("later"), NOW), ("unknown", vr.FAILED))
+        stale = dict(attention("needs_input", "question"), status="stale", why="states: timed out")
+        self.assertEqual(vr.attention_cell(stale, NOW), ("question", vr.WARN))
+
+    def test_every_style_of_the_cell_is_paired_with_a_word(self):
+        for rec in (attention("needs_input"), attention("waiting"), attention("none")):
+            text, style = vr.attention_cell(rec, NOW)
+            self.assertTrue(text.strip(), style)
+
+    def test_the_needs_you_order_puts_the_person_first_the_longest_waiting_first(self):
+        agents = [agent("clear", attention("none")),
+                  agent("unread", None),
+                  agent("waits", attention("waiting", "x", "2026-10-09T09:00:00Z")),
+                  agent("asks-late", attention("needs_input", "question", "2026-10-09T11:00:00Z")),
+                  agent("asks-unknown", attention("needs_input")),
+                  agent("asks-early", attention("needs_input", "permission", "2026-10-09T10:00:00Z"))]
+        self.assertEqual([a.login for a in vr.board_order(agents, True)],
+                         ["asks-early", "asks-late", "asks-unknown", "waits", "unread", "clear"])
+        self.assertEqual(vr.board_order(agents, False), agents)
+
+    def test_n_and_N_go_round_the_agents_that_need_the_person(self):
+        agents = [agent("a", attention("needs_input")), agent("b", attention("waiting")),
+                  agent("c", attention("needs_input")), agent("d", None)]
+        self.assertEqual(vr.next_needing(agents, 0, 1), 2)
+        self.assertEqual(vr.next_needing(agents, 2, 1), 0)
+        self.assertEqual(vr.next_needing(agents, 0, -1), 2)
+        self.assertIsNone(vr.next_needing(agents[1:2] + agents[3:], 0, 1), "waiting is not on the person")
+
+    def test_the_title_counts_who_needs_you_and_what_is_not_known(self):
+        agents = [agent("a", attention("needs_input")), agent("b", None), agent("c", attention("none"))]
+        self.assertEqual(vr.board_title(agents), "Fleet · 1 of 3 need you, 1 not known")
+        self.assertEqual(vr.board_title(agents[2:]), "Fleet · 0 of 1 need you")
+
+    def test_compact_keeps_who_whether_and_what_and_the_keys_say_what_they_change_to(self):
+        self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), 140, compact=True)], ["login", "attention", "job"])
+        lines = texts(vr.board_lines(fleet(), {}, status(), 0, 200, 20, needs_first=True, compact=True))
+        self.assertIn("s registry order", lines[-1])
+        self.assertIn("v full", lines[-1])
+        lines = texts(vr.board_lines(fleet(), {}, status(), 0, 200, 20, notice="no agent needs you now"))
+        self.assertEqual(lines[-2], "no agent needs you now")
+        self.assertIn("s needs-you order", lines[-1])
+
+    def test_a_failed_attention_is_named_in_the_footer_with_its_why(self):
+        agents = fleet()
+        for a in agents:
+            a.sections["attention"] = bad("derived:states+jobs", "states: the account's session state is not known")
+        lines = texts(vr.failure_lines(agents, vr.BOARD_SECTIONS, 200, limit=3))
+        self.assertIn("? attention not read for all agents: states: the account's session state is not known", lines)
+
+    def test_the_agent_view_says_unknown_for_every_field_fleet_could_not_tell(self):
+        a = vr.Agent("x", "develop-qzapp", "agent", dict(FULL, attention=attention("needs_input")))
+        body = texts(vr.agent_body(a, vr.Samples(), NOW, 100))
+        self.assertIn("  needs you: the reason not said, since unknown", body)
+        self.assertIn("  context unknown: no sample from the status line", body)
+        self.assertIn("  output unknown", body)
+        self.assertTrue(any(t.startswith("Attention  derived:states+jobs, 4 min ago") for t in body), "the panel says its age")
+
+    def test_the_agent_view_says_what_fleet_told(self):
+        rec = attention("needs_input", "permission", "2026-10-09T11:01:00Z", blocked=1, pending=2,
+                        context_pct=63, context_at="2026-10-09T11:02:00Z", output="quiet")
+        body = texts(vr.agent_body(vr.Agent("x", "h", "agent", dict(FULL, attention=rec)), vr.Samples(), NOW, 100))
+        for line in ("  needs you: a permission prompt, since 11:01Z (4 min ago)", "  jobs blocked 1 · queued 2",
+                     "  context 63% in use, sampled 3 min ago",
+                     "  output quiet: nothing written in 30 s, which is not idle"):
+            self.assertIn(line, body)
+        self.assertIn("  nothing waits on you", texts(vr.attention_body(attention("none"), NOW, 100)))
+        self.assertIn("  waiting on something not a person, since unknown", texts(vr.attention_body(attention("waiting"), NOW, 100)))
+
+
 class Values(unittest.TestCase):
     def test_clock_and_age(self):
         self.assertEqual(vr.clock("2026-10-09T10:57:46Z", NOW), "10:57Z")
@@ -392,6 +487,8 @@ class Values(unittest.TestCase):
         self.assertEqual(vr.age("2026-10-09T11:04:30Z", NOW), "30 s ago")
         self.assertEqual(vr.age("2026-10-07T11:04:30Z", NOW), "2 d ago")
         self.assertEqual(vr.age(None, NOW), "never")
+        self.assertEqual([vr.short_age(t, NOW) for t in ("2026-10-09T11:04:15Z", "2026-10-09T10:05:00Z", "2026-10-07T11:00:00Z", None)],
+                         ["45s", "1h", "2d", ""])
 
     def test_sizes_and_counts(self):
         self.assertEqual(vr.size_kb(531684), "519M")
