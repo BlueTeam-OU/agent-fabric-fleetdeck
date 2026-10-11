@@ -167,6 +167,25 @@ def zig_problem(required: str, binary: str, answer: str | None) -> str | None:
     return None
 
 
+def zig_check(root: str, environ: dict[str, str] | os._Environ,
+              run: Callable[..., subprocess.CompletedProcess]) -> str | None:
+    """`zig_problem` for the Zig the build will run. crates/ghostty-vt/build.rs
+    takes `$ZIG` whenever it is set -- empty included -- else `zig`, and runs
+    it from vendor/libghostty-vt, so an empty or relative `ZIG` names a
+    binary other than the one asked here: either is refused, not resolved."""
+    required = required_zig(root)
+    if "ZIG" not in environ:
+        return zig_problem(required, "zig", zig_answer("zig", run))
+    binary = environ["ZIG"]
+    if not binary:
+        return (f"ZIG is set but empty, so the build would run no Zig at all: unset it, or set it to "
+                f"the absolute path of Zig {required}")
+    if os.sep in binary and not os.path.isabs(binary):
+        return (f"ZIG={binary} is a relative path, which the build resolves from "
+                f"vendor/libghostty-vt rather than from here: set it to the absolute path of Zig {required}")
+    return zig_problem(required, binary, zig_answer(binary, run))
+
+
 def plan(
     *,
     root: str,
@@ -321,8 +340,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     version = crate_version(ROOT)
-    zig_binary = os.environ.get("ZIG") or "zig"
-    zig = zig_problem(required_zig(ROOT), zig_binary, zig_answer(zig_binary, subprocess.run))
+    zig = zig_check(ROOT, os.environ, subprocess.run)
     installed = os.path.join(args.bin_dir, BIN)
     fleetdeck = server_status(installed if os.path.exists(installed) else BIN, subprocess.run)
     herdr_on_path = shutil.which(LEGACY_BIN)

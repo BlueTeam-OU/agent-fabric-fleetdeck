@@ -198,6 +198,42 @@ class ZigTest(unittest.TestCase):
     def test_an_absent_zig_gives_no_answer(self):
         self.assertIsNone(install.zig_answer("/nonexistent/zig", subprocess.run))
 
+    def test_zig_is_read_as_the_build_reads_it(self):
+        required = install.required_zig(install.ROOT)
+        asked = []
+
+        def run(argv, **_):
+            asked.append(argv[0])
+            return subprocess.CompletedProcess(argv, 0, stdout=required + "\n")
+
+        self.assertIsNone(install.zig_check(install.ROOT, {}, run))
+        self.assertIsNone(install.zig_check(install.ROOT, {"ZIG": "/opt/zig/zig"}, run))
+        self.assertEqual(asked, ["zig", "/opt/zig/zig"])
+        for value in ("", "tools/zig", "./zig"):
+            problem = install.zig_check(install.ROOT, {"ZIG": value}, run)
+            self.assertIsNotNone(problem, repr(value))
+            self.assertIn("absolute path", problem)
+        self.assertEqual(asked, ["zig", "/opt/zig/zig"], "a refused ZIG is never run")
+
+    def test_main_refuses_on_the_zig_check_before_building(self):
+        said, ran = [], []
+        saved = (install.zig_check, install.server_status, install.run_steps)
+        install.zig_check = lambda root, environ, run: "building needs Zig 0.16.0"
+        install.server_status = lambda binary, run: None
+
+        def steps(steps, **kwargs):
+            ran.append([s.argv for s in steps if s.argv])
+            return saved[2](steps, say=said.append, run=lambda argv, **_: None, **kwargs)
+
+        install.run_steps = steps
+        try:
+            code = install.main(["--dry-run", "--bin-dir", "/nonexistent/bin"])
+        finally:
+            install.zig_check, install.server_status, install.run_steps = saved
+        self.assertEqual(code, 1)
+        self.assertEqual(ran, [[]])
+        self.assertIn("building needs Zig 0.16.0", said[-1])
+
 
 if __name__ == "__main__":
     unittest.main()
