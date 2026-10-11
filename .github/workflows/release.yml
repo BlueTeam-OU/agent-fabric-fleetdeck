@@ -251,6 +251,9 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           node scripts/docs/versions.mjs publish "$GITHUB_REF_NAME"
+          # publish copies Herdr's docs/next READMEs over the root ones; the
+          # root README is FleetDeck's own (docs/fleetdeck/IDENTITY.md).
+          git checkout -- README.md README.zh-CN.md
           ANNOUNCEMENT_PATH="$RUNNER_TEMP/product-announcement.json"
           ANNOUNCEMENT_ORIGINAL_PATH="$RUNNER_TEMP/product-announcement-original.json"
           git show "${GITHUB_REF_NAME}:docs/next/product-announcement.json" > "$ANNOUNCEMENT_PATH"
@@ -286,7 +289,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A README.md README.zh-CN.md docs/versions distribution/latest.json docs/next/product-announcement.json
+          git add -A docs/versions distribution/latest.json docs/next/product-announcement.json
           # Release-only changes applied above are already staged by git apply --index.
           git diff --cached --quiet || git commit -m "release: synchronize metadata for v$VERSION"
           for attempt in 1 2 3; do
