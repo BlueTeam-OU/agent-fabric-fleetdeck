@@ -34,8 +34,9 @@ identity `AgentFabric.FleetDeck`, and the Windows installers
 FleetDeck document links those installers. `install.sh` refuses macOS
 before it downloads anything. `--remote` refuses a Windows host that has
 no FleetDeck installed and no `HERDR_REMOTE_BINARY`, and a macOS host
-likewise unless the client is itself a macOS build, which it copies
-there; both refusals come before it offers an install.
+likewise unless the client can copy itself there: a macOS build of the
+host's architecture that Homebrew, mise or Nix did not install. Both
+refusals come before it offers an install.
 
 Help, usage lines, errors and notices name the command
 `agent-fabric-fleetdeck` and the product FleetDeck. `--version` prints
