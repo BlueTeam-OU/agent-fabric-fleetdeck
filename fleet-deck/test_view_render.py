@@ -446,11 +446,25 @@ class Attention(unittest.TestCase):
     def test_compact_keeps_who_whether_and_what_and_the_keys_say_what_they_change_to(self):
         self.assertEqual([c.key for c, _ in vr.board_columns(fleet(), 140, compact=True)], ["login", "attention", "job"])
         lines = texts(vr.board_lines(fleet(), {}, status(), 0, 200, 20, needs_first=True, compact=True))
-        self.assertIn("s registry order", lines[-1])
-        self.assertIn("v full", lines[-1])
+        self.assertIn("s registry order", lines[-2])
+        self.assertIn("v full board", lines[-2])
         lines = texts(vr.board_lines(fleet(), {}, status(), 0, 200, 20, notice="no agent needs you now"))
-        self.assertEqual(lines[-2], "no agent needs you now")
-        self.assertIn("s needs-you order", lines[-1])
+        self.assertEqual(lines[-3], "no agent needs you now")
+        self.assertIn("s needs-you order", lines[-2])
+
+    def test_every_key_is_shown_on_an_80_column_pane(self):
+        for needs_first in (True, False):
+            for compact in (True, False):
+                self.assertLessEqual(vr.cells(vr.board_keys(needs_first, compact)), 80)
+        self.assertLessEqual(vr.cells(vr.BOARD_KEYS), 80)
+        self.assertTrue(texts(vr.board_lines(fleet(), {}, status(), 0, 80, 20))[-1].endswith("q close"))
+
+    def test_the_full_board_never_cuts_the_age_off_a_reason(self):
+        cols = vr.board_columns(fleet(), 140)
+        for rec in (attention("needs_input", "permission", "2026-10-08T12:00:00Z"),
+                    dict(attention("needs_input", "permission", "2026-10-08T12:00:00Z"), status="stale", why="x")):
+            row = texts([vr.board_row(agent("a", rec), cols, False, NOW)])[0]
+            self.assertIn("permission 23h", row)
 
     def test_a_failed_attention_is_named_in_the_footer_with_its_why(self):
         agents = fleet()

@@ -45,7 +45,9 @@ STALE = "~"
 SPARK = "▁▂▃▄▅▆▇█"
 SPARK_ASCII = "_.-=+*#@"
 
-BOARD_KEYS = "↑↓ select  Enter agent  n/N needs you  {order}  {density}  c compare  p plan  P PRs  r refetch  q close"
+BOARD_KEYS = "↑↓ select  Enter agent  c compare  p plan  P PRs  r refetch  q close"
+# The board's own keys, on a line of their own so both fit an 80-column pane.
+ATTENTION_KEYS = "n/N next who needs you  {order}  {density}"
 AGENT_KEYS = "↑↓ scroll  r refetch  Esc back  q close"
 OVERLAY_KEYS = "↑↓ scroll  r refetch  q close"
 
@@ -401,7 +403,8 @@ BOARD_COLUMNS = (
     # The session's word goes before who needs the person when narrow: a
     # blocked session is in the needs-you column too, with why.
     Column("state", "state", 10, 1),
-    Column("attention", "needs you", 13, 0),
+    # "permission 23h" and a stale record's `~`: the age is never the cut.
+    Column("attention", "needs you", 15, 0),
     Column("job", "current job", 12, 0, flex=True),
     Column("jobs", "closed/open", 11, 4, right=True),
     Column("rss", "RSS", 6, 3, right=True),
@@ -636,9 +639,9 @@ def board_title(agents: list[Agent]) -> str:
 
 
 def board_keys(needs_first: bool, compact: bool) -> str:
-    """The keys, each saying what it changes to."""
-    return BOARD_KEYS.format(order="s registry order" if needs_first else "s needs-you order",
-                             density="v full" if compact else "v compact")
+    """The board's own keys, each saying what it changes to."""
+    return ATTENTION_KEYS.format(order="s registry order" if needs_first else "s needs-you order",
+                                 density="v full board" if compact else "v compact board")
 
 
 def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
@@ -655,6 +658,7 @@ def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
     if notice:
         footer.append([(fit(notice, width), BOLD)])
     footer.append([(fit(board_keys(needs_first, compact), width), DIM)])
+    footer.append([(fit(BOARD_KEYS, width), DIM)])
     room = max(1, height - len(top) - len(footer))
     first = 0
     if agents:

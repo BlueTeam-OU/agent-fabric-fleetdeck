@@ -40,6 +40,13 @@ REASONS = frozenset({"permission", "question"})
 # older hook): the level itself, never a guessed reason.
 NEEDS_YOU = "needs you"
 
+
+def known_reason(value) -> str | None:
+    """A reason as another account's stream sent it, if it is one of
+    REASONS; anything else, of any type, is not said. A list or a dict
+    tested against the set would raise, not answer no."""
+    return value if isinstance(value, str) and value in REASONS else None
+
 # moveto's modes, as the last argument of its `sudo ... enter` hand-off.
 WAIT, RESUME, WATCH, PLAIN = "--wait", "--resume", "--watch", ""
 MODES = frozenset({WAIT, RESUME, WATCH})
@@ -140,7 +147,7 @@ def live_from_record(sessions, ts_age_s: float | None) -> Live | None:
     first_blocked = next((s for s in live if s[1] == "blocked"), None)
     reason = first_blocked[2] if first_blocked is not None and len(first_blocked) > 2 else None
     return Live(count=len(live), state=top, fresh=ts_age_s <= STALE_AFTER_S,
-                reason=reason if reason in REASONS else None)
+                reason=known_reason(reason))
 
 
 def step(track: Track, seen: Seen, live: Live | None, now: float) -> tuple[Track, Arm | None]:

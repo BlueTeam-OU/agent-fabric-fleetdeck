@@ -109,9 +109,11 @@ class Records(unittest.TestCase):
         ts = '"ts":"2026-10-08T05:00:00Z"'
         parsed = parse_state_line(
             '{"address":"h/ui",%s,"sessions":[{"session":"s1","state":"blocked","reason":"permission"},'
-            '{"session":"s2","state":"blocked","reason":"\\u001b[2J"},{"session":"s3","state":"blocked","reason":7}]}' % ts
+            '{"session":"s2","state":"blocked","reason":"\\u001b[2J"},{"session":"s3","state":"blocked","reason":7},'
+            '{"session":"s4","state":"blocked","reason":["permission"]},{"session":"s5","state":"blocked","reason":{}}]}' % ts
         )
-        self.assertEqual([x.reason for x in parsed.sessions], ["permission", None, None])
+        # An unhashable value tested against the set would raise and drop the account's record.
+        self.assertEqual([x.reason for x in parsed.sessions], ["permission", None, None, None, None])
 
     def test_the_streams_no_record_row_is_no_record(self):
         # ctl.mjs stateRow for an account with nothing on the channel: no ts.

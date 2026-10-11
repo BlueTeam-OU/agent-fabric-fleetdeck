@@ -34,7 +34,6 @@ from deck_tabs import (
     MODES,
     PANE_ROLES,
     PLAIN,
-    REASONS,
     RESTORE_WAIT_S,
     RESUME,
     SHELL,
@@ -53,6 +52,7 @@ from deck_tabs import (
     classify,
     display,
     is_harness,
+    known_reason,
     live_from_record,
     lost,
     moveto_in,
@@ -203,7 +203,7 @@ def parse_state_line(line: str) -> StateRecord | None:
     rows = row.get("sessions")
     sessions = tuple(
         Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""),
-                s.get("reason") if s.get("reason") in REASONS else None)
+                known_reason(s.get("reason")))
         for s in (rows if isinstance(rows, list) else [])
         if isinstance(s, dict) and isinstance(s.get("session"), str) and s["session"]
     )

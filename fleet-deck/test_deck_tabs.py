@@ -56,6 +56,7 @@ class Live_(unittest.TestCase):
         # The first blocked session did not say why: unknown, not the next one's reason.
         self.assertIsNone(live_from_record([("b", "blocked", None), ("c", "blocked", "permission")], 10).reason)
         self.assertIsNone(live_from_record([("b", "blocked", "rm -rf /")], 10).reason)
+        self.assertIsNone(live_from_record([("b", "blocked", ["question"])], 10).reason)
         # A reason left on a session that is no longer blocked is not one.
         self.assertIsNone(live_from_record([("b", "idle", "question")], 10).reason)
 
