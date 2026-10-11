@@ -131,10 +131,12 @@ session.
 - **Plugin version gates** (`min_herdr_version`) compare against
   FleetDeck's version. A plugin that needs a Herdr feature FleetDeck has not
   imported can pass the gate.
-- **Windows** builds, the PowerShell installer and the Windows packaging
-  were renamed consistently, but none of them has been run (no Windows
-  host here). Before a release ships Windows assets, they must be checked
-  on Windows.
+- **Windows** is checked by CI on every pull request: the build, clippy
+  and tests (`check (windows-latest)`), the ConPTY package with its
+  PowerShell 5.1 installer and repair test (`Windows ConPTY package`), and
+  the ARM64 installer once a FleetDeck preview is published. Nobody has
+  run FleetDeck by hand on a Windows desktop; before a release ships
+  Windows assets, someone should.
 - **Herdr's documentation** in `docs/` still says `herdr`.
 
 ## Setup that is not in the repository
