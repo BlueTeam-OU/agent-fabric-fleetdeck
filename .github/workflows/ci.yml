@@ -58,9 +58,9 @@ jobs:
     name: supply chain
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Each pin moves together with agent-fabric's projects/registry.json
-    # entry for this project, so an account installs the binary CI runs.
-    # cargo-machete's tag and asset add a `v` to the version.
+    # The same releases and sha256 as agent-fabric-gateway's and InterWeave's
+    # CI and their projects/registry.json install pins; a bump moves them
+    # together. cargo-machete's tag and asset add a `v` to the version.
     env:
       CARGO_DENY_VERSION: "0.20.2"
       CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
