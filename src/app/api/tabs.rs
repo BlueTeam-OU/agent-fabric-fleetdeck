@@ -273,7 +273,8 @@ impl App {
 
         let mut closed_workspace_id = None;
         if taken.workspace_empty {
-            self.state.workspaces.remove(source_ws_idx);
+            let closed = self.state.workspaces.remove(source_ws_idx);
+            crate::logging::workspace_closed(&closed.id);
             closed_workspace_id = Some(previous_workspace_id.clone());
             if let Some(active) = self.state.active {
                 if active == source_ws_idx {
@@ -304,6 +305,11 @@ impl App {
             .retarget_pane_references(&pane_ids, &target_workspace_id);
 
         if params.focus || self.state.active.is_none() {
+            let previous_focus = crate::app::AppState::follow_moved_panes(
+                previous_focus,
+                &pane_ids,
+                &target_workspace_id,
+            );
             self.state.switch_workspace_tab(target_ws_idx, tab_idx);
             let focused = self.state.workspaces[target_ws_idx].tabs[tab_idx]
                 .layout
@@ -700,6 +706,132 @@ mod tests {
         app.state.assert_invariants_for_test();
         assert_eq!(app.state.active, Some(1));
         assert_eq!(app.state.workspaces[1].active_tab, 1);
+    }
+
+    #[test]
+    fn api_tab_move_to_workspace_of_the_focused_tab_with_focus_keeps_the_focus_record_valid() {
+        let (mut app, _event_hub) = move_app();
+        let mut source = Workspace::test_new("source");
+        source.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![source, Workspace::test_new("target")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        let tab_id = app.public_tab_id(0, 0).unwrap();
+        let target_id = app.public_workspace_id(1);
+        let focused = app.state.workspaces[0].tabs[0].layout.focused();
+
+        move_to_workspace(&mut app, &tab_id, &target_id, None, true);
+
+        // The emptied source is gone: a focus record still naming it would
+        // name a missing workspace.
+        app.state.assert_invariants_for_test();
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.public_workspace_id(0), target_id);
+        if let Some(previous) = &app.state.previous_pane_focus {
+            assert_ne!(
+                (previous.workspace_id.as_str(), previous.pane_id),
+                (target_id.as_str(), focused),
+                "the moved pane stays focused: it is not its own previous focus"
+            );
+        }
+    }
+
+    #[test]
+    fn api_tab_move_to_workspace_points_toasts_and_notifications_at_the_target() {
+        let (mut app, _event_hub) = move_app();
+        let mut source = Workspace::test_new("source");
+        source.test_add_tab(Some("moved"));
+        app.state.workspaces = vec![source, Workspace::test_new("target")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        let source_id = app.public_workspace_id(0);
+        let target_id = app.public_workspace_id(1);
+        let pane = app.state.workspaces[0].tabs[1].root_pane;
+        let tab_id = app.public_tab_id(0, 1).unwrap();
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::ToastKind::NeedsAttention,
+            title: "t".into(),
+            context: "c".into(),
+            position: None,
+            target: Some(crate::app::state::ToastTarget {
+                workspace_id: source_id.clone(),
+                pane_id: pane,
+            }),
+        });
+        app.state.pending_agent_notifications.insert(
+            pane,
+            crate::app::state::PendingAgentNotification {
+                pane_id: pane,
+                workspace_id: source_id,
+                agent_label: "claude".into(),
+                known_agent: None,
+                kind: crate::app::ToastKind::NeedsAttention,
+                state: crate::detect::AgentState::Idle,
+                deadline: std::time::Instant::now(),
+            },
+        );
+
+        move_to_workspace(&mut app, &tab_id, &target_id, None, false);
+
+        app.state.assert_invariants_for_test();
+        let toast_target = app
+            .state
+            .toast
+            .as_ref()
+            .and_then(|toast| toast.target.as_ref());
+        assert_eq!(
+            toast_target.map(|t| t.workspace_id.as_str()),
+            Some(target_id.as_str())
+        );
+        assert_eq!(
+            app.state.pending_agent_notifications[&pane].workspace_id,
+            target_id
+        );
+    }
+
+    #[test]
+    fn api_tab_move_of_a_worktree_parents_last_tab_is_refused_and_moves_nothing() {
+        let (mut app, event_hub) = move_app();
+        let membership = |linked: bool| crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: "/repo/herdr".into(),
+            checkout_path: if linked { "/repo/wt" } else { "/repo/herdr" }.into(),
+            is_linked_worktree: linked,
+        };
+        let mut parent = Workspace::test_new("parent");
+        parent.worktree_space = Some(membership(false));
+        let mut linked = Workspace::test_new("linked");
+        linked.worktree_space = Some(membership(true));
+        app.state.workspaces = vec![parent, linked, Workspace::test_new("elsewhere")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        let tab_id = app.public_tab_id(0, 0).unwrap();
+        let target_id = app.public_workspace_id(2);
+
+        let response = move_to_workspace(&mut app, &tab_id, &target_id, None, false);
+
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "tab_move_failed");
+        assert_eq!(app.state.workspaces.len(), 3);
+        assert_eq!(app.public_tab_id(0, 0).as_deref(), Some(tab_id.as_str()));
+        assert!(event_kinds(&event_hub).is_empty());
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn api_tab_move_of_an_unknown_tab_is_refused() {
+        let (mut app, event_hub) = move_app();
+        app.state.workspaces = vec![Workspace::test_new("only"), Workspace::test_new("target")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        let target_id = app.public_workspace_id(1);
+
+        let response = move_to_workspace(&mut app, "w_missing:t9", &target_id, None, false);
+
+        let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "tab_not_found");
+        assert!(event_kinds(&event_hub).is_empty());
     }
 
     #[test]

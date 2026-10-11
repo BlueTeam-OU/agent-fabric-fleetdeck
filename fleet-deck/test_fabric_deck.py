@@ -483,6 +483,18 @@ class ToRoleWorkspace(unittest.TestCase):
         self.assertFalse(any(c[:2] == ("tab", "move") for c in herdr.calls),
                          "Ops is a person's choice; Coordinator does not exist here")
 
+    def test_duplicate_labels_resolve_to_the_first_as_tabs_are_made_there(self):
+        herdr = self.herdr()
+        herdr.workspace_list.append({"workspace_id": "w7", "label": "Rust Developer"})
+        herdr.tabs["w7"] = []
+        herdr.workspace_list.append({"workspace_id": "w6", "label": "New"})
+        herdr.tabs["w6"] = []
+        herdr.add_tab("ui", three_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertEqual([t["label"] for t in herdr.tabs["w9"]], ["ui"], "the first Rust Developer")
+        self.assertEqual(herdr.tabs["w7"], [])
+
     def test_a_fleetdeck_without_tab_move_leaves_the_tab_and_says_so_once(self):
         herdr = self.herdr()
         herdr.tab_move = False

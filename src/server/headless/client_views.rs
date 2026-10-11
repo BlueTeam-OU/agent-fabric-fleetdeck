@@ -891,11 +891,16 @@ impl HeadlessServer {
             &msg.request.method,
             api::schema::Method::PaneMove(params) if params.focus
         );
-        let response_proxy = (agent_focus_target.is_some() || inspect_pane_move).then(|| {
-            let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
-            let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
-            (original, proxy_rx)
-        });
+        let inspect_tab_move = matches!(
+            &msg.request.method,
+            api::schema::Method::TabMoveToWorkspace(params) if params.focus
+        );
+        let response_proxy =
+            (agent_focus_target.is_some() || inspect_pane_move || inspect_tab_move).then(|| {
+                let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
+                let original = std::mem::replace(&mut msg.respond_to, proxy_tx);
+                (original, proxy_rx)
+            });
         let reconcile = Self::shell_locations_may_need_reconcile(&msg.request.method);
         let changed = self.handle_api_request_with_shutdown_check_inner(msg, false, false);
         let create_focus_requested = create_request.is_some_and(|method| {
@@ -928,12 +933,16 @@ impl HeadlessServer {
             })
             .flatten();
         let target_changed = self.default_shell_target() != target_before;
+        // A tab already in its target is left as it is, and focuses nothing.
+        let tab_move_focus_succeeded =
+            inspect_tab_move && proxied_request_succeeded && target_changed;
         let explicit_focus_succeeded = successful_agent_focus_target
             .or(explicit_public_focus_target)
             .is_some_and(|target| self.default_shell_target() == Some(target));
         let public_focus_succeeded = explicit_focus_succeeded
             || (create_focus_requested && target_changed)
-            || pane_move_focus_succeeded;
+            || pane_move_focus_succeeded
+            || tab_move_focus_succeeded;
         if public_focus_succeeded {
             self.focus_all_shell_clients_on_default_target();
         }

@@ -714,9 +714,9 @@ class Deck:
         if tab is None and account.role == UNBOUND:
             if first_setup:
                 self.seed_on_bind.add(login)
-            # A tab is made once and herdr cannot move it to another workspace:
-            # made now, it would sit in New for good, though its role's group
-            # is known as soon as the role is bound. So it waits for the role.
+            # Its role's group is known as soon as the role is bound, so the
+            # tab waits and is made there once, rather than in New and moved
+            # later: a FleetDeck from before tab move cannot move it at all.
             self._say(f"unbound:{login}", f"{login}: no role bound yet; its tab is made in its "
                       f"role's workspace once one is (fabric-role bind, as {login})")
             return False
@@ -771,7 +771,10 @@ class Deck:
         seeded = seed_workspace(account.role, self.catalog)
         if seeded == NEW_WORKSPACE or seeded not in workspace_labels:
             return tab
-        ids = {w.get("label"): w["workspace_id"] for w in self.herdr.workspaces()}
+        ids: dict[str, str] = {}
+        for workspace in self.herdr.workspaces():
+            # The first of a label, as ensure_workspace and account_tabs take it.
+            ids.setdefault(workspace.get("label"), workspace["workspace_id"])
         if ids.get(NEW_WORKSPACE) != tab.workspace_id or seeded not in ids:
             return tab
         login = account.login
