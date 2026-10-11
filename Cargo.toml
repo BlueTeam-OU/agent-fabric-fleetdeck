@@ -5,6 +5,9 @@ edition = "2021"
 build = "build.rs"
 description = "Agent Fabric FleetDeck: the agent fleet's terminal workspace, forked from Herdr"
 license = "Apache-2.0"
+# Never published: ghostty-vt, a path dependency, is publish = false, and
+# cargo-deny reads path dependencies of a publishable crate as wildcards.
+publish = false
 repository = "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck"
 homepage = "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
