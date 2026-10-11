@@ -8,11 +8,20 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # bincode 2 is unmaintained (its team stopped development) and no
+    # upgrade exists. It is upstream herdr's wire encoding, used across
+    # src/; replacing it is a change to herdr's protocol, not to this
+    # repository's CI. Remove this entry when that change lands.
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained, no upgrade; upstream herdr's encoding" },
+]
 
 [licenses]
 version = 2
 confidence-threshold = 0.8
-allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+# 0BSD: doctest-file and recvmsg (through interprocess). Zlib: foldhash
+# (through hashbrown). Both are permissive, OSI-approved licences.
+allow = ["0BSD", "Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
 
 [bans]
 multiple-versions = "warn"
