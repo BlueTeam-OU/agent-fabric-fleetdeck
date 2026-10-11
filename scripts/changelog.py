@@ -21,17 +21,14 @@ DEFAULT_LATEST_JSON_PATH = Path("distribution/latest.json")
 DEFAULT_PRODUCT_ANNOUNCEMENT_PATH = Path("docs/next/product-announcement.json")
 PROTOCOL_SOURCE_PATH = Path("src/protocol/wire.rs")
 ENDPOINT_PROTOCOL_SOURCE_PATH = Path("src/protocol/endpoint.rs")
+# Debian and Fedora only: FleetDeck publishes Linux binaries, never the
+# macOS and Windows assets upstream herdr ships.
 CORE_ASSET_TARGETS = (
     "linux-x86_64",
     "linux-aarch64",
-    "macos-x86_64",
-    "macos-aarch64",
 )
-ASSET_TARGETS = (*CORE_ASSET_TARGETS, "windows-x86_64")
-EXPECTED_ASSET_NAMES = {
-    **{target: f"{PACKAGE}-{target}" for target in CORE_ASSET_TARGETS},
-    "windows-x86_64": f"{PACKAGE}-windows-x86_64.zip",
-}
+ASSET_TARGETS = CORE_ASSET_TARGETS
+EXPECTED_ASSET_NAMES = {target: f"{PACKAGE}-{target}" for target in CORE_ASSET_TARGETS}
 
 
 @dataclass(frozen=True)

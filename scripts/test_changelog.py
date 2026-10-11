@@ -27,40 +27,26 @@ from scripts.changelog import (
 
 
 def release_assets(version: str) -> dict[str, str]:
-    normalized = version.removeprefix("v")
-    return {
-        **default_release_assets(normalized),
-        "windows-x86_64": f"https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v{normalized}/agent-fabric-fleetdeck-windows-x86_64.zip",
-    }
+    return default_release_assets(version.removeprefix("v"))
 
 
 def release_sha256() -> dict[str, str]:
     return {
         "linux-x86_64": "a" * 64,
         "linux-aarch64": "b" * 64,
-        "macos-x86_64": "c" * 64,
-        "macos-aarch64": "d" * 64,
-        "windows-x86_64": "e" * 64,
     }
 
 
 def release_assets_with_digests() -> list[dict[str, str]]:
     return [
         {
-            "name": (
-                "agent-fabric-fleetdeck-windows-x86_64.zip"
-                if target == "windows-x86_64"
-                else f"agent-fabric-fleetdeck-{target}"
-            ),
-            "url": f"https://example.com/{target}{'.zip' if target == 'windows-x86_64' else ''}",
+            "name": f"agent-fabric-fleetdeck-{target}",
+            "url": f"https://example.com/{target}",
             "digest": f"sha256:{digest * 64}",
         }
         for target, digest in (
             ("linux-x86_64", "a"),
             ("linux-aarch64", "b"),
-            ("macos-x86_64", "c"),
-            ("macos-aarch64", "d"),
-            ("windows-x86_64", "e"),
         )
     ]
 
@@ -129,9 +115,6 @@ class ChangelogScriptTests(unittest.TestCase):
             {
                 "linux-x86_64": "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v0.1.1/agent-fabric-fleetdeck-linux-x86_64",
                 "linux-aarch64": "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v0.1.1/agent-fabric-fleetdeck-linux-aarch64",
-                "macos-x86_64": "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v0.1.1/agent-fabric-fleetdeck-macos-x86_64",
-                "macos-aarch64": "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v0.1.1/agent-fabric-fleetdeck-macos-aarch64",
-                "windows-x86_64": "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v0.1.1/agent-fabric-fleetdeck-windows-x86_64.zip",
             },
         )
         self.assertEqual(manifest["releases"]["0.1.1"]["assets"], manifest["assets"])
@@ -361,9 +344,6 @@ class ChangelogScriptTests(unittest.TestCase):
                 "assets": {
                     "linux-x86_64": "https://example.com/linux-x86_64",
                     "linux-aarch64": "https://example.com/linux-aarch64",
-                    "macos-x86_64": "https://example.com/macos-x86_64",
-                    "macos-aarch64": "https://example.com/macos-aarch64",
-                    "windows-x86_64": "https://example.com/windows-x86_64.zip",
                 },
                 "sha256": release_sha256(),
             },
@@ -407,7 +387,7 @@ class ChangelogScriptTests(unittest.TestCase):
             )
 
     def test_manifest_from_release_payload_rejects_missing_asset(self) -> None:
-        with self.assertRaisesRegex(ChangelogError, "missing asset agent-fabric-fleetdeck-macos-aarch64"):
+        with self.assertRaisesRegex(ChangelogError, "missing asset agent-fabric-fleetdeck-linux-aarch64"):
             manifest_from_release_payload(
                 {
                     "tagName": "v0.1.1",
@@ -416,8 +396,6 @@ class ChangelogScriptTests(unittest.TestCase):
                     "body": "### Fixed\n- One\n",
                     "assets": [
                         {"name": "agent-fabric-fleetdeck-linux-x86_64", "url": "https://example.com/linux-x86_64"},
-                        {"name": "agent-fabric-fleetdeck-linux-aarch64", "url": "https://example.com/linux-aarch64"},
-                        {"name": "agent-fabric-fleetdeck-macos-x86_64", "url": "https://example.com/macos-x86_64"},
                     ],
                 },
                 "0.1.1",
@@ -434,7 +412,7 @@ class ChangelogScriptTests(unittest.TestCase):
         ensure_manifest_is_outdated({"version": "0.1.0"}, "0.1.1")
 
     def test_canonicalize_manifest_requires_all_asset_targets(self) -> None:
-        with self.assertRaisesRegex(ChangelogError, "missing asset URL for macos-aarch64"):
+        with self.assertRaisesRegex(ChangelogError, "missing asset URL for linux-aarch64"):
             canonicalize_manifest(
                 {
                     "version": "0.1.1",
@@ -442,8 +420,6 @@ class ChangelogScriptTests(unittest.TestCase):
                     "notes": "### Fixed\n- One",
                     "assets": {
                         "linux-x86_64": "https://example.com/linux-x86_64",
-                        "linux-aarch64": "https://example.com/linux-aarch64",
-                        "macos-x86_64": "https://example.com/macos-x86_64",
                     },
                 },
                 "test manifest",
@@ -458,9 +434,6 @@ class ChangelogScriptTests(unittest.TestCase):
             "assets": {
                 "linux-x86_64": " https://example.com/linux-x86_64 ",
                 "linux-aarch64": "https://example.com/linux-aarch64",
-                "macos-x86_64": "https://example.com/macos-x86_64",
-                "macos-aarch64": "https://example.com/macos-aarch64",
-                "windows-x86_64": "https://example.com/windows-x86_64.zip",
             },
             "sha256": release_sha256(),
         }
@@ -472,9 +445,6 @@ class ChangelogScriptTests(unittest.TestCase):
             "assets": {
                 "linux-x86_64": "https://example.com/linux-x86_64",
                 "linux-aarch64": "https://example.com/linux-aarch64",
-                "macos-x86_64": "https://example.com/macos-x86_64",
-                "macos-aarch64": "https://example.com/macos-aarch64",
-                "windows-x86_64": "https://example.com/windows-x86_64.zip",
             },
             "sha256": release_sha256(),
         }
@@ -532,9 +502,6 @@ class ChangelogScriptTests(unittest.TestCase):
                     "assets": {
                         "linux-x86_64": "https://example.com/linux-x86_64",
                         "linux-aarch64": "https://example.com/linux-aarch64",
-                        "macos-x86_64": "https://example.com/macos-x86_64",
-                        "macos-aarch64": "https://example.com/macos-aarch64",
-                        "windows-x86_64": "https://example.com/windows-x86_64.zip",
                     },
                     "sha256": release_sha256(),
                 },
@@ -545,9 +512,6 @@ class ChangelogScriptTests(unittest.TestCase):
                     "assets": {
                         "linux-x86_64": "https://example.com/linux-x86_64",
                         "linux-aarch64": "https://example.com/linux-aarch64",
-                        "macos-x86_64": "https://example.com/macos-x86_64",
-                        "macos-aarch64": "https://example.com/macos-aarch64",
-                        "windows-x86_64": "https://example.com/windows-x86_64.zip",
                     },
                     "sha256": release_sha256(),
                 },

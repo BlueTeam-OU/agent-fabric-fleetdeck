@@ -21,9 +21,6 @@ REPOSITORY = "BlueTeam-OU/agent-fabric-fleetdeck"
 ASSETS = {
     f"{PACKAGE}-linux-x86_64",
     f"{PACKAGE}-linux-aarch64",
-    f"{PACKAGE}-macos-x86_64",
-    f"{PACKAGE}-macos-aarch64",
-    f"{PACKAGE}-windows-x86_64.zip",
 }
 # distribution/latest.json names this version until FleetDeck's first stable
 # release; the version inherited from Herdr (0.9.3) is no FleetDeck release.
