@@ -1,0 +1,27 @@
+# cargo-deny's policy over the committed Cargo.lock: advisories, licences,
+# bans and sources. CI's `supply-chain` job runs `cargo-deny check` against
+# it. Every exception below says why it is one.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# ghostty-vt and portable-pty are named by path; cargo-deny reads a path
+# dependency without a version as a wildcard.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
