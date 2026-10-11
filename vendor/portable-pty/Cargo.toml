@@ -119,3 +119,10 @@ features = [
 
 [target."cfg(windows)".dependencies.winreg]
 version = "0.10"
+
+# Not upstream: CI's cargo-machete check reads this vendored crate, and these
+# are upstream's own dependencies, kept as vendored. serde is a false
+# positive: serde_derive's expansion (feature serde_support) names it.
+# bitflags (Windows only) is unused by upstream's source.
+[package.metadata.cargo-machete]
+ignored = ["bitflags", "serde"]

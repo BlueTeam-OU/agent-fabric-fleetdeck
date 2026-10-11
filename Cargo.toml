@@ -5,6 +5,9 @@ edition = "2021"
 build = "build.rs"
 description = "Agent Fabric FleetDeck: the agent fleet's terminal workspace, forked from Herdr"
 license = "Apache-2.0"
+# Never published: ghostty-vt, a path dependency, is publish = false, and
+# cargo-deny reads path dependencies of a publishable crate as wildcards.
+publish = false
 repository = "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck"
 homepage = "https://github.com/BlueTeam-OU/agent-fabric-fleetdeck"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
@@ -22,6 +25,10 @@ include = [
 
 [workspace]
 members = ["crates/ghostty-vt"]
+# The vendored portable-pty enters the build through [patch.crates-io], not
+# as a member; excluding it makes it its own root, so tools that run
+# `cargo metadata` inside it (cargo-machete) can read it.
+exclude = ["vendor/portable-pty"]
 default-members = [".", "crates/ghostty-vt"]
 
 [dependencies]

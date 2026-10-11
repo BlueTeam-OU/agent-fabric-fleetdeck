@@ -1,0 +1,39 @@
+# cargo-deny's policy over the committed Cargo.lock: advisories, licences,
+# bans and sources. CI's `supply-chain` job runs `cargo-deny check` against
+# it. Every exception below says why it is one.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # bincode 2 is unmaintained (its team stopped development) and no
+    # upgrade exists. It is upstream herdr's wire encoding, used across
+    # src/; replacing it is a change to herdr's protocol, not to this
+    # repository's CI. Remove this entry when that change lands.
+    { id = "RUSTSEC-2025-0141", reason = "bincode unmaintained, no upgrade; upstream herdr's encoding" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Every licence below is permissive and OSI-approved; each names what needs it.
+# Apache-2.0 and MIT: this crate and most of the graph (most crates are dual
+# licensed). Unicode-3.0: unicode-ident, through proc-macro2 and syn.
+# 0BSD: doctest-file and recvmsg, through interprocess. Zlib: foldhash,
+# through hashbrown.
+allow = ["0BSD", "Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# ghostty-vt and portable-pty are named by path; cargo-deny reads a path
+# dependency without a version as a wildcard.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

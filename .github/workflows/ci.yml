@@ -48,6 +48,70 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: python3 scripts/conventional_commits.py "$PR_TITLE"
 
+  # The dependency policy (deny.toml) and unused dependencies, over the
+  # committed Cargo.lock. Both tools are the upstream release binaries,
+  # checked against their pinned sha256 before they are unpacked, rather
+  # than an action or `cargo install`: an action that runs the supply-chain
+  # check would be a supply-chain dependency the check does not cover, and
+  # `cargo install` compiles the tool and its own graph on every run.
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The same releases and sha256 as agent-fabric-gateway's and InterWeave's
+    # CI and their projects/registry.json install pins; a bump moves them
+    # together. cargo-machete's tag and asset add a `v` to the version.
+    env:
+      CARGO_DENY_VERSION: "0.20.2"
+      CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+      CARGO_MACHETE_VERSION: "0.9.2"
+      CARGO_MACHETE_SHA256: "48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # cargo metadata, which both tools read, needs the toolchain.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+
+      - name: Install cargo-deny
+        run: |
+          set -euo pipefail
+          asset="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          url="https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${asset}"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "$url"
+          (cd "$RUNNER_TEMP" && echo "${CARGO_DENY_SHA256}  ${asset}" | sha256sum --check --strict)
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/$asset" --strip-components=1 -C "$RUNNER_TEMP/bin" \
+            "cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/cargo-deny" --version
+
+      - name: Install cargo-machete
+        run: |
+          set -euo pipefail
+          asset="cargo-machete-v${CARGO_MACHETE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          url="https://github.com/bnjbvr/cargo-machete/releases/download/v${CARGO_MACHETE_VERSION}/${asset}"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "$url"
+          (cd "$RUNNER_TEMP" && echo "${CARGO_MACHETE_SHA256}  ${asset}" | sha256sum --check --strict)
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/$asset" --strip-components=1 -C "$RUNNER_TEMP/bin" \
+            "cargo-machete-v${CARGO_MACHETE_VERSION}-x86_64-unknown-linux-musl/cargo-machete"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/cargo-machete" --version
+
+      - name: Dependency policy
+        run: cargo-deny --log-level warn --all-features check
+
+      # scripts/cargo_machete.py: a crate the tool could not read is a
+      # failure, not a pass.
+      - name: Unused dependencies
+        run: python3 scripts/cargo_machete.py
+
   check:
     name: check (${{ matrix.os }})
     strategy:
