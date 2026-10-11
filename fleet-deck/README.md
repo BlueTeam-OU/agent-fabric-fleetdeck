@@ -164,6 +164,10 @@ again whole within 10 s, and is followed in nothing until then.
   it is: FleetDeck cannot move a tab to another workspace, so one made then
   would stay in `New`. The deck's log says so once. One that waited
   through the host's first setup is seeded as on first setup once bound.
+  At a restore, an account's tab in `New` whose role's workspace exists is
+  moved there with its panes running (`agent-fabric-fleetdeck tab move`); a
+  tab a person put in any other workspace stays. A FleetDeck without tab
+  move leaves it in `New`, said once in the deck's log.
 - **A milestone-1 tab** (one unlabelled pane) keeps that pane as the
   harness and gains the shell and status panes.
 - **A tab split by hand** with no `harness` pane is left alone, and the

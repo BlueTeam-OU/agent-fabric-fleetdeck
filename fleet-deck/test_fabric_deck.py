@@ -182,6 +182,7 @@ class FakeHerdr(Herdr):
         self.workspace_lists_ok = None  # after this many, `workspace list` fails
         self.fail_once = set()  # (subcommand, pane) pairs whose next call fails
         self.plugin_linked = True
+        self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
 
     def _id(self, kind):
         self.n += 1
@@ -254,6 +255,21 @@ class FakeHerdr(Herdr):
             tab = self.add_tab(None, [(pane, None, BOARD)], args[args.index("--workspace") + 1])
             return {"plugin_pane": {"plugin_id": args[4], "entrypoint": args[6],
                                     "pane": {"pane_id": pane, "tab_id": tab}}}
+        if head == ("tab", "move"):
+            if not self.tab_move:
+                raise RuntimeError("herdr tab move: exit 1: unknown method tab.move_to_workspace")
+            target = args[args.index("--workspace") + 1]
+            moved = next(t for tabs in self.tabs.values() for t in tabs if t["tab_id"] == args[2])
+            for tabs in self.tabs.values():
+                tabs[:] = [t for t in tabs if t is not moved]
+            # As FleetDeck does: the tab and its panes get the target's ids.
+            new_tab = self._id("t")
+            self.tabs[target].append({"tab_id": new_tab, "label": moved["label"]})
+            for old in [p for p, pane in self.panes.items() if pane["tab_id"] == args[2]]:
+                new = self._id("p")
+                self.panes[new] = dict(self.panes.pop(old), pane_id=new, tab_id=new_tab)
+                self.proc[new] = self.proc.pop(old)
+            return {"tab": {"tab_id": new_tab, "workspace_id": target}}
         if head == ("tab", "rename"):
             for tabs in self.tabs.values():
                 for tab in tabs:
@@ -429,6 +445,54 @@ class FleetTab(unittest.TestCase):
         self.assertIn("agent-fabric-fleetdeck plugin link", said[0])
         self.assertIn(("w1", "ui"), self.tabs(h))
         self.assertNotIn(("w1", "fleet"), self.tabs(h))
+
+
+def three_panes(login, prefix):
+    return [(f"{prefix}0", "harness", in_moveto(login, WAIT)), (f"{prefix}1", "shell", in_moveto(login)),
+            (f"{prefix}2", "status", in_moveto(login, WATCH))]
+
+
+class ToRoleWorkspace(unittest.TestCase):
+    def herdr(self):
+        herdr = FakeHerdr()
+        herdr.workspace_list.append({"workspace_id": "w9", "label": "Rust Developer"})
+        herdr.tabs["w9"] = []
+        return herdr
+
+    def test_a_tab_in_new_is_moved_to_its_roles_workspace_and_followed_there(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", three_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertEqual([t["label"] for t in herdr.tabs["w1"]], [])
+        self.assertEqual([t["label"] for t in herdr.tabs["w9"]], ["ui"])
+        harness = harness_of(h)
+        self.assertEqual(herdr.panes[harness]["label"], "harness")
+        self.assertNotIn(harness, ("q0", "q1", "q2"), "followed by its ids after the move")
+        self.assertEqual(h.deck.harness_pane["ui"], harness)
+        self.assertEqual(h.logs.count("ui: moved its tab from New to Rust Developer"), 1)
+
+    def test_a_tab_a_person_put_elsewhere_or_a_role_without_a_workspace_stays(self):
+        herdr = self.herdr()
+        herdr.workspace_list.append({"workspace_id": "w8", "label": "Ops"})
+        herdr.tabs["w8"] = []
+        herdr.add_tab("ui", three_panes("ui", "q"), "w8")
+        herdr.add_tab("coord", three_panes("coord", "c"))
+        h = Harness(herdr, logins=("ui", "coord"), roles={"coord": "fabric-coordinator"}, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertFalse(any(c[:2] == ("tab", "move") for c in herdr.calls),
+                         "Ops is a person's choice; Coordinator does not exist here")
+
+    def test_a_fleetdeck_without_tab_move_leaves_the_tab_and_says_so_once(self):
+        herdr = self.herdr()
+        herdr.tab_move = False
+        herdr.add_tab("ui", three_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        h.deck.restore(1)
+        self.assertEqual([t["label"] for t in herdr.tabs["w1"]], ["ui"])
+        self.assertEqual(h.deck.harness_pane["ui"], "q0")
+        self.assertEqual(sum("its tab stays in New" in line for line in h.logs), 1)
 
 
 class Restore(unittest.TestCase):
