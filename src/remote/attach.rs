@@ -5652,6 +5652,10 @@ function Get-Process {
     fn a_windows_remote_with_an_override_package_reaches_the_install_prompt() {
         // The prompt itself cannot be answered here (stdin is not a
         // terminal), so it fails, but not with the refusal.
+        assert!(
+            !std::io::IsTerminal::is_terminal(&io::stdin()),
+            "this test needs a stdin that is not a terminal (nextest gives one; with cargo test, add </dev/null)"
+        );
         let ssh = RemoteSsh::new_noninteractive("win".into());
         let override_package = Some(PathBuf::from("/tmp/fd-windows.zip"));
         let err = match prepare_windows_remote_herdr(
