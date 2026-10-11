@@ -3927,13 +3927,105 @@ mod tests {
         assert!(!first_windows_stable_is_pending(&with_windows, true, true));
     }
 
+    /// A released manifest naming `targets`, as the release flow writes one.
+    fn release_manifest_json(targets: &[&str]) -> String {
+        release_manifest_json_summed(targets, targets)
+    }
+
+    /// As [`release_manifest_json`], with checksums for `summed` only.
+    fn release_manifest_json_summed(targets: &[&str], summed: &[&str]) -> String {
+        let url = |t: &str| {
+            format!("https://github.com/BlueTeam-OU/agent-fabric-fleetdeck/releases/download/v1.0.0/agent-fabric-fleetdeck-{t}")
+        };
+        let assets: Vec<String> = targets
+            .iter()
+            .map(|t| format!("\"{t}\": \"{}\"", url(t)))
+            .collect();
+        let sums: Vec<String> = summed
+            .iter()
+            .map(|t| format!("\"{t}\": \"{}\"", "a".repeat(64)))
+            .collect();
+        let (assets, sums) = (assets.join(","), sums.join(","));
+        format!(
+            r##"{{"version":"1.0.0","notes":"Fixed: one","protocol":1,"assets":{{{assets}}},"sha256":{{{sums}}},"releases":{{"1.0.0":{{"notes":"Fixed: one","assets":{{{assets}}},"sha256":{{{sums}}}}}}},"announcement":null}}"##
+        )
+    }
+
+    #[test]
+    fn a_release_manifest_carries_the_two_linux_assets_and_needs_no_other() {
+        let json = release_manifest_json(&RELEASED_TARGETS);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing asset URL for linux-aarch64")]
+    fn a_release_manifest_without_the_aarch64_asset_is_refused() {
+        let json = release_manifest_json(&["linux-x86_64", "macos-aarch64"]);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for linux-aarch64")]
+    fn a_release_manifest_without_the_aarch64_checksum_is_refused() {
+        let json = release_manifest_json_summed(&RELEASED_TARGETS, &["linux-x86_64"]);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for 1.0.0 linux-aarch64")]
+    fn a_listed_release_without_its_aarch64_checksum_is_refused() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&release_manifest_json(&RELEASED_TARGETS)).expect("json");
+        value["releases"]["1.0.0"]["sha256"]
+            .as_object_mut()
+            .expect("the release's checksums")
+            .remove("linux-aarch64");
+        let json = value.to_string();
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    /// A release manifest whose aarch64 checksum is one character short,
+    /// at the top level or (`listed`) in release 1.0.0 alone.
+    fn short_checksum_manifest(listed: bool) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&release_manifest_json(&RELEASED_TARGETS)).expect("json");
+        let sums = if listed {
+            &mut value["releases"]["1.0.0"]["sha256"]
+        } else {
+            &mut value["sha256"]
+        };
+        sums["linux-aarch64"] = serde_json::Value::String("a".repeat(63));
+        value.to_string()
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for linux-aarch64")]
+    fn a_release_manifest_with_a_short_aarch64_checksum_is_refused() {
+        let json = short_checksum_manifest(false);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for 1.0.0 linux-aarch64")]
+    fn a_listed_release_with_a_short_aarch64_checksum_is_refused() {
+        let json = short_checksum_manifest(true);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    /// What a FleetDeck release ships, by the owner's rule of 2026-10-11:
+    /// Debian and Fedora, x86-64 and aarch64, and nothing else (the release
+    /// workflow, .github/workflows/release.yml, names each asset
+    /// `agent-fabric-fleetdeck-<target>`).
+    const RELEASED_TARGETS: [&str; 2] = ["linux-x86_64", "linux-aarch64"];
+
     #[test]
     fn checked_in_distribution_manifest_matches_update_schema() {
-        #[derive(Deserialize)]
-        struct LegacyUpdateManifest {
-            assets: BTreeMap<String, String>,
-        }
-
         let json = include_str!("../distribution/latest.json");
         let manifest: UpdateManifest = serde_json::from_str(json)
             .expect("distribution/latest.json should match updater schema");
@@ -3947,9 +4039,21 @@ mod tests {
             return;
         }
 
+        assert_release_manifest(json, &manifest);
+    }
+
+    /// What a released `distribution/latest.json` must carry: every
+    /// [`RELEASED_TARGETS`] asset, with its checksum and release URL, for
+    /// the latest version and for every release listed.
+    fn assert_release_manifest(json: &str, manifest: &UpdateManifest) {
+        #[derive(Deserialize)]
+        struct LegacyUpdateManifest {
+            assets: BTreeMap<String, String>,
+        }
+
         let legacy: LegacyUpdateManifest = serde_json::from_str(json)
             .expect("distribution/latest.json should keep legacy string asset URLs");
-        assert!(legacy.assets.len() >= 4);
+        assert!(legacy.assets.len() >= RELEASED_TARGETS.len());
 
         assert!(!manifest
             .metadata_for_version(&Version::parse(&manifest.version).unwrap())
@@ -3960,15 +4064,10 @@ mod tests {
         // current unreleased checkout. Its protocol is updated by the release
         // flow together with the release assets.
         assert!(manifest.protocol.is_some());
-        assert!(manifest.assets.len() >= 4);
+        assert!(manifest.assets.len() >= RELEASED_TARGETS.len());
         assert!(manifest.releases.contains_key(&manifest.version));
 
-        for target in [
-            "linux-x86_64",
-            "linux-aarch64",
-            "macos-x86_64",
-            "macos-aarch64",
-        ] {
+        for target in RELEASED_TARGETS {
             let asset = manifest
                 .assets
                 .get(target)
@@ -3984,17 +4083,8 @@ mod tests {
                 "unexpected release URL for {target}: {url}"
             );
             assert!(
-                url.ends_with(&format!("herdr-{target}")),
+                url.ends_with(&format!("agent-fabric-fleetdeck-{target}")),
                 "unexpected asset name for {target}: {url}"
-            );
-        }
-
-        if let Some(windows) = manifest.assets.get("windows-x86_64") {
-            assert!(windows.url.ends_with("/herdr-windows-x86_64.zip"));
-            assert_eq!(
-                manifest.sha256.get("windows-x86_64").map(String::len),
-                Some(64),
-                "missing SHA-256 checksum for windows-x86_64"
             );
         }
 
@@ -4003,12 +4093,7 @@ mod tests {
                 .get("assets")
                 .and_then(serde_json::Value::as_object)
                 .unwrap_or_else(|| panic!("missing assets for release {version}"));
-            for target in [
-                "linux-x86_64",
-                "linux-aarch64",
-                "macos-x86_64",
-                "macos-aarch64",
-            ] {
+            for target in RELEASED_TARGETS {
                 let asset = assets
                     .get(target)
                     .cloned()
@@ -4021,22 +4106,17 @@ mod tests {
                     "unexpected release URL for {version} {target}: {url}"
                 );
                 assert!(
-                    url.ends_with(&format!("herdr-{target}")),
+                    url.ends_with(&format!("agent-fabric-fleetdeck-{target}")),
                     "unexpected asset name for {version} {target}: {url}"
                 );
-            }
-            if let Some(windows) = assets.get("windows-x86_64") {
-                let windows: AssetRef = serde_json::from_value(windows.clone())
-                    .unwrap_or_else(|_| panic!("invalid Windows asset for release {version}"));
-                assert!(windows.url.ends_with("/herdr-windows-x86_64.zip"));
-                let checksums = release
-                    .get("sha256")
-                    .and_then(serde_json::Value::as_object)
-                    .unwrap_or_else(|| panic!("missing checksums for release {version}"));
-                assert!(checksums
-                    .get("windows-x86_64")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|value| value.len() == 64));
+                assert!(
+                    release
+                        .get("sha256")
+                        .and_then(|sums| sums.get(target))
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|sum| sum.len() == 64),
+                    "missing SHA-256 checksum for {version} {target}"
+                );
             }
         }
     }
