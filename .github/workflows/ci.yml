@@ -122,16 +122,17 @@ jobs:
     env:
       LEG: ubuntu-latest
     steps: &check-steps
-      # What the steps below assume a runner image already has.
+      # What the steps below, and the tests (ssh for the remote-attach
+      # probe, ps for the session tests), assume a host already has.
       - name: Container prerequisites (Debian)
         if: startsWith(env.LEG, 'debian')
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3 xz-utils unzip
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3 xz-utils unzip openssh-client procps
 
       - name: Container prerequisites (Fedora)
         if: startsWith(env.LEG, 'fedora')
-        run: dnf install -y curl git gcc gcc-c++ make pkgconf-pkg-config python3 xz unzip tar findutils which
+        run: dnf install -y curl git gcc gcc-c++ make pkgconf-pkg-config python3 xz unzip tar findutils which openssh-clients procps-ng
 
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
