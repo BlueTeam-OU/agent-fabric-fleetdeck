@@ -19,8 +19,11 @@ ignore = [
 [licenses]
 version = 2
 confidence-threshold = 0.8
-# 0BSD: doctest-file and recvmsg (through interprocess). Zlib: foldhash
-# (through hashbrown). Both are permissive, OSI-approved licences.
+# Every licence below is permissive and OSI-approved; each names what needs it.
+# Apache-2.0 and MIT: this crate and most of the graph (most crates are dual
+# licensed). Unicode-3.0: unicode-ident, through proc-macro2 and syn.
+# 0BSD: doctest-file and recvmsg, through interprocess. Zlib: foldhash,
+# through hashbrown.
 allow = ["0BSD", "Apache-2.0", "MIT", "Unicode-3.0", "Zlib"]
 
 [bans]
