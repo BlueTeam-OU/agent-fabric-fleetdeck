@@ -1949,6 +1949,15 @@ mod windows_records {
         chord("altgr+shift", true, false, false, true),
     ];
 
+    /// The letter a `vkNN` key name stands for (VK_A..VK_Z), as the client
+    /// resolves a Ctrl chord to its base-layout key; other names have none.
+    fn letter_of_virtual_key(name: &str) -> Option<String> {
+        let vk = u8::from_str_radix(name.strip_prefix("vk")?, 16).ok()?;
+        (0x41..=0x5a)
+            .contains(&vk)
+            .then(|| char::from(vk).to_ascii_lowercase().to_string())
+    }
+
     fn virtual_keys() -> Vec<(String, u16, bool)> {
         let mut keys: Vec<(String, u16, bool)> = Vec::new();
         for vk in (0x41..=0x5a).chain(0x30..=0x39) {
@@ -2132,7 +2141,7 @@ mod windows_records {
                     let released = deliver_record(&mut herdr, &mut input, release, layout);
                     let fork_key = forks_herdr_key(
                         chord.name,
-                        key_name.as_str(),
+                        &letter_of_virtual_key(&key_name).unwrap_or_else(|| key_name.clone()),
                         herdr.runtime.plain_page_keys_use_host_scrollback() == Some(true),
                     );
                     let (Some(pressed), Some(released), false) = (pressed, released, fork_key)
