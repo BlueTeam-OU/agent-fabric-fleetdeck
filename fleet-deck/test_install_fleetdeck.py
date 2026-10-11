@@ -163,5 +163,41 @@ class RunTest(unittest.TestCase):
         self.assertIsNone(install.server_status("/nonexistent/herdr-like", subprocess.run))
 
 
+class ZigTest(unittest.TestCase):
+    """The build's Zig is checked before anything runs, dry run included."""
+
+    def test_the_required_release_is_read_from_the_vendored_manifest(self):
+        with open(f"{install.ROOT}/{install.ZIG_MANIFEST}", encoding="utf-8") as handle:
+            self.assertIn(f'.minimum_zig_version = "{install.required_zig(install.ROOT)}"', handle.read())
+
+    def test_the_named_release_and_its_later_patches_pass(self):
+        for answer in ("0.16.0", "0.16.3"):
+            self.assertIsNone(install.zig_problem("0.16.0", "zig", answer), answer)
+
+    def test_another_minor_an_older_patch_a_dev_build_or_no_answer_is_refused_saying_how(self):
+        for answer in ("0.15.2", "0.17.0", "1.16.0", "0.16.0-dev.1234+abc", "zig", None):
+            problem = install.zig_problem("0.16.1" if answer == "0.15.2" else "0.16.0", "zig", answer)
+            self.assertIsNotNone(problem, answer)
+            self.assertIn("https://ziglang.org/download/", problem)
+            self.assertIn("ZIG", problem)
+        self.assertIsNotNone(install.zig_problem("0.16.1", "zig", "0.16.0"), "an older patch")
+
+    def test_a_zig_problem_refuses_before_any_step_dry_run_included(self):
+        steps = plan(root="/src/fd", bin_dir="/home/op/.local/bin", jobs=4, new_version="0.10.0",
+                     fleetdeck=None, legacy=None, config_home="/home/op/.config",
+                     config_exists=lambda path: False, zig="building needs Zig 0.16.0")
+        self.assertEqual(commands(steps), [])
+        for dry_run in (True, False):
+            said, ran = [], []
+            code = run_steps(steps, dry_run=dry_run, cwd="/src/fd",
+                             run=lambda argv, **_: ran.append(argv), say=said.append)
+            self.assertEqual(code, 1)
+            self.assertEqual(ran, [])
+            self.assertIn("Nothing was built or installed", said[-1])
+
+    def test_an_absent_zig_gives_no_answer(self):
+        self.assertIsNone(install.zig_answer("/nonexistent/zig", subprocess.run))
+
+
 if __name__ == "__main__":
     unittest.main()
