@@ -65,7 +65,9 @@ impl SocketAccessGate {
 
     /// A gate whose revalidation places every peer with `place`, for tests of
     /// the connection paths that cannot put a real process inside a pane.
-    #[cfg(test)]
+    /// Unix only: those paths revoke open connections, which Windows does not
+    /// do yet.
+    #[cfg(all(test, unix))]
     pub(crate) fn placing_peers_with(
         mode: SocketAccess,
         place: fn(Option<u32>) -> PeerPlace,

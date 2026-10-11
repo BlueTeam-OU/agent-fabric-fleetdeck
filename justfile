@@ -1,4 +1,4 @@
-# herdr task runner
+# Agent Fabric FleetDeck task runner
 set windows-shell := ["cmd.exe", "/d", "/s", "/c"]
 
 python := if os() == "windows" { "python" } else { "python3" }
@@ -13,7 +13,7 @@ test:
 
 # Run repository maintenance contract tests
 maintenance-test:
-    {{python}} -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_hermes_integration_asset scripts.test_package_windows_conpty scripts.test_preview scripts.test_release scripts.test_unix_installer scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_windows_cross scripts.test_windows_input
+    {{python}} -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_hermes_integration_asset scripts.test_package_windows_conpty scripts.test_preview scripts.test_release scripts.test_unix_installer scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty scripts.test_windows_cross scripts.test_windows_input scripts.test_windows_installer_messages
     bun test scripts/release-workflows.test.ts
 
 # Local interactive Windows Terminal input qualification (never runs in normal CI).
@@ -52,9 +52,17 @@ ci-tests filter='all()':
     just integration-assets-test
     just fleet-deck-test
 
-# Fleet Deck (gzapi-org's fork only): the tab state machine, the deck around it, and the fleet views
+# Fleet Deck (gzapi-org's fork only): the tab state machine, the deck around it, and the fleet views.
+# Linux only, like the deck itself: it reads /proc, SO_PEERCRED and Linux's flock layout.
+[linux]
 fleet-deck-test:
-    cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view
+    cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view test_install_fleetdeck
+
+# Unquoted, so the line reads the same under sh and cmd.exe.
+[macos]
+[windows]
+fleet-deck-test:
+    @echo fleet-deck-test: not run, the Fleet Deck runs only on Linux, see fleet-deck/README.md
 
 # Download the Windows SDK once (requires xwin; prompts for Microsoft's SDK license)
 [unix]
@@ -95,33 +103,33 @@ build:
 
 # Non-gating full-render scaling profile for background workspaces and active panes
 bench-render-scale:
-    cargo test --release --locked --bin herdr render_scale_profile -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck render_scale_profile -- --ignored --nocapture --test-threads=1
 
 # Profile terminal target name resolution at increasing pane counts.
 bench-terminal-targets:
-    cargo test --release --locked --bin herdr terminal_target_lookup_profile -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck terminal_target_lookup_profile -- --ignored --nocapture --test-threads=1
 
 # Profile Windows foreground inspection of isolated idle shells, without a server.
 [windows]
 bench-process-inspection:
-    cargo test --release --locked --bin herdr windows_process_inspection_profile -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck windows_process_inspection_profile -- --ignored --nocapture --test-threads=1
 
 # Profile BSP split collection and construction with balanced and skewed trees.
 bench-bsp-layout:
-    cargo test --release --locked --bin herdr bsp_layout_profile -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck bsp_layout_profile -- --ignored --nocapture --test-threads=1
 
 # Profile full and retained text, static-image, and unchanged-image updates.
 bench-retained-graphics:
-    cargo test --release --locked --bin herdr render_scale_profile_retained_graphics -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck render_scale_profile_retained_graphics -- --ignored --nocapture --test-threads=1
 
 # Profile first-batch latency and aggregate drain cost for external API bursts.
 bench-api-fairness:
-    cargo test --release --locked --bin herdr external_api_burst_profile -- --ignored --nocapture --test-threads=1
+    cargo test --release --locked --bin agent-fabric-fleetdeck external_api_burst_profile -- --ignored --nocapture --test-threads=1
 
 # ~3-5 minute CPU comparison; downloads stable unless HERDR_PERF_BASELINE_BIN is set
 bench-release-smoke:
     cargo build --release --locked
-    scripts/release_perf_smoke.sh "${CARGO_TARGET_DIR:-target}/release/herdr"
+    scripts/release_perf_smoke.sh "${CARGO_TARGET_DIR:-target}/release/agent-fabric-fleetdeck"
 
 # Test public documentation snapshot and release lifecycle tooling
 docs-contract-test:
@@ -221,7 +229,7 @@ release-prepare $version $preview:
     python3 scripts/changelog.py prepare --version "$version"
     cp CHANGELOG.md docs/next/CHANGELOG.md
     sed -i.bak "s/^version = \".*\"/version = \"$version\"/" Cargo.toml && rm -f Cargo.toml.bak
-    cargo update -p herdr --offline
+    cargo update -p agent-fabric-fleetdeck --offline
     just check
     git add CHANGELOG.md docs/next/CHANGELOG.md Cargo.toml Cargo.lock skills/herdr/SKILL.md
     git diff --cached --quiet || git commit -m "release: v$version"
@@ -251,7 +259,7 @@ release-publish $version $preview:
     just release-docs-check
     python3 scripts/changelog.py extract --version "$version" --output /tmp/herdr-release-notes-check.md
     rm -f /tmp/herdr-release-notes-check.md
-    @previous="$(git show origin/master:distribution/latest.json | python3 -c 'import json,sys; print("v" + json.load(sys.stdin)["version"])')"; \
+    @previous="$(python3 scripts/release.py previous-stable)" && \
     python3 scripts/release.py check --preview "$preview" --version "$version" --previous "$previous" && \
     git tag -a "v$version" -m "v$version" -m "Preview: $preview" -m "Previous-Stable: $previous"
     git push origin "v$version"

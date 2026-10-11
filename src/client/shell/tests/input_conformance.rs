@@ -170,12 +170,71 @@ const MODS: [(u16, &str); 4] = [
 ];
 
 /// gzapi-org's fork: the keys herdr keeps for its own actions, so they never
-/// reach the pane (harness_keys pins that no harness binds them): ctrl+alt+c
-/// copies, ctrl+alt+p pastes, cmd+c copies where a host forwards it, and
-/// alt+PageUp/PageDown scroll herdr's scrollback where the pane would let it.
+/// reach the pane (harness_keys pins that no harness binds them): the copy and
+/// paste keys, asked of the predicates the client itself uses so this list
+/// cannot fall behind a platform's keys, and alt+PageUp/PageDown, which scroll
+/// herdr's scrollback where the pane would let it.
 fn forks_herdr_key(mods: &str, key: &str, host_scrollback: bool) -> bool {
-    matches!((mods, key), ("ctrl+alt", "c" | "p") | ("super", "c"))
-        || mods == "alt" && matches!(key, "pageup" | "pagedown") && host_scrollback
+    forks_herdr_key_for_platform(mods, key, host_scrollback, cfg!(target_os = "macos"))
+}
+
+fn forks_herdr_key_for_platform(mods: &str, key: &str, host_scrollback: bool, macos: bool) -> bool {
+    if mods == "alt" && matches!(key, "pageup" | "pagedown") {
+        return host_scrollback;
+    }
+    let mut chars = key.chars();
+    let (Some(ch), None) = (chars.next(), chars.next()) else {
+        return false;
+    };
+    let mut modifiers = KeyModifiers::NONE;
+    for name in mods.split('+') {
+        modifiers |= match name {
+            "ctrl" => KeyModifiers::CONTROL,
+            "alt" => KeyModifiers::ALT,
+            "shift" => KeyModifiers::SHIFT,
+            "super" => KeyModifiers::SUPER,
+            _ => KeyModifiers::NONE,
+        };
+    }
+    let key = crate::input::TerminalKey::new(KeyCode::Char(ch), modifiers);
+    super::input::is_retained_selection_copy_key(&key)
+        || super::input::is_pane_paste_key_for_platform(&key, macos)
+}
+
+#[test]
+fn the_forks_keys_follow_the_clients_copy_and_paste_keys_on_each_platform() {
+    for macos in [false, true] {
+        for (mods, key) in [("ctrl+alt", "c"), ("super", "c"), ("ctrl+alt", "p")] {
+            assert!(
+                forks_herdr_key_for_platform(mods, key, false, macos),
+                "{mods}+{key}"
+            );
+        }
+        for (mods, key) in [
+            ("ctrl", "c"),
+            ("ctrl", "v"),
+            ("ctrl+alt", "v"),
+            ("alt", "p"),
+        ] {
+            assert!(
+                !forks_herdr_key_for_platform(mods, key, false, macos),
+                "{mods}+{key}"
+            );
+        }
+        assert!(forks_herdr_key_for_platform("alt", "pageup", true, macos));
+        assert!(!forks_herdr_key_for_platform("alt", "pageup", false, macos));
+    }
+    // cmd+v is herdr's paste on macOS only.
+    for mods in ["super", "shift+super"] {
+        assert!(
+            forks_herdr_key_for_platform(mods, "v", false, true),
+            "{mods}+v on macOS"
+        );
+        assert!(
+            !forks_herdr_key_for_platform(mods, "v", false, false),
+            "{mods}+v elsewhere"
+        );
+    }
 }
 
 fn mods_name(mods: u16) -> String {
@@ -1890,6 +1949,17 @@ mod windows_records {
         chord("altgr+shift", true, false, false, true),
     ];
 
+    /// The letter a `vkNN` key name stands for (VK_A..VK_Z): a Ctrl chord that
+    /// types no character reaches the client as that letter (it falls back to
+    /// the virtual key). Other names have none. A layout where Ctrl+Alt+letter
+    /// types a character would need its own mapping here.
+    fn letter_of_virtual_key(name: &str) -> Option<String> {
+        let vk = u8::from_str_radix(name.strip_prefix("vk")?, 16).ok()?;
+        (0x41..=0x5a)
+            .contains(&vk)
+            .then(|| char::from(vk).to_ascii_lowercase().to_string())
+    }
+
     fn virtual_keys() -> Vec<(String, u16, bool)> {
         let mut keys: Vec<(String, u16, bool)> = Vec::new();
         for vk in (0x41..=0x5a).chain(0x30..=0x39) {
@@ -2073,7 +2143,7 @@ mod windows_records {
                     let released = deliver_record(&mut herdr, &mut input, release, layout);
                     let fork_key = forks_herdr_key(
                         chord.name,
-                        key_name.as_str(),
+                        &letter_of_virtual_key(&key_name).unwrap_or_else(|| key_name.clone()),
                         herdr.runtime.plain_page_keys_use_host_scrollback() == Some(true),
                     );
                     let (Some(pressed), Some(released), false) = (pressed, released, fork_key)

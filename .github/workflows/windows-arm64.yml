@@ -7,12 +7,14 @@ on:
       - ".github/workflows/windows-arm64.yml"
       - "scripts/windows_arm64_installer_test.ps1"
       - "distribution/install.ps1"
+      - "distribution/preview.json"
   push:
     branches: [master]
     paths:
       - ".github/workflows/windows-arm64.yml"
       - "scripts/windows_arm64_installer_test.ps1"
       - "distribution/install.ps1"
+      - "distribution/preview.json"
 
 permissions:
   contents: read

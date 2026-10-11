@@ -423,7 +423,7 @@ pub(crate) fn create_remote_ssh_config_dir(control_socket_name: &str) -> std::io
         return Err(err);
     }
     let message = if path_fits {
-        "failed to create private herdr ssh config directory"
+        "failed to create private agent-fabric-fleetdeck ssh config directory"
     } else {
         "SSH control socket path exceeds the Unix socket length limit"
     };
@@ -471,7 +471,11 @@ pub(crate) fn remote_bridge_endpoint_path(readable_name: &str, short_name: &str)
 }
 
 pub(crate) fn remote_reattach_program(program: &str) -> String {
-    shell_quote(if program.is_empty() { "herdr" } else { program })
+    shell_quote(if program.is_empty() {
+        crate::identity::BIN_NAME
+    } else {
+        program
+    })
 }
 
 pub(crate) fn remote_reattach_argument(value: &str) -> String {
@@ -870,5 +874,70 @@ pub(super) fn read_clipboard_command_text(
     match read {
         super::LimitedRead::Complete(bytes) if succeeded => Ok(String::from_utf8(bytes).ok()),
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    // The reader is shared by Linux and macOS; these run on both, so neither
+    // platform's build carries it untested.
+    fn clipboard_deadline(millis: u64) -> std::time::Instant {
+        std::time::Instant::now() + std::time::Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn clipboard_command_text_is_read_as_utf8() {
+        assert_eq!(
+            read_clipboard_command_text(
+                "printf",
+                &["feature/linear-302"],
+                clipboard_deadline(5000)
+            ),
+            Ok(Some("feature/linear-302".to_string()))
+        );
+    }
+
+    #[test]
+    fn clipboard_command_that_fails_gives_no_text_and_lets_the_caller_go_on() {
+        assert_eq!(
+            read_clipboard_command_text(
+                "sh",
+                &["-c", "printf partial; exit 1"],
+                clipboard_deadline(5000)
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            read_clipboard_command_text(
+                "herdr-no-such-clipboard-command",
+                &[],
+                clipboard_deadline(5000)
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn clipboard_command_output_over_the_limit_is_refused() {
+        assert_eq!(
+            read_clipboard_command_text(
+                "sh",
+                &["-c", "yes x | head -c 1048578"],
+                clipboard_deadline(5000)
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_stalled_clipboard_command_is_abandoned_at_the_deadline() {
+        let started = std::time::Instant::now();
+        assert_eq!(
+            read_clipboard_command_text("sleep", &["30"], clipboard_deadline(200)),
+            Err(ClipboardStalled)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 }

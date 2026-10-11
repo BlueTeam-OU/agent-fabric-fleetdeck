@@ -44,4 +44,5 @@ if ($Mode -eq "lint") {
 }
 
 Invoke-Checked just @("test")
+Invoke-Checked just @("fleet-deck-test")
 Invoke-Checked cargo @("build", "--locked")

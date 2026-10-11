@@ -642,6 +642,10 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
 /// client offers Paste only where it can work.
 pub const CAN_READ_CLIPBOARD_TEXT: bool = true;
 
+// Test builds swap in a reader that never touches the developer's clipboard
+// (client::shell::state::default_clipboard_text_reader), so nothing calls this
+// there; the reader it delegates to is tested in unix_common.
+#[cfg_attr(test, allow(dead_code))]
 pub fn read_clipboard_text() -> Option<String> {
     let deadline = std::time::Instant::now() + super::unix_common::CLIPBOARD_TEXT_READ_BUDGET;
     super::unix_common::read_clipboard_command_text("pbpaste", &[], deadline)
