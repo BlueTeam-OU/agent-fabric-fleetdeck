@@ -37,8 +37,10 @@ cargo build --release          # needs Zig 0.16.0 for the vendored libghostty-vt
 install -m 755 target/release/agent-fabric-fleetdeck ~/.local/bin/
 ```
 
-After the first release, `distribution/install.sh` installs the release
-binary for your platform.
+FleetDeck runs on Linux: its releases are built for Debian and Fedora,
+on x86_64 and aarch64, and for no other platform. After the first
+release, `distribution/install.sh` installs the release binary; it
+refuses macOS before downloading anything.
 
 Start it where the work lives:
 
@@ -52,10 +54,19 @@ agent-fabric-fleetdeck
 
 ## Docs
 
-`docs/` holds Herdr's documentation as Herdr published it. Its commands
-read `herdr`; with FleetDeck, type `agent-fabric-fleetdeck` instead.
+FleetDeck's documentation is this file, [docs/fleetdeck/](docs/fleetdeck/),
+[fleet-deck/README.md](fleet-deck/README.md), and what
 `agent-fabric-fleetdeck --help` and `agent-fabric-fleetdeck --skill`
-already use this build's names.
+print. FleetDeck has no website.
+
+`docs/next/`, `docs/preview/` and `docs/versions/` are Herdr's
+documentation, kept as Herdr wrote it so that upstream imports stay small.
+They describe Herdr: their commands read `herdr`, and their install pages
+(macOS, Windows, Homebrew, `herdr.dev`) do not apply to FleetDeck. Where
+they describe the runtime they share, such as workspaces, panes, agents
+and the socket API, they still hold; type `agent-fabric-fleetdeck` for
+`herdr`. The keys do not: FleetDeck's prefix is ctrl+6, and its copy,
+paste and scroll keys are in [fleet-deck/README.md](fleet-deck/README.md).
 
 ## Development
 
