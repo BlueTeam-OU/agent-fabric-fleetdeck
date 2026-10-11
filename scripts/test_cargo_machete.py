@@ -10,15 +10,18 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "cargo_machete.py"
 
-# Stubs for cargo and cargo-machete: each prints $<NAME>_OUT / $<NAME>_ERR
-# and exits $<NAME>_RC, so every outcome of the real tools can be staged.
+# Stubs for cargo and cargo-machete: each records its arguments, prints
+# $<NAME>_OUT / $<NAME>_ERR and exits $<NAME>_RC, so every outcome of the
+# real tools can be staged.
 STUB = """#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB_ARGS/{name}"
 printf '%s' "${{{name}_OUT}}"
 printf '%s' "${{{name}_ERR}}" >&2
 exit "${{{name}_RC:-0}}"
 """
 
 
+@unittest.skipUnless(os.name == "posix", "the stub tools are POSIX shell scripts")
 class CargoMacheteTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -32,7 +35,7 @@ class CargoMacheteTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_script(self, **env: str) -> subprocess.CompletedProcess[str]:
-        full = {"PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin", **env}
+        full = {"PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin", "STUB_ARGS": str(self.bin), **env}
         return subprocess.run(
             [sys.executable, str(SCRIPT)], env=full, capture_output=True, text=True, timeout=60
         )
@@ -40,6 +43,11 @@ class CargoMacheteTest(unittest.TestCase):
     def test_clean_workspace_passes(self) -> None:
         result = self.run_script(MACHETE_OUT="cargo-machete didn't find any unused dependencies\n")
         self.assertEqual(result.returncode, 0, result.stderr)
+        # The two flags the verdict rests on: the committed lockfile, and
+        # the metadata mode that judges every crate (and reports one it
+        # could not read).
+        self.assertEqual((self.bin / "CARGO").read_text(), "metadata --locked --format-version 1\n")
+        self.assertEqual((self.bin / "MACHETE").read_text(), "--with-metadata\n")
 
     def test_unused_dependency_fails(self) -> None:
         result = self.run_script(MACHETE_OUT="agent-fabric-fleetdeck -- ./Cargo.toml:\n\tfoo\n", MACHETE_RC="1")
