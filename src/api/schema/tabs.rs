@@ -36,6 +36,20 @@ pub struct TabMoveParams {
     pub insert_index: usize,
 }
 
+/// Moves a tab, its panes still running, into another workspace. A method
+/// of its own rather than a field on `tab.move`: an older server would
+/// ignore the field, reorder the tab in place and report success.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TabMoveToWorkspaceParams {
+    pub tab_id: String,
+    pub workspace_id: String,
+    /// Where among the target workspace's tabs; the end when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insert_index: Option<usize>,
+    #[serde(default)]
+    pub focus: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TabInfo {
     pub tab_id: String,

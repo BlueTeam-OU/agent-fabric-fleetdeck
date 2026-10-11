@@ -102,7 +102,7 @@ Raw socket method names use dot notation:
 | Session | `session.snapshot` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
-| Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.close` |
+| Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.move_to_workspace`, `tab.close` |
 | Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
 | Popup | `popup.close` |
 | Layout | `layout.export`, `layout.apply`, `layout.set_split_ratio` |
@@ -819,6 +819,16 @@ Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
 `tab.renamed`, and `tab.moved`. `tab.moved` includes the moved `tab_id`,
 `workspace_id`, requested `insert_index`, and updated ordered `tabs` list for
 that workspace.
+
+`tab.move` reorders a tab within its workspace. `tab.move_to_workspace`
+(`tab_id`, `workspace_id`, optional `insert_index`, `focus`) moves a tab with
+its running panes into another workspace and returns the tab under its new
+id. It emits `tab.closed` for the old id, `workspace.closed` when the source
+workspace had no other tab, and `tab.created` for the new one. The panes take
+the target workspace's next public numbers; their previous pane ids keep
+resolving, the previous tab id does not. A tab already in that workspace is
+left where it is. Moving the last tab out of a workspace that would close a
+worktree group is refused with `tab_move_failed`.
 Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
 `pane.moved`, `pane.exited`, `pane.agent_detected`,
 `pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
