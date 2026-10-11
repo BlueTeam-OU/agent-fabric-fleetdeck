@@ -3988,6 +3988,36 @@ mod tests {
         assert_release_manifest(&json, &manifest);
     }
 
+    /// A release manifest whose aarch64 checksum is one character short,
+    /// at the top level or (`listed`) in release 1.0.0 alone.
+    fn short_checksum_manifest(listed: bool) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&release_manifest_json(&RELEASED_TARGETS)).expect("json");
+        let sums = if listed {
+            &mut value["releases"]["1.0.0"]["sha256"]
+        } else {
+            &mut value["sha256"]
+        };
+        sums["linux-aarch64"] = serde_json::Value::String("a".repeat(63));
+        value.to_string()
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for linux-aarch64")]
+    fn a_release_manifest_with_a_short_aarch64_checksum_is_refused() {
+        let json = short_checksum_manifest(false);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing SHA-256 checksum for 1.0.0 linux-aarch64")]
+    fn a_listed_release_with_a_short_aarch64_checksum_is_refused() {
+        let json = short_checksum_manifest(true);
+        let manifest: UpdateManifest = serde_json::from_str(&json).expect("a release manifest");
+        assert_release_manifest(&json, &manifest);
+    }
+
     /// What a FleetDeck release ships, by the owner's rule of 2026-10-11:
     /// Debian and Fedora, x86-64 and aarch64, and nothing else (the release
     /// workflow, .github/workflows/release.yml, names each asset
