@@ -1,6 +1,8 @@
 # Fleet Deck
 
 The operator's console over the agent fleet, built into Agent Fabric FleetDeck.
+It runs on Linux only, where agent-fabric's hosts run: it reads `/proc`,
+asks a socket's peer with `SO_PEERCRED`, and drives accounts through `moveto`.
 Each agent account gets one tab, labelled with its login, holding three
 panes:
 

@@ -52,9 +52,15 @@ ci-tests filter='all()':
     just integration-assets-test
     just fleet-deck-test
 
-# Fleet Deck (gzapi-org's fork only): the tab state machine, the deck around it, and the fleet views
+# Fleet Deck (gzapi-org's fork only): the tab state machine, the deck around it, and the fleet views.
+# Linux only, like the deck itself: it reads /proc, SO_PEERCRED and Linux's flock layout.
+[linux]
 fleet-deck-test:
     cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view test_install_fleetdeck
+
+[macos]
+fleet-deck-test:
+    @echo "fleet-deck-test: not run; the Fleet Deck runs only on Linux (fleet-deck/README.md)"
 
 # Download the Windows SDK once (requires xwin; prompts for Microsoft's SDK license)
 [unix]
