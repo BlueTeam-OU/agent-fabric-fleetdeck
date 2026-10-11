@@ -159,7 +159,11 @@ gets its tab within 10 s. One whose restore failed part-way is restored
 again whole within 10 s, and is followed in nothing until then.
 - **The tab.** A missing tab is created. On a host's first setup the role
   catalogue's group seeds the workspace; afterwards a new account goes to
-  its group's workspace if one still exists, else to `New`.
+  its group's workspace if one still exists, else to `New`. An account
+  whose role is not bound yet (`moveto --list` shows `-`) gets no tab until
+  it is: FleetDeck cannot move a tab to another workspace, so one made then
+  would stay in `New`. The deck's log says so once. One that waited
+  through the host's first setup is seeded as on first setup once bound.
 - **A milestone-1 tab** (one unlabelled pane) keeps that pane as the
   harness and gains the shell and status panes.
 - **A tab split by hand** with no `harness` pane is left alone, and the
@@ -190,7 +194,8 @@ agent's name, so the deck's word goes in its place, and FleetDeck's own
 
 | state | FleetDeck state (icon, notifications) | the row reads |
 |---|---|---|
-| a harness runs in the pane | the session's: `working`, `idle` or `blocked` | `claude` |
+| a harness runs in the pane | the session's: `working` or `idle` | `claude` |
+| a harness runs, and its session waits on a person | `blocked` | why: `permission` or `question`; `needs you` where the session does not say |
 | waiting for Enter | `idle` | `dormant` |
 | the account's shell after a session ended here | `idle` | `shell` |
 | a `--resume` the deck started, no harness yet | `working` | `restoring` |
@@ -340,11 +345,11 @@ account tabs as before.
 
 | view | opens as | shows |
 |---|---|---|
-| **board** | the `fleet` tab | one row per placed agent: state, current job, closed/open jobs, RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
+| **board** | the `fleet` tab | one row per placed agent, who needs you first: state, whether it needs you (and why, and for how long), current job, closed/open jobs, RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
 | **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, open jobs; largest first, scaled to the largest, labelled "operational, not a score" |
 | **plan** | `p` in the fleet tab | each plan the coordinator keeps (agent-fabric ADR-047): its steps on a board by state (to do, queued, doing, delivered, done, and any other state), and a Gantt below |
 | **PRs** | a popup (`fabric.fleet.prs`), or `P` in the fleet tab | in-flight pull requests by owner, each with its repository, title, work and fix commits, checks, review, armed, and the gate's verdict |
-| **agent** | an overlay over the tab it was opened from, or Enter on a board row | state, role, project, session, what it waits on; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
+| **agent** | an overlay over the tab it was opened from, or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
 
 - **Keys.** ↑/↓ (or j/k), PgUp/PgDn, Home/End move. Enter on the board opens
   that agent, and Esc goes back to the board. In the fleet tab, `b`, `c`,
@@ -352,7 +357,23 @@ account tabs as before.
   PRs for the screen it was opened from. In compare, ←/→ (or h/l, Tab)
   and 1-6 choose the metric; the chosen one is bracketed in the footer.
   `r` refetches the screen's sections once. `q` closes the pane, as does
-  Esc on an overlay or the popup.
+  Esc on an overlay or the popup. On the board, `n` and `N` jump to the
+  next and the previous agent that needs you, `s` switches between the
+  needs-you order and the registry's, and `v` between the full board and a
+  compact one (agent, needs you, current job); the footer says what each
+  switches to.
+- **Needs you.** fleet.py's `attention` (agent-fabric `tools/fabric/fleet.py`),
+  told in the view from the `states` and `jobs` records it already reads,
+  with fleet.py's own reader: never fetched on its own. A session that waits
+  on a person reads `permission`, `question`, or `needs you` where it does
+  not say, with how long; an open job blocked on something else reads
+  `waiting` and the job's own words, shown as text only. The order is who
+  needs you, then who waits, then who cannot be told, then the rest; the
+  longest waiting first. What fleet.py could not tell is unknown (`?`, its
+  why in the footer), never "nothing waits": the title counts it. In the
+  agent view a context share or output activity not reported reads unknown,
+  never 0 or quiet. Every colour (magenta for needs you, cyan for waiting)
+  has its word beside it.
 - **Compare.** A value that was not read has no bar and reads `…` or `?`,
   and is listed after the rest; the footer says why. "Jobs done" counts
   jobs closed as done, never dropped: fleet.py's `done_total`. Without

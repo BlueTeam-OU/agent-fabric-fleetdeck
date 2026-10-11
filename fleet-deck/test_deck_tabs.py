@@ -50,6 +50,16 @@ class Live_(unittest.TestCase):
         self.assertEqual(live, Live(count=3, state="blocked", fresh=True))
         self.assertEqual(live_from_record([], 10), Live(0, "none", True))
 
+    def test_the_reason_is_the_first_blocked_sessions_and_only_a_known_word(self):
+        live = live_from_record([("a", "working", None), ("b", "blocked", "question"), ("c", "blocked", "permission")], 10)
+        self.assertEqual((live.state, live.reason), ("blocked", "question"))
+        # The first blocked session did not say why: unknown, not the next one's reason.
+        self.assertIsNone(live_from_record([("b", "blocked", None), ("c", "blocked", "permission")], 10).reason)
+        self.assertIsNone(live_from_record([("b", "blocked", "rm -rf /")], 10).reason)
+        self.assertIsNone(live_from_record([("b", "blocked", ["question"])], 10).reason)
+        # A reason left on a session that is no longer blocked is not one.
+        self.assertIsNone(live_from_record([("b", "idle", "question")], 10).reason)
+
     def test_older_than_two_heartbeats_is_not_fresh_and_no_record_is_none(self):
         self.assertFalse(live_from_record([], STALE_AFTER_S + 1).fresh)
         self.assertIsNone(live_from_record([], None))
@@ -245,10 +255,16 @@ class Classify(unittest.TestCase):
 
 class Display(unittest.TestCase):
     def test_each_state_reads_as_the_contract_says(self):
-        self.assertEqual(display(Track(State.RUNNING), Live(2, "blocked", True)), Shown("blocked", ""))
+        self.assertEqual(display(Track(State.RUNNING), Live(2, "blocked", True)), Shown("blocked", "needs you"))
         self.assertEqual(display(Track(State.RUNNING), NONE), Shown("working", ""))
         self.assertEqual(display(Track(State.STARTING), NONE), Shown("working", "restoring"))
         self.assertEqual(display(Track(State.ELSEWHERE), ONE), Shown("unknown", "running elsewhere"))
+
+    def test_a_session_waiting_on_a_person_says_why_in_the_tab(self):
+        # herdr marks blocked by colour alone; the word goes with it.
+        for reason in ("permission", "question"):
+            self.assertEqual(display(Track(State.RUNNING), Live(1, "blocked", True, reason)), Shown("blocked", reason))
+        self.assertEqual(display(Track(State.RUNNING), Live(1, "working", True)), Shown("working", ""))
 
     def test_stale_overrides_the_display(self):
         stale = Live(1, "working", fresh=False)

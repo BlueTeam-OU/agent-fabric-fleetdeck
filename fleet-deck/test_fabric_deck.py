@@ -11,6 +11,7 @@ from fabric_deck import (
     BOARD_DIR,
     PANE_MAP_REFRESH_S,
     NEW_WORKSPACE,
+    UNBOUND,
     RESEND_AFTER_S,
     RESTORE_SETTLE_S,
     Account,
@@ -104,6 +105,16 @@ class Records(unittest.TestCase):
         self.assertEqual((odd.state, odd.last_session, odd.resumable), ("", None, None))
         self.assertEqual(odd.sessions, (Session("s1", "unknown", ""),))
         self.assertEqual(parse_state_line('{"address":"h/ui",%s,"sessions":{}}' % ts).sessions, ())
+
+    def test_a_blocked_sessions_reason_is_kept_only_as_a_known_word(self):
+        ts = '"ts":"2026-10-08T05:00:00Z"'
+        parsed = parse_state_line(
+            '{"address":"h/ui",%s,"sessions":[{"session":"s1","state":"blocked","reason":"permission"},'
+            '{"session":"s2","state":"blocked","reason":"\\u001b[2J"},{"session":"s3","state":"blocked","reason":7},'
+            '{"session":"s4","state":"blocked","reason":["permission"]},{"session":"s5","state":"blocked","reason":{}}]}' % ts
+        )
+        # An unhashable value tested against the set would raise and drop the account's record.
+        self.assertEqual([x.reason for x in parsed.sessions], ["permission", None, None, None, None])
 
     def test_the_streams_no_record_row_is_no_record(self):
         # ctl.mjs stateRow for an account with nothing on the channel: no ts.
@@ -206,7 +217,9 @@ class FakeHerdr(Herdr):
                 self.workspace_lists_ok -= 1
             return {"workspaces": list(self.workspace_list)}
         if head == ("workspace", "create"):
-            w = self._id("w")
+            # Its own prefix: a seeded workspace is w1, and a created one
+            # sharing the counter would collide with it.
+            w = self._id("ws")
             self.workspace_list.append({"workspace_id": w, "label": args[3]})
             self.tabs[w] = []
             return {"workspace": {"workspace_id": w}, "tab": {"tab_id": self.add_tab(None, [], w)}}
@@ -257,13 +270,16 @@ class Harness:
     """A deck over a FakeHerdr, with the stream's records, a /proc tree and
     the record of what was shown as plain values a test sets."""
 
-    def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False):
+    def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False,
+                 roles=None, catalog=None):
         self.herdr = herdr or FakeHerdr()
         self.records = {}
         self.tree, self.argvs = {}, {}
         self.store = None if befores is None else dict(befores)
         self.logs = []
         self.logins = list(logins)
+        # moveto --list's role per login: rust-ui-dev unless a test says.
+        self.roles = dict(roles or {})
         self.instance = SERVER
         self.wall = NOW
 
@@ -272,11 +288,11 @@ class Harness:
 
         self.deck = Deck(
             herdr=self.herdr,
-            accounts=lambda: [Account(login, "rust-ui-dev") for login in self.logins],
+            accounts=lambda: [Account(login, self.roles.get(login, "rust-ui-dev")) for login in self.logins],
             records=self.records,
             modes=modes,
             cwd="/c",
-            catalog=None,
+            catalog=catalog,
             parents=lambda: dict(self.tree),
             argv=lambda pid: self.argvs.get(pid, []),
             load=lambda: None if self.store is None else dict(self.store),
@@ -416,6 +432,37 @@ class FleetTab(unittest.TestCase):
 
 
 class Restore(unittest.TestCase):
+    def test_an_account_with_no_role_bound_gets_its_tab_in_its_roles_workspace_once_bound(self):
+        h = Harness(roles={"ui": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertFalse(any(c[:2] == ("tab", "create") for c in h.herdr.calls), "no tab in New for good")
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        self.assertEqual(sum("no role bound yet" in line for line in h.logs), 1, "said once")
+        h.roles["ui"] = "rust-ui-dev"
+        h.deck.follow(h.at(2 * PANE_MAP_REFRESH_S + 2))
+        create = next(c for c in h.herdr.calls if c[:2] == ("tab", "create"))
+        workspace = create[create.index("--workspace") + 1]
+        labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
+        self.assertEqual(labels[workspace], "Rust Developer")
+
+    def test_an_account_that_waited_through_first_setup_is_seeded_as_on_first_setup(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        h.roles["coord"] = "fabric-coordinator"
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
+        made = {c[c.index("--label") + 1]: labels[c[c.index("--workspace") + 1]]
+                for c in h.herdr.calls if c[:2] == ("tab", "create")}
+        self.assertEqual(made, {"ui": "Rust Developer", "coord": "Coordinator"},
+                         "the others' tabs since do not make it a later account")
+
+    def test_an_account_no_longer_placed_does_not_keep_its_first_setup_seeding(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        h.logins.remove("coord")
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        self.assertEqual(h.deck.seed_on_bind, set())
+
     def test_a_new_account_gets_a_three_pane_tab_its_harness_waiting_for_the_decision(self):
         h = Harness()
         h.deck.restore(0)

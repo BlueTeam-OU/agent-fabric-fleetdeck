@@ -52,6 +52,7 @@ from deck_tabs import (
     classify,
     display,
     is_harness,
+    known_reason,
     live_from_record,
     lost,
     moveto_in,
@@ -80,6 +81,9 @@ def fleetdeck_env(env: dict[str, str] | None = None) -> dict[str, str]:
 # The workspace an account goes to when the catalogue names no group for it,
 # or when its group's workspace no longer exists (the operator removed it).
 NEW_WORKSPACE = "New"
+# moveto --list's role for an account whose role is not bound yet (or not
+# readable). A new account is listed so before its role is bound.
+UNBOUND = "-"
 # The fleet board's own tab: the views' plugin (herdr-plugin.toml), its
 # board entrypoint, under this label. No login is this word: a login with
 # a hyphenated suffix or a digit is what the registry places.
@@ -165,6 +169,9 @@ class Session:
     session: str
     state: str
     since: str
+    # Why a blocked session waits on a person (deck_tabs.REASONS), when the
+    # stream says; any other value is read as not said.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,7 +205,8 @@ def parse_state_line(line: str) -> StateRecord | None:
         return None
     rows = row.get("sessions")
     sessions = tuple(
-        Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""))
+        Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""),
+                known_reason(s.get("reason")))
         for s in (rows if isinstance(rows, list) else [])
         if isinstance(s, dict) and isinstance(s.get("session"), str) and s["session"]
     )
@@ -251,7 +259,7 @@ def live_of(record: StateRecord | None, now_utc: datetime.datetime) -> Live | No
     if posted is None:
         return None
     age = (now_utc - posted).total_seconds()
-    return live_from_record([(s.session, s.state) for s in record.sessions], age)
+    return live_from_record([(s.session, s.state, s.reason) for s in record.sessions], age)
 
 
 def printable(text: str) -> str:
@@ -565,8 +573,12 @@ class Deck:
     # Accounts whose live = 0 dates from before their restore decision: no fall
     # is noted for them until a session has been seen up again.
     unsettled: set[str] = field(default_factory=set)
-    # Accounts whose restore failed part-way, restored again at the next map read.
+    # Accounts whose restore failed part-way, or that wait for a role to be
+    # bound, restored again at the next map read.
     retry: set[str] = field(default_factory=set)
+    # Accounts that waited for a role through the host's first setup: seeded
+    # as on first setup once bound, whatever tabs the others have since.
+    seed_on_bind: set[str] = field(default_factory=set)
     # (login, pane, mode) -> since when a shell or status pane waits to be bare
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
@@ -618,9 +630,11 @@ class Deck:
                 if only is not None and account.login not in only:
                     continue
                 try:
-                    self._restore_account(account, tabs.get(account.login), workspace_labels,
-                                          first_setup, spare, now)
-                    self.retry.discard(account.login)
+                    if self._restore_account(account, tabs.get(account.login), workspace_labels,
+                                             first_setup, spare, now):
+                        self.retry.discard(account.login)
+                    else:
+                        self.retry.add(account.login)
                 except Exception as error:  # one account's failure must not stop the others
                     self.log(f"{account.login}: cannot restore its tab yet: {printable(str(error))}")
                     # Nothing of a half-done restore is followed: the account
@@ -689,22 +703,34 @@ class Deck:
             self._say("fleet-tab", f"no {FLEET_TAB} tab: {printable(str(error))} "
                       f"(is {FLEET_PLUGIN} linked? {BIN} plugin link <checkout>/fleet-deck)")
 
-    def _restore_account(self, account, tab, workspace_labels, first_setup, spare, now) -> None:
+    def _restore_account(self, account, tab, workspace_labels, first_setup, spare, now) -> bool:
+        """False when the account is to be restored at a later map read."""
         login = account.login
         if not SAFE_LOGIN.match(login):
             self._say(login, f"{login!r}: not a plain login; its tab is left alone")
-            return
+            return True
+        if tab is None and account.role == UNBOUND:
+            if first_setup:
+                self.seed_on_bind.add(login)
+            # A tab is made once and herdr cannot move it to another workspace:
+            # made now, it would sit in New for good, though its role's group
+            # is known as soon as the role is bound. So it waits for the role.
+            self._say(f"unbound:{login}", f"{login}: no role bound yet; its tab is made in its "
+                      f"role's workspace once one is (fabric-role bind, as {login})")
+            return False
         if tab is None:
             seeded = seed_workspace(account.role, self.catalog)
-            label = seeded if first_setup or seeded in workspace_labels else NEW_WORKSPACE
+            first = first_setup or login in self.seed_on_bind
+            label = seeded if first or seeded in workspace_labels else NEW_WORKSPACE
             workspace = ensure_workspace(self.herdr, label, self.cwd, spare)
             made = self.herdr.call("tab", "create", "--workspace", workspace, "--cwd", self.cwd,
                                    "--label", login, "--no-focus")
             tab = AccountTab(login, made["tab"]["tab_id"], workspace, {},
                              adopt=made["root_pane"]["pane_id"])
+            self.seed_on_bind.discard(login)
         if tab.undetermined:
             self._say(login, f"{login}: its tab was split by hand and has no harness pane; left alone")
-            return
+            return True
         panes = dict(tab.panes)
         if tab.adopt is not None:
             self.herdr.call("pane", "rename", tab.adopt, HARNESS)
@@ -732,6 +758,7 @@ class Deck:
             del self.pending[login]
             self.unsettled.discard(login)
             self.tracks[login] = classify(seen, self.live(login)) or Track(State.IDLE)
+        return True
 
     def _fleet_tab_holds(self, tab_id: str) -> str:
         """`board` when the board's view runs in the tab; `remnant` when its
@@ -875,6 +902,7 @@ class Deck:
         newly = {a.login for a in accounts} - self.placed
         self.placed = {a.login for a in accounts}
         self.retry &= self.placed
+        self.seed_on_bind &= self.placed
         # An account placed while the deck runs gets its tab now; one whose
         # harness a person closed stays closed until the next restore.
         self.retry |= newly

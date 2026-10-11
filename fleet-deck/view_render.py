@@ -26,6 +26,10 @@ BOLD = "bold"
 SELECTED = "selected"
 FAILED = "failed"
 WARN = "warn"
+# A session waits on a person; a job waits on something that is not one.
+# Each is drawn beside its word, never as a colour alone.
+NEEDS = "needs"
+WAITING = "waiting"
 
 # A cell no source has answered for yet, from the cache or a fetch.
 UNREAD = "…"
@@ -42,6 +46,8 @@ SPARK = "▁▂▃▄▅▆▇█"
 SPARK_ASCII = "_.-=+*#@"
 
 BOARD_KEYS = "↑↓ select  Enter agent  c compare  p plan  P PRs  r refetch  q close"
+# The board's own keys, on a line of their own so both fit an 80-column pane.
+ATTENTION_KEYS = "n/N next who needs you  {order}  {density}"
 AGENT_KEYS = "↑↓ scroll  r refetch  Esc back  q close"
 OVERLAY_KEYS = "↑↓ scroll  r refetch  q close"
 
@@ -119,6 +125,18 @@ def count(n) -> str:
         if n >= div:
             return f"{n / div:.1f}{unit}"
     return f"{n:.0f}"
+
+
+def short_age(stamp, now: datetime.datetime) -> str:
+    """An age for a cell: 45s, 12m, 3h, 2d; empty where the time is unknown."""
+    t = parse_utc(stamp)
+    if t is None:
+        return ""
+    s = max(0, int((now - t).total_seconds()))
+    for div, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if s >= div:
+            return f"{s // div}{unit}"
+    return f"{s}s"
 
 
 def pct(v) -> str:
@@ -276,6 +294,98 @@ def pr_number(value) -> str | None:
     return value if isinstance(value, str) and value.isdigit() else None
 
 
+# ── attention: who needs the person ─────────────────────────────────
+#
+# fleet.py's `attention` record (agent-fabric tools/fabric/fleet.py,
+# ATTENTION): data = {level: needs_input | waiting | none, reason, since,
+# blocked, pending, context_pct, context_at, output}. A field fleet.py
+# could not tell is null, and is shown as unknown, never as 0 or quiet.
+
+NEEDS_INPUT, WAITS, CLEAR = "needs_input", "waiting", "none"
+# What a session waits on a person for, as the session-state hook says.
+NEEDS_REASONS = ("permission", "question")
+# A session that waits on a person and does not say why: the level's word,
+# never a guessed reason (the same word as the deck's tab).
+NEEDS_YOU = "needs you"
+
+
+def attention_level(record: dict | None) -> str | None:
+    """needs_input, waiting or none; None where it is not known (unread,
+    failed, or a level this view does not know)."""
+    level = (ok_data(record) or {}).get("level")
+    return level if level in (NEEDS_INPUT, WAITS, CLEAR) else None
+
+
+def attention_words(data: dict, now: datetime.datetime) -> tuple[str, str]:
+    """(text, style) of the board's needs-you cell. The age comes before a
+    waiting job's words, which are the agent's own and get cut first."""
+    level, reason = data.get("level"), data.get("reason")
+    age = short_age(data.get("since"), now)
+    if level == NEEDS_INPUT:
+        word = reason if reason in NEEDS_REASONS else NEEDS_YOU
+        return (f"{word} {age}" if age else word), NEEDS
+    if level == WAITS:
+        head = f"waiting {age}" if age else "waiting"
+        return (f"{head}: {reason}" if isinstance(reason, str) and reason else head), WAITING
+    if level == CLEAR:
+        return NONE, DIM
+    return "unknown", FAILED
+
+
+def attention_cell(record: dict | None, now: datetime.datetime) -> tuple[str, str]:
+    text, style = cell(record, lambda d: attention_words(d, now)[0])
+    if style == NORMAL:
+        style = attention_words(ok_data(record) or {}, now)[1]
+    return text, style
+
+
+# The needs-you order: who waits on the person, then on something else,
+# then what is not known (it may be either), then the rest.
+RANK = {NEEDS_INPUT: 0, WAITS: 1, None: 2, CLEAR: 3}
+
+
+def board_order(agents: list[Agent], needs_first: bool) -> list[Agent]:
+    """The board's rows: the registry's order, or the needs-you order, the
+    longest waiting first within a level (an unknown since last). Stable,
+    so equals keep the registry's order."""
+    if not needs_first:
+        return list(agents)
+
+    def key(a: Agent) -> tuple[int, int, str]:
+        rec = a.sections.get("attention")
+        level = attention_level(rec)
+        since = (ok_data(rec) or {}).get("since") if level in (NEEDS_INPUT, WAITS) else None
+        known = parse_utc(since)
+        return RANK[level], 0 if known else 1, known.isoformat() if known else ""
+    return sorted(agents, key=key)
+
+
+def needs_count(agents: list[Agent]) -> tuple[int, int]:
+    """(how many wait on the person, how many cannot be told)."""
+    levels = [attention_level(a.sections.get("attention")) for a in agents]
+    return levels.count(NEEDS_INPUT), levels.count(None)
+
+
+def none_needing(agents: list[Agent]) -> str:
+    """What n/N says when no row's session waits on the person: an agent
+    that cannot be told may, so it is not "no agent needs you"."""
+    _, unknown = needs_count(agents)
+    if unknown:
+        return f"none known to need you; {unknown} cannot be told (? on the board)"
+    return "no agent needs you now"
+
+
+def next_needing(agents: list[Agent], selected: int, step: int) -> int | None:
+    """The next row (step 1) or the previous one (step -1) from `selected`
+    whose session waits on the person, wrapping; None when no row does."""
+    n = len(agents)
+    for i in range(1, n + 1):
+        j = (selected + step * i) % n
+        if attention_level(agents[j].sections.get("attention")) == NEEDS_INPUT:
+            return j
+    return None
+
+
 # ── the board ───────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -290,7 +400,11 @@ class Column:
 
 BOARD_COLUMNS = (
     Column("login", "agent", 8, 0),
-    Column("state", "state", 10, 0),
+    # The session's word goes before who needs the person when narrow: a
+    # blocked session is in the needs-you column too, with why.
+    Column("state", "state", 10, 1),
+    # "permission 23h" and a stale record's `~`: the age is never the cut.
+    Column("attention", "needs you", 15, 0),
     Column("job", "current job", 12, 0, flex=True),
     Column("jobs", "closed/open", 11, 4, right=True),
     Column("rss", "RSS", 6, 3, right=True),
@@ -302,7 +416,14 @@ BOARD_COLUMNS = (
 
 JOB_MAX = 60
 
-BOARD_SECTIONS = ("states", "proc", "jobs", "closed_jobs", "prs", "usage", "host", "tokens")
+# The compact board: who, whether they need the person, and on what job.
+COMPACT_COLUMNS = (
+    Column("login", "agent", 8, 0),
+    Column("attention", "needs you", 20, 0),
+    Column("job", "current job", 12, 0, flex=True),
+)
+
+BOARD_SECTIONS = ("states", "attention", "proc", "jobs", "closed_jobs", "prs", "usage", "host", "tokens")
 
 
 @dataclass
@@ -313,7 +434,7 @@ class Agent:
     sections: dict[str, dict | None] = field(default_factory=dict)
 
 
-def board_cells(a: Agent) -> dict[str, tuple[str, str]]:
+def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
     s = a.sections
     jobs = s.get("jobs")
     closed = s.get("closed_jobs")
@@ -329,6 +450,7 @@ def board_cells(a: Agent) -> dict[str, tuple[str, str]]:
     return {
         "login": (a.login, BOLD),
         "state": cell(s.get("states"), state_word),
+        "attention": attention_cell(s.get("attention"), now),
         "job": cell(jobs, lambda d: job_label(current_job(open_jobs(d)))),
         "jobs": jobs_cell,
         "rss": cell(s.get("proc"), lambda d: size_kb(d.get("rss_kb"))),
@@ -339,11 +461,11 @@ def board_cells(a: Agent) -> dict[str, tuple[str, str]]:
     }
 
 
-def board_columns(agents: list[Agent], width: int) -> list[tuple[Column, int]]:
+def board_columns(agents: list[Agent], width: int, compact: bool = False) -> list[tuple[Column, int]]:
     """The columns that fit `width`, each with its width: drop the least
     needed first, then give the flex column what is left."""
     login_w = max([BOARD_COLUMNS[0].width] + [cells(clean(a.login)) for a in agents])
-    cols = [c for c in BOARD_COLUMNS]
+    cols = list(COMPACT_COLUMNS if compact else BOARD_COLUMNS)
 
     def need(cs: list[Column]) -> int:
         widths = [login_w if c.key == "login" else c.width for c in cs]
@@ -363,8 +485,8 @@ def pad(text: str, width: int, right: bool) -> str:
     return room + text if right else text + room
 
 
-def board_row(a: Agent, cols: list[tuple[Column, int]], selected: bool) -> Line:
-    cells = board_cells(a)
+def board_row(a: Agent, cols: list[tuple[Column, int]], selected: bool, now: datetime.datetime) -> Line:
+    cells = board_cells(a, now)
     line: Line = [("> " if selected else "  ", SELECTED if selected else NORMAL)]
     for i, (c, w) in enumerate(cols):
         text, style = cells[c.key]
@@ -509,22 +631,40 @@ def oldest_at(records) -> str | None:
     return min(stamps)[1] if stamps else None
 
 
+def board_title(agents: list[Agent]) -> str:
+    # Short: on a narrow pane the status line's live/paused comes after it.
+    need, unknown = needs_count(agents)
+    title = f"Fleet · {need} of {len(agents)} need you"
+    return title + (f", {unknown} not known" if unknown else "")
+
+
+def board_keys(needs_first: bool, compact: bool) -> str:
+    """The board's own keys, each saying what it changes to."""
+    return ATTENTION_KEYS.format(order="s registry order" if needs_first else "s needs-you order",
+                                 density="v full board" if compact else "v compact board")
+
+
 def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
-                selected: int, width: int, height: int) -> list[Line]:
+                selected: int, width: int, height: int, needs_first: bool = False,
+                compact: bool = False, notice: str | None = None) -> list[Line]:
     """The whole board for a width × height window: a status line, the
     header, the rows (scrolled to keep the selection in view), and the
-    footer: host memory, what was not read, the keys."""
-    cols = board_columns(agents, width)
-    top = [status_line(f"Fleet · {len(agents)} agents", st, width), board_header(cols)]
+    footer: host memory, what was not read, a notice, the keys. `agents`
+    are in the order drawn (board_order)."""
+    cols = board_columns(agents, width, compact)
+    top = [status_line(board_title(agents), st, width), board_header(cols)]
     footer = [host_line(h, r) for h, r in sorted(hosts.items())]
     footer += failure_lines(agents, BOARD_SECTIONS, width, limit=3, now=st.now)
+    if notice:
+        footer.append([(fit(notice, width), BOLD)])
+    footer.append([(fit(board_keys(needs_first, compact), width), DIM)])
     footer.append([(fit(BOARD_KEYS, width), DIM)])
     room = max(1, height - len(top) - len(footer))
     first = 0
     if agents:
         selected = max(0, min(selected, len(agents) - 1))
         first = min(max(0, selected - room + 1), max(0, len(agents) - room))
-    rows = [board_row(a, cols, i == selected) for i, a in enumerate(agents)][first: first + room]
+    rows = [board_row(a, cols, i == selected, st.now) for i, a in enumerate(agents)][first: first + room]
     if not agents:
         rows = [[("  no placed agents in the hosts registry", DIM)]]
     rows += [[("", NORMAL)]] * (room - len(rows))
@@ -547,7 +687,7 @@ def clip(line: Line, width: int) -> Line:
 
 # ── the agent view ──────────────────────────────────────────────────
 
-AGENT_SECTIONS = ("states", "presence", "proc", "jobs", "closed_jobs", "prs", "tokens", "usage")
+AGENT_SECTIONS = ("states", "attention", "presence", "proc", "jobs", "closed_jobs", "prs", "tokens", "usage")
 
 
 @dataclass
@@ -661,6 +801,8 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
         out.append([("  waits on ", DIM), (fit(f"{j.get('blocked_on')} ({j.get('id')})", max(0, width - 11)), WARN)])
     out.append([("", NORMAL)])
 
+    out += attention_body(s.get("attention"), now, width)
+
     proc = s.get("proc")
     out.append(heading("Resources", proc, now))
     out += not_read(proc, width)
@@ -738,6 +880,46 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
             if isinstance(w, dict):
                 out.append([(f"  {label:<8} {pct(w.get('utilization')):>4}  resets {clock(w.get('resets_at'), now)}", NORMAL)])
     return [clip(line, width) for line in out]
+
+
+def attention_body(rec: dict | None, now: datetime.datetime, width: int) -> list[Line]:
+    """The attention panel: whether the person is wanted and since when,
+    and the session's context and output, each unknown where fleet.py could
+    not tell. A waiting job's words are above, under Session."""
+    out = [heading("Attention", rec, now)]
+    out += not_read(rec, width)
+    data = ok_data(rec)
+    if data is not None:
+        level, since = data.get("level"), data.get("since")
+        when = f", since {clock(since, now)} ({age(since, now)})" if parse_utc(since) else ", since unknown"
+        if level == NEEDS_INPUT:
+            reason = data.get("reason")
+            why = {"permission": "a permission prompt", "question": "a question"}.get(reason, "the reason not said")
+            out.append([("  needs you", NEEDS), (fit(f": {why}{when}", max(0, width - 11)), NORMAL)])
+        elif level == WAITS:
+            out.append([("  waiting", WAITING), (fit(f" on something not a person{when}", max(0, width - 9)), NORMAL)])
+        elif level == CLEAR:
+            out.append([("  nothing waits on you", NORMAL)])
+        else:
+            out.append([("  unknown", FAILED), (": fleet.py sent a level this view does not know", NORMAL)])
+        blocked, pending = data.get("blocked"), data.get("pending")
+        out.append([(f"  jobs blocked {blocked if isinstance(blocked, int) else 'unknown'}"
+                     f" · queued {pending if isinstance(pending, int) else 'unknown'}", NORMAL)])
+        ctx, ctx_at = data.get("context_pct"), data.get("context_at")
+        if isinstance(ctx, int) and not isinstance(ctx, bool) and parse_utc(ctx_at):
+            out.append([(f"  context {ctx}% in use, sampled {age(ctx_at, now)}", NORMAL)])
+        else:
+            out.append([("  context unknown: no sample from the status line", DIM)])
+        output = data.get("output")
+        if output == "recent":
+            out.append([("  output recent: written in the last 30 s", NORMAL)])
+        elif output == "quiet":
+            # fleet.py: a long single response writes nothing until it ends.
+            out.append([("  output quiet: nothing written in 30 s, which is not idle", NORMAL)])
+        else:
+            out.append([("  output unknown", DIM)])
+    out.append([("", NORMAL)])
+    return out
 
 
 def agent_where(a: Agent) -> str:

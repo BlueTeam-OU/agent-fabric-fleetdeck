@@ -263,12 +263,18 @@ class View:
         self.sections = sections
         self.agent = agent
         self.store = store
-        self.refresher = Refresher({s: fleet.SECTIONS[s].ttl for s in sections if s in fleet.SECTIONS})
+        # A derived section is told here from the records its inputs' own
+        # fetches bring (derive), never fetched: fleet.py gives it no TTL
+        # and no cache, so a refresher would ask for it on every tick.
+        self.refresher = Refresher({s: fleet.SECTIONS[s].ttl for s in sections
+                                    if s in fleet.SECTIONS and not derived(fleet, s)})
         self.fetcher = Fetcher(fleet, agent, results, self)
         # A section this agent-fabric's fleet.py does not serve yet is said,
         # never asked for: the view runs against whatever checkout is there.
         self.whys: dict[str, str] = {s: f"agent-fabric's fleet.py here serves no {s} section yet"
-                                     for s in sections if s not in fleet.SECTIONS}
+                                     for s in sections if s not in fleet.SECTIONS
+                                     or (derived(fleet, s) and s not in DERIVE)}
+        self.fleet = fleet
 
     def tick(self, focused: bool | None) -> None:
         for s in self.refresher.due(time.monotonic(), focused):
@@ -291,8 +297,33 @@ class View:
             self.whys.pop(result.section, None)
 
 
-def agents_of(placements, store: Store, sections: tuple[str, ...], whys: dict[str, str]) -> list[vr.Agent]:
+def derived(fleet, section: str) -> bool:
+    spec = fleet.SECTIONS.get(section)
+    return bool(getattr(spec, "derives", ()))
+
+
+def attention_of(fleet, recs: dict[str, dict | None], now: float) -> dict | None:
+    """fleet.py's own attention record, told from the states and jobs
+    records this view holds (fleet.attention_record: imported, never
+    copied, so the board and fabric-fleet --json cannot disagree). None
+    while either is unread: not known yet, never "nothing waits"."""
+    states, jobs = recs.get("states"), recs.get("jobs")
+    if states is None or jobs is None:
+        return None
+    try:
+        return fleet.attention_record(states, jobs, now)
+    except Exception as e:  # noqa: BLE001 — a record fleet.py cannot read is that agent's failure, never a crash
+        return {"status": "failed", "src": "fleet", "at": None, "why": f"{type(e).__name__}: {e}"}
+
+
+# The derived sections this view can tell, and the fleet.py reader for each.
+DERIVE: dict[str, Callable] = {"attention": attention_of}
+
+
+def agents_of(placements, store: Store, sections: tuple[str, ...], whys: dict[str, str],
+              fleet=None) -> list[vr.Agent]:
     out = []
+    now = time.time()
     for login, a in placements.items():
         recs = {}
         for s in sections:
@@ -302,6 +333,9 @@ def agents_of(placements, store: Store, sections: tuple[str, ...], whys: dict[st
                 # record drawn as current would hide it.
                 rec = {"status": "failed", "src": "fleet", "at": None, "why": whys[s]}
             recs[s] = rec
+        for s, reader in DERIVE.items():
+            if s in sections and s not in whys and fleet is not None:
+                recs[s] = reader(fleet, recs, now)
         out.append(vr.Agent(login, a.host, a.kind, recs))
     return out
 
@@ -321,14 +355,21 @@ class Painter:
         self.screen = screen
         c = curses
         self.attrs = {vr.NORMAL: c.A_NORMAL, vr.DIM: c.A_DIM, vr.BOLD: c.A_BOLD,
-                      vr.SELECTED: c.A_REVERSE, vr.FAILED: c.A_BOLD, vr.WARN: c.A_BOLD}
+                      vr.SELECTED: c.A_REVERSE, vr.FAILED: c.A_BOLD, vr.WARN: c.A_BOLD,
+                      vr.NEEDS: c.A_BOLD, vr.WAITING: c.A_NORMAL}
         if c.has_colors() and not os.environ.get("NO_COLOR"):
             c.start_color()
             c.use_default_colors()
             c.init_pair(1, c.COLOR_RED, -1)
             c.init_pair(2, c.COLOR_YELLOW, -1)
+            c.init_pair(3, c.COLOR_MAGENTA, -1)
+            c.init_pair(4, c.COLOR_CYAN, -1)
             self.attrs[vr.FAILED] = c.color_pair(1)
             self.attrs[vr.WARN] = c.color_pair(2)
+            # Not red or yellow, which mean failed and stale here: wanted is
+            # neither. Bold too, so it stands out where hues are hard to tell.
+            self.attrs[vr.NEEDS] = c.color_pair(3) | c.A_BOLD
+            self.attrs[vr.WAITING] = c.color_pair(4)
 
     def paint(self, lines: list[vr.Line]) -> None:
         self.screen.erase()
@@ -367,6 +408,23 @@ class Nav:
     selected: int = 0
     scroll: int = 0
     back: str | None = None
+    # The board: the rows as last drawn, and the agent selected among them.
+    # The selection follows the agent, not the row, when the order changes.
+    rows: list[vr.Agent] = field(default_factory=list)
+    login: str | None = None
+    needs_first: bool = True
+    compact: bool = False
+    notice: str | None = None
+
+    def place(self, rows: list[vr.Agent]) -> None:
+        """The board's rows in the order drawn: the selection stays on its
+        agent wherever that agent now is."""
+        self.rows = rows
+        logins = [a.login for a in rows]
+        if self.login in logins:
+            self.selected = logins.index(self.login)
+        self.selected = max(0, min(self.selected, len(rows) - 1))
+        self.login = logins[self.selected] if rows else None
 
     def go(self, screen: str) -> None:
         if screen == self.screen:
@@ -375,6 +433,7 @@ class Nav:
         self.screen, self.scroll = screen, 0
 
     def key(self, ev: str, rows: int, page: int) -> str | None:
+        self.notice = None
         if ev in ("q", "Q"):
             return QUIT
         if ev == "r":
@@ -391,7 +450,22 @@ class Nav:
         if self.screen == BOARD:
             if ev == ENTER and rows:
                 return OPEN_AGENT
-            self.selected = max(0, min(move(self.selected, ev, page, rows - 1), max(0, rows - 1)))
+            if ev == "s":
+                self.needs_first = not self.needs_first
+                return None
+            if ev == "v":
+                self.compact = not self.compact
+                return None
+            if ev in ("n", "N"):
+                found = vr.next_needing(self.rows, self.selected, 1 if ev == "n" else -1) if self.rows else None
+                if found is None:
+                    self.notice = vr.none_needing(self.rows)
+                else:
+                    self.selected = found
+            else:
+                self.selected = max(0, min(move(self.selected, ev, page, rows - 1), max(0, rows - 1)))
+            if self.rows:
+                self.login = self.rows[min(self.selected, len(self.rows) - 1)].login
             return None
         if self.screen == COMPARE:
             n = len(rr.METRICS)
@@ -429,6 +503,8 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
 
     store = Store()
     for s in set(vr.BOARD_SECTIONS) | set(vr.AGENT_SECTIONS) | set(rr.COMPARE_SECTIONS):
+        if s in fleet.SECTIONS and derived(fleet, s):
+            continue    # no cache of its own: told from its inputs' records
         try:
             store.put(s, cached_records(fleet, s, env))
         except Exception:  # noqa: BLE001 — a cache that cannot be read is an empty one
@@ -477,7 +553,8 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
             curses.resizeterm(size.lines, size.columns)
         height, width = screen.getmaxyx()
         if agent_view is not None:
-            a = agents_of({agent_view.agent: placements[agent_view.agent]}, store, agent_view.sections, agent_view.whys)[0]
+            a = agents_of({agent_view.agent: placements[agent_view.agent]}, store, agent_view.sections,
+                          agent_view.whys, fleet)[0]
             keys = vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
             lines, scroll = vr.agent_lines(a, samples, status(agent_view, [a], focused, store), scroll,
                                            width, height, keys, ascii_only)
@@ -515,7 +592,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
             if action == REFETCH:
                 view_of(nav.screen).refetch()
             elif action == OPEN_AGENT:
-                target = list(placements)[max(0, min(nav.selected, len(placements) - 1))]
+                target = nav.login if nav.login in placements else list(placements)[max(0, min(nav.selected, len(placements) - 1))]
                 agent_view = View(fleet, vr.AGENT_SECTIONS, target, store, results)
                 samples, scroll = vr.Samples(), 0
                 samples.add(store.get("proc", target))
@@ -525,10 +602,11 @@ def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool |
                  width: int, height: int, ascii_only: bool) -> list[vr.Line]:
     """The fleet pane's current screen. Each screen reads its own view's
     sections, so its status line says how old what it shows is."""
-    agents = agents_of(placements, store, view.sections, view.whys)
+    agents = agents_of(placements, store, view.sections, view.whys, view.fleet)
     if nav.screen == BOARD:
-        return vr.board_lines(agents, host_records(agents), status(view, agents, focused, store),
-                              nav.selected, width, height)
+        nav.place(vr.board_order(agents, nav.needs_first))
+        return vr.board_lines(nav.rows, host_records(agents), status(view, agents, focused, store),
+                              nav.selected, width, height, nav.needs_first, nav.compact, nav.notice)
     if nav.screen == COMPARE:
         lines, nav.scroll = rr.compare_lines(agents, nav.metric, status(view, agents, focused, store),
                                              nav.scroll, width, height, ascii_only)
