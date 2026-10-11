@@ -112,35 +112,25 @@ jobs:
       - name: Unused dependencies
         run: python3 scripts/cargo_machete.py
 
-  # The fleet runs on Debian and Fedora only: Ubuntu (the runner itself)
-  # plus a Debian and a Fedora container. Upstream herdr's macOS and Windows
-  # legs are not run here.
+  # The fleet runs on Debian and Fedora only: this leg on the Ubuntu runner,
+  # and check-distro below in Debian and Fedora containers, both running
+  # these steps. Upstream herdr's macOS and Windows legs are not run here.
   check:
-    name: check (${{ matrix.label }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: ubuntu-latest
-            container: ""
-          - label: debian-12
-            container: debian:12
-          - label: fedora-42
-            container: fedora:42
+    name: check (ubuntu-latest)
     runs-on: ubuntu-latest
-    # An empty container runs the job on the runner itself.
-    container: ${{ matrix.container }}
     timeout-minutes: 20
-    steps:
+    env:
+      LEG: ubuntu-latest
+    steps: &check-steps
       # What the steps below assume a runner image already has.
       - name: Container prerequisites (Debian)
-        if: startsWith(matrix.container, 'debian')
+        if: startsWith(env.LEG, 'debian')
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3 xz-utils unzip
 
       - name: Container prerequisites (Fedora)
-        if: startsWith(matrix.container, 'fedora')
+        if: startsWith(env.LEG, 'fedora')
         run: dnf install -y curl git gcc gcc-c++ make pkgconf-pkg-config python3 xz unzip tar findutils which
 
       - name: Checkout
@@ -202,15 +192,15 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ matrix.label }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            zig-build-v1-${{ matrix.label }}-${{ runner.arch }}-0.16.0-
+            zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-
 
       - name: Restore cargo cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
-          key: ${{ matrix.label }}
+          key: ${{ env.LEG }}
           save-if: ${{ env.SAVE_CACHES }}
 
       # Cargo still rebuilds workspace targets; only rustc's validated query state is retained.
@@ -218,9 +208,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/debug/incremental
-          key: ci-incremental-v1-${{ matrix.label }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
+          key: ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
           restore-keys: |
-            ci-incremental-v1-${{ matrix.label }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-
+            ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-
 
       - name: Run Linux lint
         run: CARGO_INCREMENTAL=1 just lint
@@ -239,12 +229,33 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/debug/incremental
-          key: ci-incremental-v1-${{ matrix.label }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
+          key: ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
 
       - name: Save Zig build cache
         if: env.SAVE_CACHES == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ matrix.label }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
 
+  check-distro:
+    name: check (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: debian-12
+            image: debian:12
+          - leg: fedora-42
+            image: fedora:42
+    runs-on: ubuntu-latest
+    # --init: a container has no init to reap a killed child, so it would
+    # linger as a zombie that kill(pid, 0) still finds; on a real Debian or
+    # Fedora host systemd reaps it.
+    container:
+      image: ${{ matrix.image }}
+      options: --init
+    timeout-minutes: 20
+    env:
+      LEG: ${{ matrix.leg }}
+    steps: *check-steps
