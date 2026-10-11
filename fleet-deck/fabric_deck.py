@@ -573,8 +573,12 @@ class Deck:
     # Accounts whose live = 0 dates from before their restore decision: no fall
     # is noted for them until a session has been seen up again.
     unsettled: set[str] = field(default_factory=set)
-    # Accounts whose restore failed part-way, restored again at the next map read.
+    # Accounts whose restore failed part-way, or that wait for a role to be
+    # bound, restored again at the next map read.
     retry: set[str] = field(default_factory=set)
+    # Accounts that waited for a role through the host's first setup: seeded
+    # as on first setup once bound, whatever tabs the others have since.
+    seed_on_bind: set[str] = field(default_factory=set)
     # (login, pane, mode) -> since when a shell or status pane waits to be bare
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
@@ -706,6 +710,8 @@ class Deck:
             self._say(login, f"{login!r}: not a plain login; its tab is left alone")
             return True
         if tab is None and account.role == UNBOUND:
+            if first_setup:
+                self.seed_on_bind.add(login)
             # A tab is made once and herdr cannot move it to another workspace:
             # made now, it would sit in New for good, though its role's group
             # is known as soon as the role is bound. So it waits for the role.
@@ -714,12 +720,14 @@ class Deck:
             return False
         if tab is None:
             seeded = seed_workspace(account.role, self.catalog)
-            label = seeded if first_setup or seeded in workspace_labels else NEW_WORKSPACE
+            first = first_setup or login in self.seed_on_bind
+            label = seeded if first or seeded in workspace_labels else NEW_WORKSPACE
             workspace = ensure_workspace(self.herdr, label, self.cwd, spare)
             made = self.herdr.call("tab", "create", "--workspace", workspace, "--cwd", self.cwd,
                                    "--label", login, "--no-focus")
             tab = AccountTab(login, made["tab"]["tab_id"], workspace, {},
                              adopt=made["root_pane"]["pane_id"])
+            self.seed_on_bind.discard(login)
         if tab.undetermined:
             self._say(login, f"{login}: its tab was split by hand and has no harness pane; left alone")
             return True

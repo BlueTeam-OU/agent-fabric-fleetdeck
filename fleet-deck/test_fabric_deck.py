@@ -217,7 +217,9 @@ class FakeHerdr(Herdr):
                 self.workspace_lists_ok -= 1
             return {"workspaces": list(self.workspace_list)}
         if head == ("workspace", "create"):
-            w = self._id("w")
+            # Its own prefix: a seeded workspace is w1, and a created one
+            # sharing the counter would collide with it.
+            w = self._id("ws")
             self.workspace_list.append({"workspace_id": w, "label": args[3]})
             self.tabs[w] = []
             return {"workspace": {"workspace_id": w}, "tab": {"tab_id": self.add_tab(None, [], w)}}
@@ -442,6 +444,17 @@ class Restore(unittest.TestCase):
         workspace = create[create.index("--workspace") + 1]
         labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
         self.assertEqual(labels[workspace], "Rust Developer")
+
+    def test_an_account_that_waited_through_first_setup_is_seeded_as_on_first_setup(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        h.roles["coord"] = "fabric-coordinator"
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
+        made = {c[c.index("--label") + 1]: labels[c[c.index("--workspace") + 1]]
+                for c in h.herdr.calls if c[:2] == ("tab", "create")}
+        self.assertEqual(made, {"ui": "Rust Developer", "coord": "Coordinator"},
+                         "the others' tabs since do not make it a later account")
 
     def test_a_new_account_gets_a_three_pane_tab_its_harness_waiting_for_the_decision(self):
         h = Harness()
