@@ -14,6 +14,7 @@ views read the same without colour (NO_COLOR, a monochrome terminal).
 from __future__ import annotations
 
 import datetime
+import re
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -367,11 +368,96 @@ def unwatched_since(a: Agent, now: datetime.datetime) -> str | None:
     return since if (now - first).total_seconds() >= UNWATCHED_AFTER_S else None
 
 
+# ── blocked jobs: what waits on the owner, what on someone else ──────
+#
+# fleet.py's jobs records list each open job with state, blocked_on (the
+# agent's own words) and updated; a job with checkable blockers adds
+# `cleared` (true when every one passed its check, false when one still
+# waits, null when none was checked), from fabric-jobs (python-dev-04,
+# REPLY 01a12bb0). Missing or null is not said. Whom a job waits on has no
+# field (`waits_on` holds a message id, not a who): a job is the owner's
+# when the agent's own words name the owner, as the agent says it.
+
+# "owner" or "owner's" as a word, any case: "the owner arms #15", not "owners" or "co-owner".
+OWNER_WORD = re.compile(r"(?<![\w-])owner(?:'s)?(?![\w-])", re.IGNORECASE)
+
+
+def names_owner(job: dict) -> bool:
+    words = job.get("blocked_on")
+    return isinstance(words, str) and OWNER_WORD.search(words) is not None
+
+
+def blocked_jobs(a: Agent) -> list[dict]:
+    """The agent's blocked jobs, the longest blocked first (an unknown time last)."""
+    jobs = [j for j in open_jobs(ok_data(a.sections.get("jobs"))) if j.get("state") == "blocked"]
+    return sorted(jobs, key=lambda j: (parse_utc(j.get("updated")) is None, str(parse_utc(j.get("updated")) or "")))
+
+
+def owner_job(a: Agent) -> dict | None:
+    """The longest-blocked job whose blocker is the owner and not cleared."""
+    return next((j for j in blocked_jobs(a) if names_owner(j) and j.get("cleared") is not True), None)
+
+
+def waiting_job(a: Agent) -> dict | None:
+    """The longest-blocked job that is not the owner's to act on: one that
+    waits on someone else, or whose blocker is cleared."""
+    return next((j for j in blocked_jobs(a) if not names_owner(j) or j.get("cleared") is True), None)
+
+
+def blocker_words(job: dict) -> str:
+    words = job.get("blocked_on")
+    return " ".join(words.split()) if isinstance(words, str) and words.strip() else "not said"
+
+
+def waiting_cell(a: Agent, now: datetime.datetime) -> tuple[str, str]:
+    """The waiting-on column: the longest-blocked job's blocker and how long;
+    a cleared one is the agent's to move on, not a wait."""
+    def text(_data: dict) -> str:
+        job = waiting_job(a)
+        if job is None:
+            return NONE
+        if job.get("cleared") is True:
+            return f"cleared: {blocker_words(job)}"
+        age = short_age(job.get("updated"), now)
+        return f"{age}: {blocker_words(job)}" if age else blocker_words(job)
+    value, style = cell(a.sections.get("jobs"), text)
+    if style == NORMAL:
+        job = waiting_job(a)
+        style = DIM if job is None else NORMAL if job.get("cleared") is True else WAITING
+    return value, style
+
+
+# What the needs-you column and order know of an agent, most wanting first.
+OWNER_JOB = "owner_job"
+
+
+def needs_level(a: Agent, now: datetime.datetime) -> str | None:
+    """needs_input, owner_job, the unwatched flag, None (not known) or none.
+    A job waiting on someone other than the owner is not the owner's."""
+    level = attention_level(a.sections.get("attention"))
+    if level == NEEDS_INPUT:
+        return NEEDS_INPUT
+    if owner_job(a) is not None:
+        return OWNER_JOB
+    if unwatched_since(a, now) is not None:
+        return UNWATCHED
+    return None if level is None else CLEAR
+
+
 def needs_you_cell(a: Agent, now: datetime.datetime) -> tuple[str, str]:
-    since = unwatched_since(a, now)
-    if since is not None:
+    level = needs_level(a, now)
+    if level == OWNER_JOB:
+        job = owner_job(a) or {}
+        age = short_age(job.get("updated"), now)
+        # The words name the owner (that is why the job is here), so they
+        # carry the cell's meaning; the column is too narrow to repeat it.
+        return (f"{age}: {blocker_words(job)}" if age else blocker_words(job)), NEEDS
+    if level == UNWATCHED:
+        since = unwatched_since(a, now)
         age = short_age(since, now)
         return (f"{UNWATCHED_CELL} {age}" if age else UNWATCHED_CELL), WAITING
+    if level == CLEAR:
+        return NONE, DIM
     return attention_cell(a.sections.get("attention"), now)
 
 
@@ -382,10 +468,11 @@ def attention_cell(record: dict | None, now: datetime.datetime) -> tuple[str, st
     return text, style
 
 
-# The needs-you order: who waits on the person, then on something else,
-# then an idle agent with no inbox watch, then what is not known (it may be
-# any of them), then the rest.
-RANK = {NEEDS_INPUT: 0, WAITS: 1, UNWATCHED: 2, None: 3, CLEAR: 4}
+# The needs-you order: a session waiting on the person, then a job blocked
+# on the owner, then an idle agent with no inbox watch, then what is not
+# known (it may be any of them), then the rest: a job waiting on someone
+# else is in the waiting-on column, not here.
+RANK = {NEEDS_INPUT: 0, OWNER_JOB: 1, UNWATCHED: 2, None: 3, CLEAR: 4}
 
 
 def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime) -> list[Agent]:
@@ -396,21 +483,21 @@ def board_order(agents: list[Agent], needs_first: bool, now: datetime.datetime) 
         return list(agents)
 
     def key(a: Agent) -> tuple[int, int, str]:
-        rec = a.sections.get("attention")
-        level = attention_level(rec)
-        since = (ok_data(rec) or {}).get("since") if level in (NEEDS_INPUT, WAITS) else None
-        unwatched = unwatched_since(a, now)
-        if unwatched is not None:
-            level, since = UNWATCHED, unwatched
+        level = needs_level(a, now)
+        since = {NEEDS_INPUT: lambda: (ok_data(a.sections.get("attention")) or {}).get("since"),
+                 OWNER_JOB: lambda: (owner_job(a) or {}).get("updated"),
+                 UNWATCHED: lambda: unwatched_since(a, now)}.get(level, lambda: None)()
         known = parse_utc(since)
         return RANK[level], 0 if known else 1, known.isoformat() if known else ""
     return sorted(agents, key=key)
 
 
 def needs_count(agents: list[Agent]) -> tuple[int, int]:
-    """(how many wait on the person, how many cannot be told)."""
+    """(how many wait on the person: a session, or a job blocked on the
+    owner; how many cannot be told)."""
     levels = [attention_level(a.sections.get("attention")) for a in agents]
-    return levels.count(NEEDS_INPUT), levels.count(None)
+    need = sum(1 for a, level in zip(agents, levels) if level == NEEDS_INPUT or owner_job(a) is not None)
+    return need, levels.count(None)
 
 
 def none_needing(agents: list[Agent]) -> str:
@@ -424,11 +511,13 @@ def none_needing(agents: list[Agent]) -> str:
 
 def next_needing(agents: list[Agent], selected: int, step: int) -> int | None:
     """The next row (step 1) or the previous one (step -1) from `selected`
-    whose session waits on the person, wrapping; None when no row does."""
+    whose session waits on the person, or that has a job blocked on the
+    owner, wrapping; None when no row does."""
     n = len(agents)
     for i in range(1, n + 1):
         j = (selected + step * i) % n
-        if attention_level(agents[j].sections.get("attention")) == NEEDS_INPUT:
+        if (attention_level(agents[j].sections.get("attention")) == NEEDS_INPUT
+                or owner_job(agents[j]) is not None):
             return j
     return None
 
@@ -452,6 +541,8 @@ BOARD_COLUMNS = (
     Column("state", "state", 10, 1),
     # "permission 23h" and a stale record's `~`: the age is never the cut.
     Column("attention", "needs you", 15, 0),
+    # Another agent's wait is not the owner's: its own column, kept long.
+    Column("waiting", "waiting on", 16, 1),
     Column("job", "current job", 12, 0, flex=True),
     Column("jobs", "closed/open", 11, 4, right=True),
     Column("rss", "RSS", 6, 3, right=True),
@@ -498,6 +589,7 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
         "login": (a.login, BOLD),
         "state": cell(s.get("states"), state_word),
         "attention": needs_you_cell(a, now),
+        "waiting": waiting_cell(a, now),
         "job": cell(jobs, lambda d: job_label(current_job(open_jobs(d)))),
         "jobs": jobs_cell,
         "rss": cell(s.get("proc"), lambda d: size_kb(d.get("rss_kb"))),

@@ -350,7 +350,7 @@ account tabs as before.
 
 | view | opens as | shows |
 |---|---|---|
-| **board** | the `fleet` tab | one row per placed agent, who needs you first: state, whether it needs you (and why, and for how long), current job, closed/open jobs, RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
+| **board** | the `fleet` tab | one row per placed agent, who needs you first: state, whether it needs you (and why, and for how long), what it waits on otherwise, current job, closed/open jobs, RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
 | **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, open jobs; largest first, scaled to the largest, labelled "operational, not a score" |
 | **plan** | `p` in the fleet tab | each plan the coordinator keeps (agent-fabric ADR-047): its steps on a board by state (to do, queued, doing, delivered, done, and any other state), and a Gantt below |
 | **PRs** | a popup (`fabric.fleet.prs`), or `P` in the fleet tab | in-flight pull requests by owner, each with its repository, title, work and fix commits, checks, review, armed, and the gate's verdict |
@@ -371,10 +371,16 @@ account tabs as before.
   told in the view from the `states` and `jobs` records it already reads,
   with fleet.py's own reader: never fetched on its own. A session that waits
   on a person reads `permission`, `question`, or `needs you` where it does
-  not say, with how long; an open job blocked on something else reads
-  `waiting` and the job's own words, shown as text only. The order is who
-  needs you, then who waits, then who cannot be told, then the rest; the
-  longest waiting first. What fleet.py could not tell is unknown (`?`, its
+  not say, with how long; an open job blocked on the owner (its own words,
+  `blocked_on`, name the owner) reads how long and those words. Nothing
+  else is here: the title counts only these, and `n`/`N` jump to them.
+  The order is who needs you, then an idle agent with no inbox watch,
+  then who cannot be told, then the rest; the longest waiting first.
+- **Waiting on.** Each agent's longest-blocked job that waits on someone
+  else: how long and its blocker, in the agent's own words (text only).
+  A job whose checkable blockers all passed (fabric-jobs' `cleared`) reads
+  `cleared: <blocker>`: the agent's to move on, not a wait. A job blocked
+  on the owner is under needs you, unless it is cleared. What fleet.py could not tell is unknown (`?`, its
   why in the footer), never "nothing waits": the title counts it. In the
   agent view a context share or output activity not reported reads unknown,
   never 0 or quiet. Every colour (magenta for needs you, cyan for waiting)
