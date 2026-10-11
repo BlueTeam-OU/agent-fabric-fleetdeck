@@ -83,7 +83,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 #                  vesper
 # name = "catppuccin"
 
-# Follow host terminal light/dark appearance and switch Herdr UI themes.
+# Follow host terminal light/dark appearance and switch FleetDeck UI themes.
 # Existing manual behavior is unchanged unless this is true.
 # auto_switch = false
 # dark_name = "catppuccin"
@@ -120,7 +120,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 
 # CWD policy for new panes, tabs, and workspaces when no explicit --cwd is provided.
 # Use "follow" to inherit the source pane/workspace, "home" for $HOME,
-# "current" for Herdr's process directory, or a fixed path such as "~/Projects".
+# "current" for FleetDeck's process directory, or a fixed path such as "~/Projects".
 # new_cwd = "follow"
 
 # Render pane images in Kitty graphics-compatible outer terminals.
@@ -259,11 +259,11 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # Collapsed sidebar presentation: "compact" keeps the narrow status rail, "hidden" uses zero width.
 # sidebar_collapsed_mode = "compact"
 
-# Terminal width at or below which Herdr uses the mobile single-column layout.
+# Terminal width at or below which FleetDeck uses the mobile single-column layout.
 # Increase this for foldables, tablets, or wide phone terminals.
 # mobile_width_threshold = 64
 
-# Capture mouse input for Herdr's mouse UI.
+# Capture mouse input for FleetDeck's mouse UI.
 # Set false to let the terminal handle normal clicks, such as Cmd-clicking URLs.
 # Pane apps like lazygit and btop can still receive mouse when they request it.
 # mouse_capture = true
@@ -281,16 +281,16 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # clipboard_shortcuts = true
 
 # Host cursor policy: "auto", "native", or "drawn".
-# "auto" draws Herdr's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
-# "native" always uses the outer terminal cursor. "drawn" always draws Herdr's cursor as terminal cell content.
+# "auto" draws FleetDeck's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "native" always uses the outer terminal cursor. "drawn" always draws FleetDeck's cursor as terminal cell content.
 # host_cursor = "auto"
 
-# Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening Herdr's pane menu.
+# Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening FleetDeck's pane menu.
 # Empty/off disables this. Shift is intentionally unsupported because terminals commonly reserve Shift+mouse.
 # right_click_passthrough_modifier = ""
 
 # Force a full redraw when the outer terminal regains focus.
-# Set false to reduce visible flashing when switching back to Herdr.
+# Set false to reduce visible flashing when switching back to FleetDeck.
 # Trade-off: rare host terminal surface corruption may persist until the next full redraw.
 # redraw_on_focus_gained = true
 
@@ -336,14 +336,14 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 
 # Ordered status entries at the right edge of the desktop tab bar.
 # Supported types: zoom, hostname, datetime, text, and command.
-# Hostname, datetime, and command entries resolve on the Herdr server.
+# Hostname, datetime, and command entries resolve on the FleetDeck server.
 # tab_bar_right = []
 # tab_bar_right_separator = " "
 
-# Title Herdr writes to the terminal it runs in, which is what window managers
+# Title FleetDeck writes to the terminal it runs in, which is what window managers
 # show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},
 # {pane}, and {terminal_title}; {{ and }} are literal braces.
-# The title renders on the Herdr server, so {hostname} names the host the panes
+# The title renders on the FleetDeck server, so {hostname} names the host the panes
 # run on even when attaching from a remote client.
 # Set to "" to leave the outer terminal title alone.
 # window_title = "{hostname}: {workspace}"
@@ -412,7 +412,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 
 [session]
 # Resume supported AI-agent panes into their native conversation sessions after
-# a Herdr server restart. Requires official integrations that report session refs.
+# a FleetDeck server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
 # Milliseconds between automatic agent restores; 0 starts them without spacing.
 # startup_per_agent_delay_ms = 100
@@ -422,7 +422,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # When true (default), FleetDeck runs remote ssh through a generated config that
 # includes your ~/.ssh/config first and adds ServerAliveInterval/
 # ServerAliveCountMax as fallbacks (so any keepalive values you set yourself
-# still win) to survive idle network/NAT timeouts. Herdr also uses a private
+# still win) to survive idle network/NAT timeouts. FleetDeck also uses a private
 # per-attach OpenSSH control socket to reuse the first authenticated connection.
 # Set false to run plain ssh against your ssh config unchanged — this does not
 # force keepalive or multiplexing off, it only stops FleetDeck from adding its own.
@@ -873,11 +873,12 @@ mod tests {
     #[test]
     fn the_default_config_teaches_this_builds_command_and_paths() {
         // `[ui.toast.herdr]` and `herdr = …` are config keys kept for
-        // compatibility (docs/fleetdeck/IDENTITY.md); no other herdr remains.
+        // compatibility (docs/fleetdeck/IDENTITY.md); no other herdr or Herdr
+        // remains.
         let teaching = super::DEFAULT_CONFIG
             .lines()
             .filter(|line| !line.contains("toast.herdr") && !line.contains("herdr = "))
-            .filter(|line| line.contains("herdr"))
+            .filter(|line| line.to_lowercase().contains("herdr"))
             .collect::<Vec<_>>();
         assert!(teaching.is_empty(), "{teaching:#?}");
     }
