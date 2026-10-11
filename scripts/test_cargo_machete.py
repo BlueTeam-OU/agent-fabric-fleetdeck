@@ -25,7 +25,12 @@ exit "${{{name}_RC:-0}}"
 class CargoMacheteTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.bin = Path(self.tmp.name)
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        # The argument records live apart from the stubs: on a case-insensitive
+        # filesystem (macOS) a record named CARGO would be the cargo stub itself.
+        self.args = Path(self.tmp.name) / "args"
+        self.args.mkdir()
         for tool, name in (("cargo", "CARGO"), ("cargo-machete", "MACHETE")):
             path = self.bin / tool
             path.write_text(STUB.format(name=name))
@@ -35,7 +40,7 @@ class CargoMacheteTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_script(self, **env: str) -> subprocess.CompletedProcess[str]:
-        full = {"PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin", "STUB_ARGS": str(self.bin), **env}
+        full = {"PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin", "STUB_ARGS": str(self.args), **env}
         return subprocess.run(
             [sys.executable, str(SCRIPT)], env=full, capture_output=True, text=True, timeout=60
         )
@@ -46,8 +51,8 @@ class CargoMacheteTest(unittest.TestCase):
         # The two flags the verdict rests on: the committed lockfile, and
         # the metadata mode that judges every crate (and reports one it
         # could not read).
-        self.assertEqual((self.bin / "CARGO").read_text(), "metadata --locked --format-version 1\n")
-        self.assertEqual((self.bin / "MACHETE").read_text(), "--with-metadata\n")
+        self.assertEqual((self.args / "CARGO").read_text(), "metadata --locked --format-version 1\n")
+        self.assertEqual((self.args / "MACHETE").read_text(), "--with-metadata\n")
 
     def test_unused_dependency_fails(self) -> None:
         result = self.run_script(MACHETE_OUT="agent-fabric-fleetdeck -- ./Cargo.toml:\n\tfoo\n", MACHETE_RC="1")
