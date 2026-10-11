@@ -8,7 +8,7 @@ const LOCAL_INPUT_SOURCE: u8 = 0;
 /// gzapi-org's fork: herdr's copy is ctrl+alt+c (or cmd+c where the host
 /// forwards it), never ctrl+c, which always reaches the pane's harness. No
 /// harness binds ctrl+alt+c (client shell tests, `harness_keys`).
-fn is_retained_selection_copy_key(key: &crate::input::TerminalKey) -> bool {
+pub(super) fn is_retained_selection_copy_key(key: &crate::input::TerminalKey) -> bool {
     matches!(key.code, KeyCode::Char('c' | 'C'))
         && matches!(
             key.modifiers,
@@ -19,7 +19,7 @@ fn is_retained_selection_copy_key(key: &crate::input::TerminalKey) -> bool {
 /// gzapi-org's fork: herdr's paste into a pane is ctrl+alt+p (or cmd+v on
 /// macOS), never ctrl+v, which the harness reads itself (images included).
 /// Not ctrl+alt+v: Codex binds it to paste an image.
-fn is_pane_paste_key_for_platform(key: &crate::input::TerminalKey, macos: bool) -> bool {
+pub(super) fn is_pane_paste_key_for_platform(key: &crate::input::TerminalKey, macos: bool) -> bool {
     key.generated_text.as_deref().is_none_or(str::is_empty)
         && (matches!(key.code, KeyCode::Char('p' | 'P'))
             && key.modifiers == KeyModifiers::CONTROL | KeyModifiers::ALT
