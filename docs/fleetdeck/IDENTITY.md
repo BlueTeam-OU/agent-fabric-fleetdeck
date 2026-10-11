@@ -132,11 +132,14 @@ session.
   FleetDeck's version. A plugin that needs a Herdr feature FleetDeck has not
   imported can pass the gate.
 - **Windows** is checked by CI on every pull request: the build, clippy
-  and tests (`check (windows-latest)`), the ConPTY package with its
-  PowerShell 5.1 installer and repair test (`Windows ConPTY package`), and
-  the ARM64 installer once a FleetDeck preview is published. Nobody has
-  run FleetDeck by hand on a Windows desktop; before a release ships
-  Windows assets, someone should.
+  and tests (`check (windows-latest)`), and the ConPTY package with its
+  PowerShell 5.1 installer and repair test (`Windows ConPTY package`).
+  The ARM64 installer test (`Windows ARM64 installer`) runs only on pull
+  requests that change `distribution/install.ps1`,
+  `distribution/preview.json` or the test itself, and it skips with a
+  warning until a FleetDeck preview with a Windows asset is published.
+  Nobody has run FleetDeck by hand on a Windows desktop; before a release
+  ships Windows assets, it must be checked there.
 - **Herdr's documentation** in `docs/` still says `herdr`.
 
 ## Setup that is not in the repository
