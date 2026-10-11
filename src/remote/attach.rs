@@ -1348,6 +1348,10 @@ fn prepare_discovered_remote_herdr(
         }
     }
 
+    if override_binary.is_none() && !local_binary_can_seed_remote(&remote_herdr.platform) {
+        refuse_unreleased_platform(&ssh.destination(), &remote_herdr.platform)?;
+    }
+
     let mut stop_after_install_approved = false;
     if let Some(status_probe_herdr) = candidates.first().or_else(|| {
         remote_binary_exists(ssh, &remote_herdr)
@@ -1431,6 +1435,10 @@ fn prepare_windows_remote_herdr(
                 });
             }
         }
+    }
+
+    if !custom_package {
+        refuse_unreleased_platform(&ssh.destination(), &remote_herdr.platform)?;
     }
 
     let stop_after_install_approved = if let Some(candidate) = candidates.first() {
@@ -1904,6 +1912,23 @@ fn local_binary_can_seed_remote(platform: &RemotePlatform) -> bool {
     std::env::current_exe()
         .map(|path| !crate::update::is_package_manager_managed_exe_path(&path))
         .unwrap_or(false)
+}
+
+/// Refuses, before the person is asked to approve an install, a remote whose
+/// platform no FleetDeck release is built for: the download would fail only
+/// after they said yes.
+fn refuse_unreleased_platform(destination: &str, platform: &RemotePlatform) -> io::Result<()> {
+    let asset_key = platform.asset_key();
+    if crate::update::RELEASED_TARGETS.contains(&asset_key.as_str()) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "{destination} is {asset_key}, and FleetDeck releases are built for Linux only ({}); install an agent-fabric-fleetdeck built for {asset_key} on that host, or set {REMOTE_BINARY_ENV_VAR} to one",
+            crate::update::RELEASED_TARGETS.join(", ")
+        ),
+    ))
 }
 
 fn windows_package_identity(custom: bool, sha256: &str) -> String {
@@ -5582,6 +5607,49 @@ function Get-Process {
                 platform.asset_key()
             )
         );
+    }
+
+    #[test]
+    fn a_released_linux_remote_is_not_refused() {
+        for arch in ["x86_64", "aarch64"] {
+            let platform = RemotePlatform { os: "linux", arch };
+            refuse_unreleased_platform("example", &platform).expect("a released target");
+        }
+    }
+
+    #[test]
+    fn a_macos_remote_is_refused_naming_its_platform_and_the_way_round() {
+        let platform = RemotePlatform::from_uname("Darwin", "arm64").expect("macOS");
+        let err = refuse_unreleased_platform("mac (session default)", &platform)
+            .expect_err("no macOS release exists");
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("mac (session default) is macos-aarch64,"),
+            "{message}"
+        );
+        assert!(message.contains("linux-x86_64, linux-aarch64"), "{message}");
+        assert!(message.contains(REMOTE_BINARY_ENV_VAR), "{message}");
+    }
+
+    #[test]
+    fn a_windows_remote_is_refused_before_the_install_is_offered() {
+        // No candidate and no override: the next step would ask the person to
+        // approve a download of an asset no release carries.
+        if std::env::var_os(REMOTE_BINARY_ENV_VAR).is_some() {
+            return;
+        }
+        let ssh = RemoteSsh::new_noninteractive("win".into());
+        let remote_herdr = RemoteHerdr::for_platform(RemotePlatform {
+            os: "windows",
+            arch: "x86_64",
+        });
+        let err = match prepare_discovered_remote_herdr(&ssh, remote_herdr, &[], false, true) {
+            Ok(_) => panic!("a Windows remote with nothing installed was prepared"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
+        assert!(err.to_string().contains("is windows-x86_64,"), "{err}");
     }
 
     #[test]
