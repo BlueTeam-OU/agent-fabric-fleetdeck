@@ -1165,7 +1165,8 @@ impl App {
 
         let mut closed_workspace_id = None;
         if source_workspace_empty && cross_workspace {
-            self.state.workspaces.remove(source_ws_idx);
+            let closed = self.state.workspaces.remove(source_ws_idx);
+            crate::logging::workspace_closed(&closed.id);
             closed_workspace_id = Some(previous_workspace_id.clone());
             if self.state.workspaces.is_empty() {
                 self.state.active = None;

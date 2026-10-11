@@ -891,10 +891,17 @@ impl HeadlessServer {
             &msg.request.method,
             api::schema::Method::PaneMove(params) if params.focus
         );
-        let inspect_tab_move = matches!(
-            &msg.request.method,
-            api::schema::Method::TabMoveToWorkspace(params) if params.focus
-        );
+        // The tab's id before the move: a move answers with the tab under a
+        // new id, a tab already in its target with the same one. Positions
+        // cannot tell: the target can sit where the source tab was.
+        let tab_move_from = match &msg.request.method {
+            api::schema::Method::TabMoveToWorkspace(params) if params.focus => self
+                .app
+                .parse_tab_id(&params.tab_id)
+                .and_then(|(ws_idx, tab_idx)| self.app.public_tab_id(ws_idx, tab_idx)),
+            _ => None,
+        };
+        let inspect_tab_move = tab_move_from.is_some();
         let response_proxy =
             (agent_focus_target.is_some() || inspect_pane_move || inspect_tab_move).then(|| {
                 let (proxy_tx, proxy_rx) = std::sync::mpsc::channel();
@@ -933,9 +940,10 @@ impl HeadlessServer {
             })
             .flatten();
         let target_changed = self.default_shell_target() != target_before;
-        // A tab already in its target is left as it is, and focuses nothing.
-        let tab_move_focus_succeeded =
-            inspect_tab_move && proxied_request_succeeded && target_changed;
+        let tab_move_focus_succeeded = matches!(
+            (&proxied_result, &tab_move_from),
+            (Some(api::schema::ResponseResult::TabInfo { tab }), Some(from)) if &tab.tab_id != from
+        );
         let explicit_focus_succeeded = successful_agent_focus_target
             .or(explicit_public_focus_target)
             .is_some_and(|target| self.default_shell_target() == Some(target));
