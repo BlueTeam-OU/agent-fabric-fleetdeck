@@ -295,12 +295,12 @@ try {
         $env:Path.Split(";", [System.StringSplitOptions]::RemoveEmptyEntries) |
             Where-Object {
                 -not (Test-Path -LiteralPath (Join-Path $_ "agent-fabric-fleetdeck.exe") -PathType Leaf) -and
-                -not (Test-Path -LiteralPath (Join-Path $_ "herdr.cmd") -PathType Leaf)
+                -not (Test-Path -LiteralPath (Join-Path $_ "agent-fabric-fleetdeck.cmd") -PathType Leaf)
             }
     ) -join ";"
     $env:Path = $pathWithoutHerdr
-    if ($null -ne (Get-Command herdr -ErrorAction SilentlyContinue)) {
-        throw "test PATH still resolves Herdr before current-junction migration discovery"
+    if ($null -ne (Get-Command agent-fabric-fleetdeck -ErrorAction SilentlyContinue)) {
+        throw "test PATH still resolves FleetDeck before current-junction migration discovery"
     }
     $oldConfigPath = $env:HERDR_CONFIG_PATH
     try {
@@ -545,14 +545,14 @@ try {
         -not $pathDirectory.FullName.Equals($stableReleaseDir.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "installer PATH does not start with the active concrete release directory"
     }
-    $resolvedHerdr = Get-Command herdr -CommandType Application -ErrorAction Stop
+    $resolvedHerdr = Get-Command agent-fabric-fleetdeck -CommandType Application -ErrorAction Stop
     if (-not $resolvedHerdr.Source.Equals(
         (Join-Path $stableReleaseDir.FullName "agent-fabric-fleetdeck.exe"),
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
         throw "installed command does not resolve through the active concrete release"
     }
-    & herdr --version *> $null
+    & agent-fabric-fleetdeck --version *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "installed command failed from the concrete release PATH entry"
     }
@@ -580,6 +580,14 @@ if "%1"=="channel" if "%2"=="show" (
   exit /b 0
 )
 exit /b 1
+"@ | Out-File -LiteralPath (Join-Path $fakeBin "agent-fabric-fleetdeck.cmd") -Encoding ascii
+    # An upstream Herdr on PATH is another product: the installer never runs it.
+    $herdrInvocationMarker = Join-Path $root "herdr-invoked"
+    @"
+@echo off
+echo invoked>"$herdrInvocationMarker"
+echo preview
+exit /b 0
 "@ | Out-File -LiteralPath (Join-Path $fakeBin "herdr.cmd") -Encoding ascii
 
     $preserveHome = Join-Path $root "preserve-home"
@@ -617,6 +625,9 @@ exit /b 1
     }
     if (Test-Path -LiteralPath $fakeInvocationMarker) {
         throw "installer invoked an unrecognized command despite an explicit channel"
+    }
+    if (Test-Path -LiteralPath $herdrInvocationMarker) {
+        throw "installer invoked a Herdr command"
     }
 } finally {
     $env:AGENT_FABRIC_FLEETDECK_HOME = $oldHerdrHome
