@@ -26,6 +26,12 @@ cannot complete is rolled back by that server, which keeps running; the
 command says so and exits non-zero. `--dry-run` builds and installs nothing
 and asks no server to hand off: it prints what it would do, from the same
 read-only status queries.
+
+Before any of it, the command asks the Zig the build will use (`$ZIG`, else
+`zig` on PATH) for its version, and refuses -- dry run included -- unless it
+is the release the vendored libghostty-vt names
+(`vendor/libghostty-vt/build.zig.zon`'s `minimum_zig_version`), saying how
+to install it: otherwise the build fails minutes in, in a build script.
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ DECK_COMMANDS = ("fleet-deck",)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+ZIG_MANIFEST = os.path.join("vendor", "libghostty-vt", "build.zig.zon")
 
 
 @dataclass(frozen=True)
@@ -117,6 +124,68 @@ def checkout_problem(path: str, mode: int, owner: int, uid: int) -> str | None:
     return None
 
 
+def required_zig(root: str) -> str:
+    """The Zig release the vendored libghostty-vt names, from its manifest."""
+    with open(os.path.join(root, ZIG_MANIFEST), encoding="utf-8") as handle:
+        for line in handle:
+            key, _, value = line.strip().partition("=")
+            if key.strip() == ".minimum_zig_version":
+                return value.strip().rstrip(",").strip('"')
+    raise SystemExit(f"install: no minimum_zig_version in {ZIG_MANIFEST}")
+
+
+def zig_answer(binary: str, run: Callable[..., subprocess.CompletedProcess]) -> str | None:
+    """What `<binary> version` prints, or None when it cannot be asked."""
+    try:
+        result = run([binary, "version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+
+
+def _release(version: str) -> tuple[int, int, int] | None:
+    parts = version.split("-", 1)[0].split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def zig_problem(required: str, binary: str, answer: str | None) -> str | None:
+    """Why the build cannot run with this Zig, or None when it can: the same
+    major.minor as `required` -- Zig breaks its build API between minors --
+    at or past its patch, and a release rather than a dev build."""
+    how = (f"install Zig {required} from https://ziglang.org/download/ and put it on PATH, "
+           "or set ZIG to its path")
+    if answer is None:
+        return (f"building needs Zig {required} ({ZIG_MANIFEST}), and `{binary} version` gave no "
+                f"answer: {how}")
+    want, have = _release(required), _release(answer)
+    if want is None:
+        raise SystemExit(f"install: {ZIG_MANIFEST} names a Zig version this command cannot read: {required}")
+    if have is None or "-" in answer or have[:2] != want[:2] or have[2] < want[2]:
+        return f"building needs Zig {required} ({ZIG_MANIFEST}), and `{binary} version` answered {answer}: {how}"
+    return None
+
+
+def zig_check(root: str, environ: dict[str, str] | os._Environ,
+              run: Callable[..., subprocess.CompletedProcess]) -> str | None:
+    """`zig_problem` for the Zig the build will run. crates/ghostty-vt/build.rs
+    takes `$ZIG` whenever it is set -- empty included -- else `zig`, and runs
+    it from vendor/libghostty-vt, so an empty or relative `ZIG` names a
+    binary other than the one asked here: either is refused, not resolved."""
+    required = required_zig(root)
+    if "ZIG" not in environ:
+        return zig_problem(required, "zig", zig_answer("zig", run))
+    binary = environ["ZIG"]
+    if not binary:
+        return (f"ZIG is set but empty, so the build would run no Zig at all: unset it, or set it to "
+                f"the absolute path of Zig {required}")
+    if os.sep in binary and not os.path.isabs(binary):
+        return (f"ZIG={binary} is a relative path, which the build resolves from "
+                f"vendor/libghostty-vt rather than from here: set it to the absolute path of Zig {required}")
+    return zig_problem(required, binary, zig_answer(binary, run))
+
+
 def plan(
     *,
     root: str,
@@ -131,8 +200,12 @@ def plan(
     from_herdr: bool = False,
     herdr_is_fork: bool | None = None,
     config_exists: Callable[[str], bool] = os.path.exists,
+    zig: str | None = None,
 ) -> list[Step]:
-    """Everything the command does, in order. Pure: the tests read it."""
+    """Everything the command does, in order. Pure: the tests read it.
+    `zig` is `zig_problem`'s answer: a reason the build cannot run."""
+    if zig:
+        return [Step(None, f"{zig}. Nothing was built or installed", refuse=True)]
     fleetdeck_running = bool(fleetdeck and fleetdeck.running)
     if from_herdr and not fleetdeck_running:
         if not herdr_on_path:
@@ -267,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     version = crate_version(ROOT)
+    zig = zig_check(ROOT, os.environ, subprocess.run)
     installed = os.path.join(args.bin_dir, BIN)
     fleetdeck = server_status(installed if os.path.exists(installed) else BIN, subprocess.run)
     herdr_on_path = shutil.which(LEGACY_BIN)
@@ -290,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         herdr_on_path=herdr_on_path,
         from_herdr=args.from_herdr,
         herdr_is_fork=herdr_is_fork,
+        zig=zig,
     )
     return run_steps(steps, dry_run=args.dry_run, cwd=ROOT)
 

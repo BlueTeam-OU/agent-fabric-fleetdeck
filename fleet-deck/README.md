@@ -60,6 +60,10 @@ fleet-deck start     # starts what is missing, without attaching
   operator's login, from an ordinary terminal (not a pane):
   `<this checkout>/fleet-deck/install` (`--dry-run` shows the steps; add
   `--from-herdr` the first time, while the fork still runs as `herdr`).
+  - First it asks the build's Zig (`$ZIG`, else `zig` on PATH) for its
+    version, and stops -- dry run included -- unless it is the release
+    `vendor/libghostty-vt/build.zig.zon` names, saying where to get
+    it. Nothing is built before that.
   - It builds `agent-fabric-fleetdeck` once (`--jobs 4` by default), installs it
     into `~/.local/bin` by rename, and links `fleet-deck` beside it.
   - If FleetDeck has no config yet, it copies `~/.config/herdr/config.toml`
