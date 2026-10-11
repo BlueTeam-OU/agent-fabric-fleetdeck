@@ -60,3 +60,17 @@ changes stay small, so a sync stays a small merge.
 **Never here.** herdr's agent-to-agent prompting between agents:
 GZCoord is the fleet's channel. A pane that starts an agent as the
 operator: every agent pane enters its login with `moveto`.
+
+**One exception, the deck's watch re-arm** (fabric-coordinator,
+2026-10-11, on rust-ui-dev-02's REPLY 01a12a7d). The deck controller
+may type one fixed text from its own code, with no part taken from any
+message, telling an agent its inbox watch is not running. Only into a
+harness pane the deck itself labels and links to the pane (a moveto or
+sudo pane whose harness descends from it; never an ssh-entered pane,
+whose session the deck cannot link); whose session the control plane's
+session states (`fabric-ctl all states --follow`) report idle; and
+whose screen shows Claude Code's empty prompt with no working
+indicator, menu, dialog or typed text. Only when that account has had
+no `gzcoord-inbox` process for 2 minutes or more; at most once per 10
+minutes per account; each one logged; off unless `fleet-deck` is
+started with `--rearm-watch`. Anything wider is a new exception.
