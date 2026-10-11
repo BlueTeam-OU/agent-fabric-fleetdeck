@@ -17,7 +17,8 @@ main() {
     OS="$(uname -s)"
     case "$OS" in
         Linux)  os="linux" ;;
-        Darwin) os="macos" ;;
+        # releases are built for Debian and Fedora only (owner, 2026-10-11)
+        Darwin) err "FleetDeck release binaries are built for Linux only (Debian, Fedora); on macOS, build agent-fabric-fleetdeck from source." ;;
         *)      err "unsupported OS: $OS" ;;
     esac
 
