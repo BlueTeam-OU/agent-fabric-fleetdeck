@@ -98,6 +98,7 @@ class PlanTest(unittest.TestCase):
         steps = steps_for(herdr_on_path=HERDR, from_herdr=True, herdr_is_fork=False)
         self.assertEqual(commands(steps), [])
         self.assertTrue(steps[0].refuse)
+        self.assertIn("is not this fork's herdr", steps[0].say)
         said = []
         self.assertEqual(run_steps(steps, dry_run=False, cwd="/src/fd",
                                    run=lambda *a, **k: self.fail("ran a command"), say=said.append), 1)
