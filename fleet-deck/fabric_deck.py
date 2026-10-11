@@ -902,6 +902,7 @@ class Deck:
         newly = {a.login for a in accounts} - self.placed
         self.placed = {a.login for a in accounts}
         self.retry &= self.placed
+        self.seed_on_bind &= self.placed
         # An account placed while the deck runs gets its tab now; one whose
         # harness a person closed stays closed until the next restore.
         self.retry |= newly

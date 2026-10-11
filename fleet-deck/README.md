@@ -162,7 +162,8 @@ again whole within 10 s, and is followed in nothing until then.
   its group's workspace if one still exists, else to `New`. An account
   whose role is not bound yet (`moveto --list` shows `-`) gets no tab until
   it is: FleetDeck cannot move a tab to another workspace, so one made then
-  would stay in `New`. The deck's log says so once.
+  would stay in `New`. The deck's log says so once. One that waited
+  through the host's first setup is seeded as on first setup once bound.
 - **A milestone-1 tab** (one unlabelled pane) keeps that pane as the
   harness and gains the shell and status panes.
 - **A tab split by hand** with no `harness` pane is left alone, and the

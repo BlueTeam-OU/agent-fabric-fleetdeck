@@ -456,6 +456,13 @@ class Restore(unittest.TestCase):
         self.assertEqual(made, {"ui": "Rust Developer", "coord": "Coordinator"},
                          "the others' tabs since do not make it a later account")
 
+    def test_an_account_no_longer_placed_does_not_keep_its_first_setup_seeding(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        h.logins.remove("coord")
+        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        self.assertEqual(h.deck.seed_on_bind, set())
+
     def test_a_new_account_gets_a_three_pane_tab_its_harness_waiting_for_the_decision(self):
         h = Harness()
         h.deck.restore(0)
