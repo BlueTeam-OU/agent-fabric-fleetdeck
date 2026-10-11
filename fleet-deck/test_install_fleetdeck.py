@@ -72,6 +72,20 @@ class PlanTest(unittest.TestCase):
         self.assertNotIn(("cp", "-n", "-p", legacy_config, dev_config),
                          commands(steps_for(configs={legacy_config, dev_config}, profile="debug")))
 
+    def test_without_the_flag_a_running_herdr_server_is_never_handed_off(self):
+        legacy = Server(HERDR, True, "0.9.3", True, "h")
+        steps = steps_for(legacy=legacy, from_herdr=False)
+        self.assertFalse(any(HERDR in argv for argv in commands(steps)))
+        self.assertIn("--from-herdr", steps[-1].say)
+
+    def test_from_herdr_refuses_when_it_cannot_act(self):
+        no_herdr = steps_for(from_herdr=True)
+        unanswered = steps_for(herdr_on_path=HERDR, from_herdr=True, herdr_is_fork=True)
+        for steps in (no_herdr, unanswered):
+            self.assertEqual(commands(steps), [])
+            self.assertTrue(steps[0].refuse)
+            self.assertNotIn("no server is running", steps[0].say)
+
     def test_without_the_flag_a_herdr_on_path_is_only_named(self):
         steps = steps_for(herdr_on_path=HERDR)
         self.assertFalse(any(HERDR in argv for argv in commands(steps)))

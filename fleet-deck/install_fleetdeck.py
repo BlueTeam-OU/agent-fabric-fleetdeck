@@ -93,8 +93,9 @@ def server_status(binary: str, run: Callable[..., subprocess.CompletedProcess]) 
 def is_forks_herdr(path: str, run: Callable[..., subprocess.CompletedProcess]) -> bool:
     """Whether the `herdr` at `path` is this fork's build from before the
     rename, asked without contacting any server: `--default-config` only
-    prints the template. The fork's template carries `socket_access`, added
-    by its first change (4af49a70) and absent from upstream Herdr's."""
+    prints the template. Every fork build from 5a8635cd on carries
+    `socket_access` in it; upstream Herdr's template does not. It names the
+    CLI's build, not the server that CLI reaches."""
     try:
         result = run([path, "--default-config"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
@@ -103,9 +104,12 @@ def is_forks_herdr(path: str, run: Callable[..., subprocess.CompletedProcess]) -
 
 
 def checkout_problem(path: str, mode: int, owner: int, uid: int) -> str | None:
-    """Why a checkout may not decide what this login installs, or None. The
-    binary is built from it and `fleet-deck` stays linked into it, so a
-    checkout another login owns or can write would choose what runs here."""
+    """Why a checkout directory may not decide what this login installs, or
+    None. The binary is built from the checkout and `fleet-deck` stays linked
+    into it, so a directory another login owns or can write would let that
+    login choose what runs here. It judges the one directory it is given (the
+    caller passes the checkout's top and fleet-deck/); it walks no tree, so a
+    writable file deeper inside is not caught."""
     if owner != uid:
         return f"{path} belongs to another login"
     if mode & 0o022:
@@ -130,10 +134,24 @@ def plan(
 ) -> list[Step]:
     """Everything the command does, in order. Pure: the tests read it."""
     fleetdeck_running = bool(fleetdeck and fleetdeck.running)
-    if from_herdr and herdr_on_path and not fleetdeck_running and herdr_is_fork is False:
-        return [Step(None, f"`{herdr_on_path}` is not this fork's herdr (its default config has no "
-                           "socket_access): it is another product, and FleetDeck never contacts it. "
-                           "Nothing was built or installed", refuse=True)]
+    if from_herdr and not fleetdeck_running:
+        if not herdr_on_path:
+            return [Step(None, f"--from-herdr: no `{LEGACY_BIN}` on PATH, so no herdr server can be handed "
+                               "over. Run it from a shell whose PATH has the fork's herdr. Nothing was built "
+                               "or installed", refuse=True)]
+        if herdr_is_fork is False:
+            return [Step(None, f"`{herdr_on_path}` is not this fork's herdr (its default config has no "
+                               "socket_access): it is another product, and FleetDeck never contacts it. "
+                               "Nothing was built or installed", refuse=True)]
+        if legacy is None:
+            return [Step(None, f"--from-herdr: `{herdr_on_path} status server --json` gave no answer, so "
+                               "whether its server runs your agents is unknown. Nothing was built or "
+                               "installed", refuse=True)]
+    # herdr's server is a handoff source only when the operator named it and
+    # it is this fork's build; main() asks it nothing otherwise, and this
+    # holds even if a caller passes one.
+    if not (from_herdr and herdr_is_fork):
+        legacy = None
     installed = os.path.join(bin_dir, BIN)
     staged = os.path.join(bin_dir, f".{BIN}.new")
     steps = [
