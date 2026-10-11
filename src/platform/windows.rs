@@ -2730,6 +2730,10 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
 /// that is decided.
 pub const CAN_READ_CLIPBOARD_TEXT: bool = false;
 
+// Test builds swap in a reader that never touches the developer's clipboard
+// (client::shell::state::default_clipboard_text_reader), so nothing calls this
+// there.
+#[cfg_attr(test, allow(dead_code))]
 pub fn read_clipboard_text() -> Option<String> {
     None
 }

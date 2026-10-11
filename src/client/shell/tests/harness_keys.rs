@@ -10,6 +10,7 @@
 //! 2026-10-10. A harness that gains a binding on the prefix shows up here only
 //! when its list is refreshed: re-check them when a harness's keymap changes.
 
+#[cfg(unix)]
 use super::input_conformance::{HerdrPath, HostProfile};
 use super::*;
 
@@ -361,6 +362,8 @@ fn the_fleet_deck_keys_are_no_harness_key() {
 /// What a harness types, as each host sends it: (name, legacy host bytes,
 /// kitty host bytes under disambiguate). The pane runs a program that asked
 /// for nothing (legacy) or for disambiguate (kitty), as Claude Code and Codex do.
+/// Unix only, like the tests that use it: host escape disambiguation is.
+#[cfg(unix)]
 const TYPED: &[(&str, &[u8], &[u8])] = &[
     ("ctrl+c", b"\x03", b"\x1b[99;5u"),
     ("ctrl+d", b"\x04", b"\x1b[100;5u"),
@@ -392,6 +395,7 @@ const TYPED: &[(&str, &[u8], &[u8])] = &[
     ("pagedown", b"\x1b[6~", b"\x1b[6~"),
 ];
 
+#[cfg(unix)]
 fn deck_path(host: HostProfile) -> HerdrPath {
     let app = match host {
         HostProfile::Kitty => b"\x1b[>1u".as_slice(),
@@ -403,6 +407,7 @@ fn deck_path(host: HostProfile) -> HerdrPath {
     path
 }
 
+#[cfg(unix)]
 fn assert_typed_keys_reach_the_pane(host: HostProfile) {
     let mut path = deck_path(host);
     for (name, legacy, kitty) in TYPED {
