@@ -153,6 +153,14 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      # A container job runs as root over a checkout the runner's own user
+      # owns, and the installer rightly refuses a checkout another login
+      # owns (fleet-deck/install_fleetdeck.py checkout_problem); on a host,
+      # the login owns its checkout.
+      - name: Own the checkout
+        if: env.LEG != 'ubuntu-latest'
+        run: chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
       # Persist both Zig caches; build outputs otherwise stay uncached in
       # Cargo's OUT_DIR. Set from $GITHUB_WORKSPACE in a step: in a container
       # job the github.workspace expression is the host path, not /__w.
