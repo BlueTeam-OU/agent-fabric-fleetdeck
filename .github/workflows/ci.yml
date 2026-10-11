@@ -14,9 +14,6 @@ env:
   # Keep file/line backtraces without generating type and variable debug information.
   CARGO_PROFILE_DEV_DEBUG: "1"
   CARGO_PROFILE_TEST_DEBUG: "1"
-  # Persist both Zig caches; build outputs otherwise stay uncached in Cargo's OUT_DIR.
-  ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache
-  ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache
   # PR caches are visible only to their own PR, and every save pushes the
   # repository toward GitHub's cache limit, evicting the master caches PRs
   # restore from. Only branch pushes save.
@@ -155,9 +152,20 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      # Persist both Zig caches; build outputs otherwise stay uncached in
+      # Cargo's OUT_DIR. Set from $GITHUB_WORKSPACE in a step: in a container
+      # job the github.workspace expression is the host path, not /__w.
+      - name: Zig cache directories
+        run: |
+          echo "ZIG_GLOBAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache" >> "$GITHUB_ENV"
+          echo "ZIG_LOCAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache" >> "$GITHUB_ENV"
+
       # Zig downloads come from ziglang.org or a random community mirror and
       # vary from seconds to minutes; reuse the verified install instead.
+      # Ubuntu leg only: in a container runner.temp is the host path, and the
+      # key is not per leg; the containers install Zig fresh.
       - name: Restore Zig compiler
+        if: env.LEG == 'ubuntu-latest'
         id: zig-compiler
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -183,7 +191,7 @@ jobs:
           echo "ZIG=$stable_zig/zig" >> "$GITHUB_ENV"
 
       - name: Save Zig compiler
-        if: steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
+        if: env.LEG == 'ubuntu-latest' && steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/herdr-zig-0.16.0
