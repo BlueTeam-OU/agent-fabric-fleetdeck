@@ -5,7 +5,7 @@ topic: "herdr-restore-drops-plugin-panes"
 description: "A herdr session restore keeps a plugin tab's label but runs a shell in place of the plugin's program; judge a tab by its process, not its label"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-10"
+distilled_at: "2026-10-12"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "herdr-agent-row-display"
 description: "what a person actually reads in herdr's agent sidebar for a reported pane, and the report-metadata rules that bite"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-10"
+distilled_at: "2026-10-12"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
