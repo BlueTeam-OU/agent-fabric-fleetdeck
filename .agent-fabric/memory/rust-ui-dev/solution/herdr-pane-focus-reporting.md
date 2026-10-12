@@ -5,7 +5,7 @@ topic: "herdr-pane-focus-reporting"
 description: "What a herdr pane learns about its own focus (DECSET 1004): changes only, never the state at enable; and why a focused plugin tab did not move clients"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-10"
+distilled_at: "2026-10-12"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

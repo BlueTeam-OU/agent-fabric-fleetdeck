@@ -5,7 +5,7 @@ topic: "moveto-sudo-own-pty"
 description: "why herdr process-info on a moveto pane never shows claude — sudo use_pty puts the account on its own pty"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-10"
+distilled_at: "2026-10-12"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

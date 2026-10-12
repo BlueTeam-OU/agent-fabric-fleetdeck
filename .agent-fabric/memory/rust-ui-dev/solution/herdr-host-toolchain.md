@@ -5,7 +5,7 @@ topic: "herdr-host-toolchain"
 description: "What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-10"
+distilled_at: "2026-10-12"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -13,6 +13,7 @@ origin:
     working_copy: herdr
 derived_from:
   - 3e02d29b970bf3c8
+  - d0740a7f949183e9
 ---
 
 ## What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts
@@ -52,6 +53,10 @@ rustup (~/.cargo/bin, not on the default PATH: prefix PATH=$HOME/.cargo/bin). `j
   `git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push`.
 
 See [[herdr-socket-access-design]].
+
+- **`pkill -f <pattern>` inside a Bash call kills that call.** The shell's own command line
+  contains the pattern, so the command exits 144 mid-way (2026-10-11, stopping Xvfb).
+  Use `pkill -x Xvfb` or a pid file.
 
 *References: herdr-socket-access-design*
 
