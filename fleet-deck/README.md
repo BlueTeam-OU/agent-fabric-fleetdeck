@@ -33,11 +33,68 @@ the controller holds a lock (`$XDG_STATE_HOME/fabric-deck/deck.lock`) that a
 second one cannot take. Detach with **ctrl+6 q**; the deck goes on.
 
 ```sh
-fleet-deck status    # the server, the controller, the log, the prefix; exit 0 when both run, 3 otherwise
+fleet-deck status    # the server, the controller, the panes' ssh-agent, the log, the prefix; exit 0 when both run, 3 otherwise
 fleet-deck stop      # stops the controller (SIGTERM; its state stream goes with it)
 fleet-deck restart   # stops the controller and starts a new one
 fleet-deck start     # starts what is missing, without attaching
+fleet-deck start --auto   # the same, then every agent, tier by tier, no Enter typed
+fleet-deck stop --all     # every agent's session, the controller, the server, the control agents
 ```
+
+**The ssh-agent comes first.** Every pane enters its account with `ssh`,
+using the operator's deck key `~/.ssh/fabric_deck` through the agent the
+server gives its panes. That is the link `<server socket>.agent`, which
+leads to the agent the server inherited. A server started without a live
+agent gives its panes none, and each pane asks for the key's passphrase.
+So `fleet-deck` starts no server and no controller until it has an agent
+holding the key. It looks at this terminal's `SSH_AUTH_SOCK`, then the
+desktop keyring's agent, then its own. If none holds the key, it runs
+`ssh-add` once, here: you type the passphrase once. If no agent answers at
+all, it starts one at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
+
+A server already running with a dead link is not replaced: its panes would
+go with it. Instead `fleet-deck hold-agent`, a small detached process,
+registers the agent with the server and holds it. The deck controller does
+not hold it, so stopping or restarting the controller leaves the panes'
+agent alone. `status` says whether the link is live. Panes that a server
+made while it had no link at all keep asking for the passphrase. For those,
+restart the server: `stop --all`, then `start --auto`.
+
+**`start --auto`** boots the fleet once the coordinator is up:
+1. Finds the agent, as above.
+2. Probes the host's pinned sshd once (its banner only). If sshd refuses
+   this host (its per-source penalty), it stops there with that line, and
+   nothing is started.
+3. Starts the server, the controller and the control agents. The control
+   agents are started once `fabric-ctl` has `control-start`; until then
+   this step says so and goes on.
+4. Activates the panes in the order of their workspaces: C-Level,
+   Infrastructure, Experts, every "… Developer" workspace, then any other.
+   - The Coordinator workspace is never activated: it is up already.
+   - Within a tier, one agent every 4 s.
+   - The next tier starts when the previous one is up, or after 60 s.
+   - An agent counts as up when the fleet's state stream shows its
+     session.
+   - An agent whose moveto ends twice before its session comes up, or whose
+     pane never shows the prompt, is named and skipped.
+
+The deck presses the Enter that `moveto <account> --wait` asks for, and
+nothing else. It presses only when the pane's foreground is that account's
+`moveto --wait` and its last line is "<account> - Enter to activate". A
+pane at a passphrase prompt, at a shell or running a harness is never
+typed into. Without `--auto`, panes wait for your Enter as before.
+
+**`stop --all`** is the reverse:
+1. Stops the controller, first, so that it does not arm the panes again.
+2. Ends each pane's session, last tier first (SIGHUP to the pane's moveto,
+   as closing the pane would), waiting up to 30 s per tier.
+3. Stops the server and the ssh-agent holder.
+4. Stops the control agents, once `fabric-ctl` has `control-stop`.
+
+It then names any session still running: one outside the deck is left
+running. The same is in the deck's menu as **Stop the whole fleet…**. Its
+popup asks you to type `stop`, then runs `stop --all` detached, because
+stopping the server closes the popup.
 
 - **The controller has no terminal.** It runs in a session of its own, its
   input is `/dev/null`, and it writes to `$XDG_STATE_HOME/fabric-deck/deck.log`
