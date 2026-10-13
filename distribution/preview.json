@@ -1,15 +1,24 @@
 {
   "schema_version": 1,
   "channel": "preview",
-  "base_version": "0.9.2",
-  "build_id": "2026-09-29-8e78f929d8f0",
-  "commit": "8e78f929d8f0306a5c68518969e90274c44cb1f0",
-  "built_at": "2026-09-29T18:25:31Z",
+  "base_version": "0.9.3",
+  "build_id": "2026-10-12-6d697e1e75ff",
+  "commit": "6d697e1e75ff1e94ebd5d176fcbf7a36545ac557",
+  "built_at": "2026-10-12T13:28:54Z",
   "protocol": 22,
   "endpoint_generation": 1,
   "notes": "No Agent Fabric FleetDeck preview has been published yet. This record keeps the Herdr preview build whose documentation snapshot docs/preview/ holds, so that snapshot still validates; it offers no binaries. The preview workflow replaces it with FleetDeck's first preview.",
   "assets": {},
   "builds": {
+    "2026-10-12-6d697e1e75ff": {
+      "base_version": "0.9.3",
+      "commit": "6d697e1e75ff1e94ebd5d176fcbf7a36545ac557",
+      "built_at": "2026-10-12T13:28:54Z",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "tag": "preview-2026-10-12-6d697e1e75ff",
+      "assets": {}
+    },
     "2026-09-29-8e78f929d8f0": {
       "base_version": "0.9.2",
       "commit": "8e78f929d8f0306a5c68518969e90274c44cb1f0",

@@ -464,9 +464,7 @@ impl ClientShellState {
                 }),
                 outcome,
             ),
-            ClientContextMenuAction::ClosePane => {
-                self.push_endpoint_method(Method::PaneClose(PaneTarget { pane_id }), outcome)
-            }
+            ClientContextMenuAction::ClosePane => self.request_pane_close(pane_id, outcome),
             ClientContextMenuAction::Copy => {
                 self.request_selection_copy(outcome, true);
                 self.selection = None;
