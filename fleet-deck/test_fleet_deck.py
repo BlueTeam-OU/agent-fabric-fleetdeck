@@ -393,11 +393,11 @@ class FleetDeckTest(unittest.TestCase):
         args.auto = True
         self.assertIn("--no-resume", fleet_deck.deck_argv(args))
 
-    def test_an_automatic_boot_restarts_a_controller_that_resumes_on_its_own(self):
+    def test_an_automatic_boot_restarts_a_running_controller(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
         self.assertTrue(fleet_deck.ensure_controller(self.args(), self.say, self.agent))
         first = lock_holder(lock_path())
-        self.assertFalse(fleet_deck.controller_has(first, "--no-resume"))
+        self.assertNotIn("--no-resume", self.cmdline(first))
         with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
              mock.patch.object(fleet_deck, "moveto_list", return_value="a-01 role\n"), \
              mock.patch.object(fleet_deck, "probe_line", return_value=None), \
@@ -408,7 +408,11 @@ class FleetDeckTest(unittest.TestCase):
             self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab", "--cwd", self.dir]), 0)
         second = lock_holder(lock_path())
         self.assertNotEqual(first, second)
-        self.assertTrue(fleet_deck.controller_has(second, "--no-resume"))
+        self.assertIn("--no-resume", self.cmdline(second))
+
+    def cmdline(self, pid):
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            return handle.read().decode().split("\0")
 
     def test_a_stale_state_record_is_unknown_and_a_fresh_one_counts(self):
         import datetime as dt
@@ -439,11 +443,14 @@ class FleetDeckTest(unittest.TestCase):
         fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
         fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.WAIT), {}))
         fleet.herdr = mock.Mock(text=mock.Mock(return_value="a - Enter to activate\n"))
-        for counts, expected in (({}, None), ({"a": None}, None), ({"a": 1}, None), ({"a": 0}, 7)):
+        fleet.live = {"a": 1}
+        self.assertIsNone(fleet.waiting("a"))
+        self.assertEqual(self.said, [], "a login that is up is not said to lack a record")
+        for counts, expected in (({}, None), ({"a": None}, None), ({"a": 0}, 7)):
             fleet.live = counts
             self.assertEqual(fleet.waiting("a"), expected, counts)
         self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
-                         "the reason is said, once")
+                         "the reason is said, once, and not for a login that is up")
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))

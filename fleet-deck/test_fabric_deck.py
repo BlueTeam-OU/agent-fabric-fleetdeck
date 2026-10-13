@@ -712,11 +712,21 @@ class Restore(unittest.TestCase):
         h.deck.follow(RESTORE_SETTLE_S)
         self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
 
-    def test_no_resume_holds_for_the_first_restore_only(self):
-        # A herdr restart after the boot has no boot behind it to press panes.
+    def test_no_resume_holds_through_an_outage_in_the_first_restore_then_ends(self):
         h = Harness(befores={"ui": Before(running=True)})
         h.deck.resume = False
-        h.deck._lose("herdr's server does not answer")
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        h.herdr.down = True             # one poll's outage before the decision
+        h.deck.follow(2)
+        h.herdr.down = False
+        for t in range(3, 3 + 2 * RESTORE_SETTLE_S + PANE_MAP_REFRESH_S):
+            h.deck.follow(t)
+        runs = h.herdr.runs()
+        self.assertNotIn("moveto ui --resume", runs)
+        self.assertIn("moveto ui --wait", runs)
+        # Every decision of the first restore taken: a later loss resumes as ever.
         self.assertTrue(h.deck.resume)
 
     def test_with_no_fresh_record_it_waits_then_arms_wait_never_resume(self):
