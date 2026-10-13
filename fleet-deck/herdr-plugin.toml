@@ -25,6 +25,14 @@ title = "Pull requests in flight"
 contexts = ["global"]
 command = ["./fabric-view", "open", "prs"]
 
+# Asks first in its popup (typing "stop"), then stops detached: herdr's stop
+# closes the popup it was asked in.
+[[actions]]
+id = "stop"
+title = "Stop the whole fleet..."
+contexts = ["global"]
+command = ["./fabric-view", "open", "stop"]
+
 [[panes]]
 id = "board"
 title = "fleet"
@@ -42,3 +50,9 @@ id = "prs"
 title = "pull requests"
 placement = "popup"
 command = ["./fabric-view", "prs"]
+
+[[panes]]
+id = "stop"
+title = "stop the fleet"
+placement = "popup"
+command = ["./fleet-deck", "stop", "--all", "--confirm"]

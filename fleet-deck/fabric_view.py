@@ -714,7 +714,7 @@ def show_message(curses, screen, painter: Painter, title: str, text: str) -> int
 
 # ── the commands ────────────────────────────────────────────────────
 
-USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | open board|agent|prs"
+USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | open board|agent|prs|stop"
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:
@@ -734,7 +734,7 @@ def open_pane(entrypoint: str, env: dict[str, str]) -> int:
 
 # A popup's size: rows of PRs read best wide, and the tab stays visible
 # around it, so the person knows where Esc returns them.
-POPUP_SIZE = {"prs": ("80%", "80%")}
+POPUP_SIZE = {"prs": ("80%", "80%"), "stop": ("70%", "40%")}
 
 
 def open_argv(herdr: str, plugin: str, entrypoint: str) -> list[str]:
@@ -752,7 +752,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if args else 2
     mode, rest = args[0], args[1:]
     if mode == "open":
-        if rest not in (["board"], ["agent"], ["prs"]):
+        if rest not in (["board"], ["agent"], ["prs"], ["stop"]):
             print(USAGE, file=sys.stderr)
             return 2
         return open_pane(rest[0], dict(os.environ))

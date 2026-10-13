@@ -56,7 +56,7 @@ ci-tests filter='all()':
 # Linux only, like the deck itself: it reads /proc, SO_PEERCRED and Linux's flock layout.
 [linux]
 fleet-deck-test:
-    cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view test_install_fleetdeck
+    cd fleet-deck && {{python}} -m unittest test_deck_tabs test_fabric_deck test_fleet_deck test_view_render test_report_render test_fabric_view test_install_fleetdeck test_boot
 
 # Unquoted, so the line reads the same under sh and cmd.exe.
 [macos]
