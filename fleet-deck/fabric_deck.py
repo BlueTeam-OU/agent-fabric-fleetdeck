@@ -593,14 +593,15 @@ class Deck:
     mapped_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
-    # False under `fleet-deck start --auto`, until the first restore has taken
-    # every decision: a session that ran before is not resumed then, all at
-    # once, but left at --wait for the boot to activate in its tier and pace
-    # (fleet-deck/boot.py). A loss of herdr's server in that window restores
-    # again under the same rule; a later one has no boot behind it, and
+    # False under `fleet-deck start --auto`: an account's first restore
+    # decision of this controller's life never resumes, whenever it is taken
+    # (the first pass, a retry, after an outage). Its session that ran before
+    # is left at --wait for the boot to activate in its tier and pace
+    # (fleet-deck/boot.py). A later decision has no boot behind it, and
     # resumes as ever.
     resume: bool = True
-    restored: bool = False
+    # Accounts whose first restore decision has been taken.
+    decided: set[str] = field(default_factory=set)
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
     fleet_unsettled: str | None = None
@@ -619,7 +620,6 @@ class Deck:
             self.lost = True
             return
         if not self.lost:
-            self.restored = True
             # Said once per loss: a later loss and restore are said again.
             self.said -= {"restoring", "restore-failed"}
 
@@ -859,9 +859,10 @@ class Deck:
                                   "the restore decision is taken when it reaches its prompt")
                     continue
                 track, arm = restore(before_live(self.befores.get(login), live), live, now)
-                if arm.mode == RESUME and not self.resume:
+                if arm.mode == RESUME and not self.resume and login not in self.decided:
                     track, arm = Track(State.IDLE, armed_at=now, armed_mode=WAIT), Arm(WAIT)
                 self._arm(login, pane, arm.mode)
+                self.decided.add(login)
             except Exception as error:  # kept pending; the map is read again first
                 self.log(f"{login}: {printable(str(error))}")
                 self.mapped_at = None
@@ -869,8 +870,6 @@ class Deck:
             del self.pending[login]
             if login not in self.unarmed:
                 self.tracks[login] = track
-        if not self.resume and self.restored and not self.pending and not self.lost:
-            self.resume = True  # the first restore's decisions are all taken (the field's comment)
 
     # ------------------------------------------------------------- follow
 

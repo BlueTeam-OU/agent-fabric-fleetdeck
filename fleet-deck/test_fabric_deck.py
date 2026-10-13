@@ -646,6 +646,28 @@ class Restore(unittest.TestCase):
         self.assertEqual(sorted(p["label"] for p in h.herdr.panes.values()), ["harness", "shell", "status"])
         self.assertIn("moveto ui --resume", h.herdr.runs(harness_of(h)))
 
+    def test_under_no_resume_a_retried_first_decision_still_waits(self):
+        h = Harness(befores={"ui": Before(running=True)})
+        h.deck.resume = False
+        h.records["ui"] = record("ui")
+        h.herdr.fail_once = {("split", "p1")}
+        h.deck.restore(0)
+        for t in (RESTORE_SETTLE_S, PANE_MAP_REFRESH_S, PANE_MAP_REFRESH_S + RESTORE_SETTLE_S,
+                  PANE_MAP_REFRESH_S + RESTORE_SETTLE_S + 2):
+            h.deck.follow(h.at(t))
+        self.assertEqual(h.deck.retry, set())
+        self.assertNotIn("moveto ui --resume", h.herdr.runs(harness_of(h)))
+        self.assertIn("moveto ui --wait", h.herdr.runs(harness_of(h)))
+
+    def test_under_no_resume_a_later_decision_resumes_as_ever(self):
+        h = Harness(befores={"ui": Before(running=True)})
+        h.deck.resume = False
+        h.deck.decided = {"ui"}       # its first decision was taken before an outage
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(RESTORE_SETTLE_S)
+        self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --resume"])
+
     def test_an_account_that_leaves_the_list_is_not_retried(self):
         h = Harness()
         h.herdr.fail_once = {("split", "p1")}
@@ -726,8 +748,7 @@ class Restore(unittest.TestCase):
         runs = h.herdr.runs()
         self.assertNotIn("moveto ui --resume", runs)
         self.assertIn("moveto ui --wait", runs)
-        # Every decision of the first restore taken: a later loss resumes as ever.
-        self.assertTrue(h.deck.resume)
+        self.assertIn("ui", h.deck.decided, "a later decision for ui resumes as ever")
 
     def test_with_no_fresh_record_it_waits_then_arms_wait_never_resume(self):
         h = Harness(befores={"ui": Before(running=True)})
