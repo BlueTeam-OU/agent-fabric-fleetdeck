@@ -387,6 +387,114 @@ class FleetDeckTest(unittest.TestCase):
         activate.assert_not_called()
         self.assertTrue(any("nothing was activated" in line for line in self.said))
 
+    def test_an_automatic_boot_holds_the_boot_lock_and_a_second_one_refuses(self):
+        held = []
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "moveto_list", return_value="a-01 role\n"), \
+             mock.patch.object(fleet_deck, "probe_line", return_value=None), \
+             mock.patch.object(fleet_deck, "ensure_link", return_value=True), \
+             mock.patch.object(fleet_deck, "control_agents", return_value=True), \
+             mock.patch.object(fleet_deck, "boot_fleet",
+                               side_effect=lambda *_: held.append(self.boot_lock_holder()) or 0), \
+             mock.patch("sys.stderr"):
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab", "--cwd", self.dir]), 0)
+        self.assertEqual(held, [os.getpid()], "the boot holds the lock while it activates")
+        # A second boot while one runs: another process holds the lock.
+        holder = subprocess.Popen(
+            [sys.executable, "-B", "-c",
+             "import sys, time; sys.path.insert(0, sys.argv[1]); from fabric_deck import hold_lock\n"
+             "fd = hold_lock(sys.argv[2]); print('held', flush=True); time.sleep(30)",
+             HERE, fabric_deck.boot_lock_path()], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), "held")
+        with mock.patch.object(fleet_deck.boot, "ensure_agent") as ensure, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab"]), 1)
+        ensure.assert_not_called()
+        self.assertIn("another fleet-deck start --auto runs", stderr.getvalue())
+
+    def boot_lock_holder(self):
+        # Asked from another process: in the holder, F_GETLK reports no lock,
+        # and closing its descriptor would drop the holder's own (hold_lock).
+        child = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); import fabric_deck; "
+             "print(fabric_deck.lock_holder(fabric_deck.boot_lock_path()))", HERE],
+            capture_output=True, text=True, timeout=30)
+        out = child.stdout.strip()
+        return int(out) if out.isdigit() else None
+
+    def test_the_controller_reads_the_boot_lock(self):
+        self.assertIsNone(lock_holder(fabric_deck.boot_lock_path()))
+        fd = hold_lock(fabric_deck.boot_lock_path())
+        self.addCleanup(os.close, fd)
+        child = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); import fabric_deck; "
+             "print(fabric_deck.lock_holder(fabric_deck.boot_lock_path()) is not None)", HERE],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(child.stdout.strip(), "True")
+
+    def test_a_stale_state_record_is_unknown_and_a_fresh_one_counts(self):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        stale = (now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        fresh = now.isoformat().replace("+00:00", "Z")
+        rows = [json.dumps({"address": "testhost/old", "ts": stale, "state": "idle", "sessions": []}),
+                json.dumps({"address": "testhost/new", "ts": fresh, "state": "idle", "sessions": []})]
+        with mock.patch.object(fleet_deck, "local_host", return_value="testhost"), \
+             mock.patch.object(fleet_deck, "states_snapshot", return_value=rows):
+            fleet = fleet_deck.DeckFleet(self.say)
+            self.assertEqual(fleet.live_counts(), {"old": None, "new": 0})
+
+    def test_an_unlisted_fleet_stops_the_boot_before_anything_starts(self):
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "moveto_list", side_effect=subprocess.TimeoutExpired("moveto", 60)), \
+             mock.patch.object(fleet_deck, "probe_line") as probe, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab"]), 1)
+        probe.assert_not_called()
+        self.assertIn("cannot be probed", stderr.getvalue())
+        self.assertIsNone(fleet_deck.server_up())
+
+    def test_a_pane_is_not_waiting_while_its_session_state_is_unknown(self):
+        with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            fleet = fleet_deck.DeckFleet(self.say)
+        fleet.harness = {"a": "p1"}
+        fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
+        fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.WAIT), {}))
+        fleet.herdr = mock.Mock(text=mock.Mock(return_value="a - Enter to activate\n"))
+        fleet.live = {"a": 1}
+        self.assertIsNone(fleet.waiting("a"))
+        self.assertEqual(self.said, [], "a login that is up is not said to lack a record")
+        for counts, expected in (({}, None), ({"a": None}, None), ({"a": 0}, 7)):
+            fleet.live = counts
+            self.assertEqual(fleet.waiting("a"), expected, counts)
+        self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
+                         "the reason is said, once, and not for a login that is up")
+
+    def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
+        self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
+        real_run = subprocess.run
+
+        def failing_stop(argv, **kw):
+            if argv[1:] == ["server", "stop"]:
+                raise subprocess.TimeoutExpired(argv, 60)
+            return real_run(argv, **kw)
+
+        with mock.patch.object(fleet_deck, "stop_sessions", return_value=set()), \
+             mock.patch.object(fleet_deck.subprocess, "run", side_effect=failing_stop), \
+             mock.patch.object(fleet_deck, "SERVER_STOP_S", 0), \
+             mock.patch.object(fleet_deck, "stop_holder") as holder, \
+             mock.patch.object(fleet_deck, "control_agents", return_value=True) as control, \
+             mock.patch.object(fleet_deck.DeckFleet, "live_counts", return_value={"x\x1b]52;c;Zm9v\x07": 1}), \
+             mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            self.assertEqual(fleet_deck.stop_all(self.say), 1)
+        holder.assert_called_once()
+        control.assert_called_once()
+        self.assertFalse(any("\x1b" in line or "\x07" in line for line in self.said), self.said)
+
     def test_auto_and_all_go_with_their_verbs(self):
         for argv in (["attach", "--auto"], ["stop", "--auto"], ["start", "--all"], ["stop", "--confirm"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr"), self.assertRaises(SystemExit):

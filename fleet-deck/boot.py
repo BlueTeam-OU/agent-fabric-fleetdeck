@@ -129,15 +129,20 @@ class _Run:
     pressed_pid: dict[str, int] = field(default_factory=dict)
     last_press: float | None = None
 
-    def press(self, login: str, pid: int) -> None:
+    def press(self, login: str, pid: int) -> bool:
+        """Press, after the gap, only if the same moveto still waits at its
+        prompt: the gap is time in which a person may have pressed it."""
         if self.last_press is not None:
             gap = self.last_press + PRESS_GAP_S - self.fleet.now()
             if gap > 0:
                 self.fleet.sleep(gap)
+        if self.fleet.waiting(login) != pid:
+            return False
         self.fleet.press(login)
         self.last_press = self.fleet.now()
         self.pressed_pid[login] = pid
         self.attempts[login] = self.attempts.get(login, 0) + 1
+        return True
 
 
 def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
@@ -154,7 +159,10 @@ def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
             if fleet.up(login):
                 run.outcome.up.append(login)
                 continue
-            if _press_when_waiting(run, login):
+            pressed_now = _press_when_waiting(run, login)
+            if pressed_now is None:
+                run.outcome.up.append(login)  # activated meanwhile, by someone else
+            elif pressed_now:
                 pressed.append(login)
             else:
                 fleet.say(f"{login}: its pane never showed moveto's prompt; skipped")
@@ -163,13 +171,16 @@ def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
     return run.outcome
 
 
-def _press_when_waiting(run: _Run, login: str) -> bool:
+def _press_when_waiting(run: _Run, login: str) -> bool | None:
+    """True once pressed, False when the prompt never showed, None when the
+    login came up without the deck's press."""
     fleet = run.fleet
     deadline = fleet.now() + PROMPT_WAIT_S
     while True:
+        if fleet.up(login):
+            return None
         pid = fleet.waiting(login)
-        if pid is not None:
-            run.press(login, pid)
+        if pid is not None and run.press(login, pid):
             fleet.say(f"{login}: activated")
             return True
         if fleet.now() >= deadline:
@@ -199,8 +210,7 @@ def _await_tier(run: _Run, tier: str, pressed: list[str]) -> None:
                           f"{run.attempts[login]} times; skipped")
                 waiting.remove(login)
                 run.outcome.skipped.append(login)
-            else:
-                run.press(login, pid)
+            elif run.press(login, pid):
                 fleet.say(f"{login}: moveto ended before a session came up; activated again")
         if not waiting:
             break
@@ -237,11 +247,32 @@ def key_fingerprint(key: str, run: Run = subprocess.run) -> str | None:
 HOLDS, LIVE, DEAD = "holds", "live", "dead"
 
 
+def own_socket(path: str) -> bool:
+    """Whether `path` is a socket this user owns and a process of this user
+    listens on: the deck key is never listed to, or added into, another
+    user's agent (herdr's own rule for its link, ssh_agent.rs fingerprint)."""
+    import stat
+    import struct
+
+    try:
+        info = os.stat(path)
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid():
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2)
+            sock.connect(path)
+            cred = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    except OSError:
+        return False
+    return struct.unpack("3i", cred)[1] == os.geteuid()
+
+
 def agent_state(sock: str, fingerprint: str, run: Run = subprocess.run) -> str:
     """HOLDS when the agent at `sock` lists the fingerprint, LIVE when it
-    answers without it, DEAD when nothing answers there. ssh-add -l exits 1
-    for an agent with no identity and 2 when it cannot reach one."""
-    if not sock or not os.path.exists(sock):
+    answers without it, DEAD when nothing answers there, or when it is not
+    this user's own. ssh-add -l exits 1 for an agent with no identity and 2
+    when it cannot reach one."""
+    if not sock or not own_socket(sock):
         return DEAD
     env = dict(os.environ, SSH_AUTH_SOCK=sock)
     try:

@@ -149,6 +149,15 @@ class ActivationTest(unittest.TestCase):
         self.assertEqual(sorted(outcome.up), ["a", "b"])
         self.assertEqual(outcome.skipped, [])
 
+    def test_a_login_activated_during_the_gap_is_not_pressed(self):
+        # A person presses b's Enter while the deck waits out the gap after a.
+        sim = Sim(up_after=30.0)
+        sim.up_at["b"] = 2.0
+        outcome = boot.activate(sim.fleet(), [("Experts", ["a", "b"])])
+        self.assertEqual([login for _, login in sim.presses], ["a"])
+        self.assertEqual(sorted(outcome.up), ["a", "b"])
+        self.assertEqual(outcome.skipped, [])
+
     def test_every_press_keeps_the_gap_re_presses_included(self):
         sim = Sim(fails={"a": 1, "b": 1}, fail_after=0.5)
         boot.activate(sim.fleet(), [("Experts", ["a", "b"])])
@@ -220,6 +229,12 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(boot.agent_state(empty, fingerprint), boot.LIVE)
         self.assertEqual(boot.agent_state(holding, fingerprint), boot.HOLDS)
         self.assertEqual(boot.find_agent(fingerprint, [dead, empty, holding]), holding)
+
+    def test_a_path_that_is_not_an_own_listening_socket_is_dead(self):
+        fingerprint = boot.key_fingerprint(self.key)
+        self.assertEqual(boot.agent_state(self.key, fingerprint), boot.DEAD, "a regular file")
+        self.assertFalse(boot.own_socket(self.key))
+        self.assertTrue(boot.own_socket(self.start_agent()))
 
     def test_the_fingerprint_is_read_without_the_pub_file(self):
         with_pub = boot.key_fingerprint(self.key)

@@ -41,6 +41,7 @@ from deck_tabs import (
     STATUS,
     WAIT,
     WATCH,
+    Arm,
     Before,
     Live,
     Seen,
@@ -419,6 +420,11 @@ def befores_path() -> str:
     return os.path.join(state_dir(), "before.json")
 
 
+def boot_lock_path() -> str:
+    """Held by `fleet-deck start --auto` for as long as it boots the fleet."""
+    return os.path.join(state_dir(), "boot.lock")
+
+
 def lock_path() -> str:
     return os.path.join(state_dir(), "deck.lock")
 
@@ -592,6 +598,12 @@ class Deck:
     mapped_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
+    # Whether `fleet-deck start --auto` is running (it holds boot.lock for its
+    # life). While it is, a restore never resumes: a session that ran before is
+    # left at --wait for the boot to activate in its tier and pace
+    # (fleet-deck/boot.py), whatever restarts meanwhile. Without a boot,
+    # restores resume as ever.
+    booting: Callable[[], bool] = lambda: False
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
     fleet_unsettled: str | None = None
@@ -849,6 +861,8 @@ class Deck:
                                   "the restore decision is taken when it reaches its prompt")
                     continue
                 track, arm = restore(before_live(self.befores.get(login), live), live, now)
+                if arm.mode == RESUME and self.booting():
+                    track, arm = Track(State.IDLE, armed_at=now, armed_mode=WAIT), Arm(WAIT)
                 self._arm(login, pane, arm.mode)
             except Exception as error:  # kept pending; the map is read again first
                 self.log(f"{login}: {printable(str(error))}")
@@ -1494,6 +1508,7 @@ def main(argv: list[str] | None = None) -> int:
         server=lambda: server_instance(socket_path),
         log=log,
         fleet_tab=not args.no_fleet_tab,
+        booting=lambda: lock_holder(boot_lock_path()) is not None,
     )
     return run(deck, Stream(on_line=take, log=log), woken)
 
