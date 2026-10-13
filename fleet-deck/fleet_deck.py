@@ -326,6 +326,7 @@ class DeckFleet:
         self.live: dict[str, int | None] = {}
         self.read_at: float | None = None
         self.mapped = False
+        self.unknown_said: set[str] = set()
 
     def read_map(self) -> None:
         self.logins = [a.login for a in parse_moveto_list(moveto_list(), self.exclude)]
@@ -349,7 +350,7 @@ class DeckFleet:
         if missing:
             self.say(f"no harness pane yet for {', '.join(missing)}: not activated")
 
-    def live_counts(self) -> dict[str, int]:
+    def live_counts(self) -> dict[str, int | None]:
         """Live sessions per login on this host, read at most every POLL_S."""
         now = time.monotonic()
         if self.read_at is None or now - self.read_at >= boot.POLL_S:
@@ -387,6 +388,10 @@ class DeckFleet:
         could print too, so the record is the independent evidence; unknown
         is not pressed."""
         if self.live_counts().get(login) != 0:
+            if login not in self.unknown_said:
+                self.unknown_said.add(login)
+                self.say(f"{login}: no fresh state record says it runs no session; not pressed "
+                         "while that is unknown")
             return None
         try:
             found, _ = self.moveto(login)
@@ -564,6 +569,14 @@ def hold_log_path() -> str:
     return os.path.join(state_dir(), "agent-hold.log")
 
 
+def controller_has(pid: int, option: str) -> bool:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            return option in handle.read().decode(errors="replace").split("\0")
+    except OSError:
+        return False
+
+
 def stop_holder(say: Callable[[str], None]) -> None:
     holder = lock_holder(hold_lock_path())
     if holder is None or holder <= 0:  # 0: another pid namespace (stop_controller)
@@ -654,6 +667,11 @@ def start(args, say: Callable[[str], None]) -> int:
             return 1
     if args.verb == "restart" and not stop_controller(say):
         return 1
+    if args.auto and controller is not None and not controller_has(controller, "--no-resume"):
+        # Its next restore would resume every session that ran before, at once.
+        say("the running deck controller resumes on its own; restarting it for the boot")
+        if not stop_controller(say):
+            return 1
     if not ensure_server(say, agent):
         return 1
     if agent is not None and not ensure_link(agent, say):

@@ -593,9 +593,10 @@ class Deck:
     mapped_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
-    # False under `fleet-deck start --auto`: a session that ran before is not
-    # resumed at the restore, all at once, but left at --wait for the boot to
-    # activate in its tier and pace (fleet-deck/boot.py).
+    # False under `fleet-deck start --auto`, for the first restore only: a
+    # session that ran before is not resumed then, all at once, but left at
+    # --wait for the boot to activate in its tier and pace (fleet-deck/boot.py).
+    # A later loss of herdr's server has no boot behind it: resumed as ever.
     resume: bool = True
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
@@ -1086,6 +1087,7 @@ class Deck:
             self.log(line)
         self.lost = True
         self.instance = None
+        self.resume = True  # the boot's first restore is over (the field's comment)
         befores = {login: lost(b) for login, b in self.befores.items()}
         if befores != self.befores:
             self.befores = befores

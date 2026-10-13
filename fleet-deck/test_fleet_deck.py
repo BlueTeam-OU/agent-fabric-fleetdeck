@@ -393,6 +393,35 @@ class FleetDeckTest(unittest.TestCase):
         args.auto = True
         self.assertIn("--no-resume", fleet_deck.deck_argv(args))
 
+    def test_an_automatic_boot_restarts_a_controller_that_resumes_on_its_own(self):
+        self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
+        self.assertTrue(fleet_deck.ensure_controller(self.args(), self.say, self.agent))
+        first = lock_holder(lock_path())
+        self.assertFalse(fleet_deck.controller_has(first, "--no-resume"))
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "moveto_list", return_value="a-01 role\n"), \
+             mock.patch.object(fleet_deck, "probe_line", return_value=None), \
+             mock.patch.object(fleet_deck, "ensure_link", return_value=True), \
+             mock.patch.object(fleet_deck, "control_agents", return_value=True), \
+             mock.patch.object(fleet_deck, "boot_fleet", return_value=0), \
+             mock.patch("sys.stderr"):
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab", "--cwd", self.dir]), 0)
+        second = lock_holder(lock_path())
+        self.assertNotEqual(first, second)
+        self.assertTrue(fleet_deck.controller_has(second, "--no-resume"))
+
+    def test_a_stale_state_record_is_unknown_and_a_fresh_one_counts(self):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        stale = (now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        fresh = now.isoformat().replace("+00:00", "Z")
+        rows = [json.dumps({"address": "testhost/old", "ts": stale, "state": "idle", "sessions": []}),
+                json.dumps({"address": "testhost/new", "ts": fresh, "state": "idle", "sessions": []})]
+        with mock.patch.object(fleet_deck, "local_host", return_value="testhost"), \
+             mock.patch.object(fleet_deck, "states_snapshot", return_value=rows):
+            fleet = fleet_deck.DeckFleet(self.say)
+            self.assertEqual(fleet.live_counts(), {"old": None, "new": 0})
+
     def test_an_unlisted_fleet_stops_the_boot_before_anything_starts(self):
         with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
              mock.patch.object(fleet_deck, "moveto_list", side_effect=subprocess.TimeoutExpired("moveto", 60)), \
@@ -413,6 +442,8 @@ class FleetDeckTest(unittest.TestCase):
         for counts, expected in (({}, None), ({"a": None}, None), ({"a": 1}, None), ({"a": 0}, 7)):
             fleet.live = counts
             self.assertEqual(fleet.waiting("a"), expected, counts)
+        self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
+                         "the reason is said, once")
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))

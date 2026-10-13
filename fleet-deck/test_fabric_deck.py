@@ -712,6 +712,13 @@ class Restore(unittest.TestCase):
         h.deck.follow(RESTORE_SETTLE_S)
         self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
 
+    def test_no_resume_holds_for_the_first_restore_only(self):
+        # A herdr restart after the boot has no boot behind it to press panes.
+        h = Harness(befores={"ui": Before(running=True)})
+        h.deck.resume = False
+        h.deck._lose("herdr's server does not answer")
+        self.assertTrue(h.deck.resume)
+
     def test_with_no_fresh_record_it_waits_then_arms_wait_never_resume(self):
         h = Harness(befores={"ui": Before(running=True)})
         h.records["ui"] = record("ui", age_s=3600)
