@@ -370,8 +370,8 @@ class DeckFleet:
         if pane is None:
             return None, {}
         info = self.herdr.process_info(pane)
-        # Sorted, so the same process (the outermost: sudo before its enter
-        # child) is found at every poll; a press is tied to its pid (boot.py).
+        # Sorted, so the same set of processes gives the same match at every
+        # poll; a press is tied to its pid (boot.py).
         foreground = sorted((p["pid"], p.get("argv") or []) for p in info.get("foreground_processes", [])
                             if isinstance(p.get("pid"), int))
         return moveto_in(foreground, login), info

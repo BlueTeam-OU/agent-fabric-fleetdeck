@@ -302,8 +302,13 @@ def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_
     if found:
         return found
     if not interactive:
-        say(f"no ssh-agent holds {key}, and this is no terminal to type its passphrase in: "
-            "nothing is started")
+        if first_live:
+            say(f"the ssh-agent herdr's panes use ({first}) does not hold {key}, and this is "
+                "no terminal to type its passphrase in: nothing is started; run fleet-deck "
+                "from a terminal to add it there")
+        else:
+            say(f"no ssh-agent holds {key}, and this is no terminal to type its passphrase in: "
+                "nothing is started")
         return None
     target = first if first_live else next(
         (s for s in candidates if agent_state(s, fingerprint, run) == LIVE), None)

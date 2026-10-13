@@ -279,6 +279,15 @@ class AgentTest(unittest.TestCase):
                                            first=inherited), inherited)
         self.assertEqual(boot.agent_state(inherited, boot.key_fingerprint(self.key)), boot.HOLDS)
 
+    def test_without_a_terminal_the_panes_agent_is_named_as_the_one_lacking_the_key(self):
+        inherited, other = self.start_agent("inherited"), self.start_agent("other")
+        self.add_key(other)
+        said = []
+        env = {"SSH_AUTH_SOCK": other, "XDG_RUNTIME_DIR": self.sock_dir}
+        self.assertIsNone(boot.ensure_agent(said.append, interactive=False, key=self.key, env=env,
+                                            first=inherited))
+        self.assertTrue(any(inherited in line and "panes use" in line for line in said), said)
+
     def test_a_dead_inherited_agent_is_passed_over(self):
         other = self.start_agent("other")
         self.add_key(other)
