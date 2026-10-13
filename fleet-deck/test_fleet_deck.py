@@ -387,32 +387,54 @@ class FleetDeckTest(unittest.TestCase):
         activate.assert_not_called()
         self.assertTrue(any("nothing was activated" in line for line in self.said))
 
-    def test_an_automatic_boot_starts_the_controller_without_resume(self):
-        args = self.args()
-        self.assertNotIn("--no-resume", fleet_deck.deck_argv(args))
-        args.auto = True
-        self.assertIn("--no-resume", fleet_deck.deck_argv(args))
-
-    def test_an_automatic_boot_restarts_a_running_controller(self):
-        self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
-        self.assertTrue(fleet_deck.ensure_controller(self.args(), self.say, self.agent))
-        first = lock_holder(lock_path())
-        self.assertNotIn("--no-resume", self.cmdline(first))
+    def test_an_automatic_boot_holds_the_boot_lock_and_a_second_one_refuses(self):
+        held = []
         with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
              mock.patch.object(fleet_deck, "moveto_list", return_value="a-01 role\n"), \
              mock.patch.object(fleet_deck, "probe_line", return_value=None), \
              mock.patch.object(fleet_deck, "ensure_link", return_value=True), \
              mock.patch.object(fleet_deck, "control_agents", return_value=True), \
-             mock.patch.object(fleet_deck, "boot_fleet", return_value=0), \
+             mock.patch.object(fleet_deck, "boot_fleet",
+                               side_effect=lambda *_: held.append(self.boot_lock_holder()) or 0), \
              mock.patch("sys.stderr"):
             self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab", "--cwd", self.dir]), 0)
-        second = lock_holder(lock_path())
-        self.assertNotEqual(first, second)
-        self.assertIn("--no-resume", self.cmdline(second))
+        self.assertEqual(held, [os.getpid()], "the boot holds the lock while it activates")
+        # A second boot while one runs: another process holds the lock.
+        holder = subprocess.Popen(
+            [sys.executable, "-B", "-c",
+             "import sys, time; sys.path.insert(0, sys.argv[1]); from fabric_deck import hold_lock\n"
+             "fd = hold_lock(sys.argv[2]); print('held', flush=True); time.sleep(30)",
+             HERE, fabric_deck.boot_lock_path()], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        self.assertEqual(holder.stdout.readline().strip(), "held")
+        with mock.patch.object(fleet_deck.boot, "ensure_agent") as ensure, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab"]), 1)
+        ensure.assert_not_called()
+        self.assertIn("another fleet-deck start --auto runs", stderr.getvalue())
 
-    def cmdline(self, pid):
-        with open(f"/proc/{pid}/cmdline", "rb") as handle:
-            return handle.read().decode().split("\0")
+    def boot_lock_holder(self):
+        # Asked from another process: in the holder, F_GETLK reports no lock,
+        # and closing its descriptor would drop the holder's own (hold_lock).
+        child = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); import fabric_deck; "
+             "print(fabric_deck.lock_holder(fabric_deck.boot_lock_path()))", HERE],
+            capture_output=True, text=True, timeout=30)
+        out = child.stdout.strip()
+        return int(out) if out.isdigit() else None
+
+    def test_the_controller_reads_the_boot_lock(self):
+        self.assertIsNone(lock_holder(fabric_deck.boot_lock_path()))
+        fd = hold_lock(fabric_deck.boot_lock_path())
+        self.addCleanup(os.close, fd)
+        child = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]); import fabric_deck; "
+             "print(fabric_deck.lock_holder(fabric_deck.boot_lock_path()) is not None)", HERE],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(child.stdout.strip(), "True")
 
     def test_a_stale_state_record_is_unknown_and_a_fresh_one_counts(self):
         import datetime as dt

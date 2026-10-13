@@ -89,9 +89,11 @@ refreshes the account. So only a new moveto at the prompt (the deck armed
 prompt line is the account's own output, so the deck also needs the state
 stream's fresh word that no session runs there. While that is unknown, it
 does not press. It checks again just before each press, after the 4 s gap.
-The controller that `--auto` starts resumes nothing on its own
-(`fabric-deck --no-resume`). An agent whose session ran before the stop
-waits at `--wait` for its tier like the rest. It presses only when the pane's foreground is that account's
+While a boot runs, it holds `$XDG_STATE_HOME/fabric-deck/boot.lock`, and
+no controller resumes a session on its own. This holds even across a
+restart of herdr's server: an agent whose session ran before the stop
+waits at `--wait` for its tier like the rest. A second `start --auto`
+refuses while one runs. Once the boot ends, restores resume as before. It presses only when the pane's foreground is that account's
 `moveto --wait` and its last line is "<account> - Enter to activate". A
 pane at a passphrase prompt, at a shell or running a harness is never
 typed into. Without `--auto`, panes wait for your Enter as before.

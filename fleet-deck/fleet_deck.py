@@ -45,6 +45,7 @@ from fabric_deck import (
     live_of,
     local_host,
     hold_lock,
+    boot_lock_path,
     lock_holder,
     lock_path,
     moveto_list,
@@ -211,9 +212,6 @@ def log_tail(path: str, lines: int = 5) -> list[str]:
 
 def deck_argv(args) -> list[str]:
     argv = [DECK]
-    if getattr(args, "auto", False):
-        # The boot activates; the controller's restore must not resume at once.
-        argv.append("--no-resume")
     catalog = args.catalog or default_catalog()
     if catalog:
         argv += ["--catalog", catalog]
@@ -625,6 +623,22 @@ def hold_agent(agent: str) -> int:
 
 
 def start(args, say: Callable[[str], None]) -> int:
+    if not args.auto:
+        return start_unlocked(args, say)
+    # Held for the whole boot: while it is, no controller resumes on its own
+    # (fabric_deck.Deck.booting), and a second boot refuses.
+    fd = hold_lock(boot_lock_path())
+    if fd is None:
+        say(f"another fleet-deck start --auto runs (pid {lock_holder(boot_lock_path())}); "
+            "this one stops")
+        return 1
+    try:
+        return start_unlocked(args, say)
+    finally:
+        os.close(fd)
+
+
+def start_unlocked(args, say: Callable[[str], None]) -> int:
     line, checked = prefix_line(herdr_config_path())
     if not checked:
         say(f"{line}: not the prefix checked against Claude Code, Codex and the shell; "
@@ -660,12 +674,6 @@ def start(args, say: Callable[[str], None]) -> int:
             return 1
     if args.verb == "restart" and not stop_controller(say):
         return 1
-    if args.auto and controller is not None:
-        # Only a controller this boot starts holds back its restore's resumes
-        # (fabric-deck --no-resume); a running one may resume at its next.
-        say("restarting the running deck controller for the boot")
-        if not stop_controller(say):
-            return 1
     if not ensure_server(say, agent):
         return 1
     if agent is not None and not ensure_link(agent, say):

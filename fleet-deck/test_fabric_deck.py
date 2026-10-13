@@ -646,9 +646,9 @@ class Restore(unittest.TestCase):
         self.assertEqual(sorted(p["label"] for p in h.herdr.panes.values()), ["harness", "shell", "status"])
         self.assertIn("moveto ui --resume", h.herdr.runs(harness_of(h)))
 
-    def test_under_no_resume_a_retried_first_decision_still_waits(self):
+    def test_during_a_boot_a_retried_decision_still_waits(self):
         h = Harness(befores={"ui": Before(running=True)})
-        h.deck.resume = False
+        h.deck.booting = lambda: True
         h.records["ui"] = record("ui")
         h.herdr.fail_once = {("split", "p1")}
         h.deck.restore(0)
@@ -659,14 +659,25 @@ class Restore(unittest.TestCase):
         self.assertNotIn("moveto ui --resume", h.herdr.runs(harness_of(h)))
         self.assertIn("moveto ui --wait", h.herdr.runs(harness_of(h)))
 
-    def test_under_no_resume_a_later_decision_resumes_as_ever(self):
+    def test_a_restart_during_the_boot_still_waits_and_one_after_it_resumes(self):
+        booting = [True]
         h = Harness(befores={"ui": Before(running=True)})
-        h.deck.resume = False
-        h.deck.decided = {"ui"}       # its first decision was taken before an outage
+        h.deck.booting = lambda: booting[0]
         h.records["ui"] = record("ui")
         h.deck.restore(0)
         h.deck.follow(RESTORE_SETTLE_S)
-        self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --resume"])
+        self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
+        # herdr restarts while the boot still waits on an earlier tier.
+        h.deck.lost = True
+        h.deck.pending.clear()
+        h.deck.restore(100)
+        h.deck.pending["ui"] = 100
+        h.deck.follow(100 + RESTORE_SETTLE_S)
+        self.assertNotIn("moveto ui --resume", h.herdr.runs())
+        booting[0] = False                # the boot has ended
+        h.deck.pending["ui"] = 200
+        h.deck.follow(200 + RESTORE_SETTLE_S)
+        self.assertEqual(h.herdr.runs(harness_of(h))[-1], "moveto ui --resume")
 
     def test_an_account_that_leaves_the_list_is_not_retried(self):
         h = Harness()
@@ -728,15 +739,15 @@ class Restore(unittest.TestCase):
         # fleet-deck start --auto activates in tier order and pace; the restore
         # must not resume every such session at once.
         h = Harness(befores={"ui": Before(running=True)})
-        h.deck.resume = False
+        h.deck.booting = lambda: True
         h.records["ui"] = record("ui")
         h.deck.restore(0)
         h.deck.follow(RESTORE_SETTLE_S)
         self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
 
-    def test_no_resume_holds_through_an_outage_in_the_first_restore_then_ends(self):
+    def test_during_a_boot_an_outage_in_the_restore_still_waits(self):
         h = Harness(befores={"ui": Before(running=True)})
-        h.deck.resume = False
+        h.deck.booting = lambda: True
         h.records["ui"] = record("ui")
         h.deck.restore(0)
         h.deck.follow(1)
@@ -748,7 +759,6 @@ class Restore(unittest.TestCase):
         runs = h.herdr.runs()
         self.assertNotIn("moveto ui --resume", runs)
         self.assertIn("moveto ui --wait", runs)
-        self.assertIn("ui", h.deck.decided, "a later decision for ui resumes as ever")
 
     def test_with_no_fresh_record_it_waits_then_arms_wait_never_resume(self):
         h = Harness(befores={"ui": Before(running=True)})
