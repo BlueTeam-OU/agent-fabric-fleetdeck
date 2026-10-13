@@ -668,16 +668,20 @@ class Restore(unittest.TestCase):
         h.deck.follow(RESTORE_SETTLE_S)
         self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
         # herdr restarts while the boot still waits on an earlier tier.
-        h.deck.lost = True
-        h.deck.pending.clear()
-        h.deck.restore(100)
-        h.deck.pending["ui"] = 100
-        h.deck.follow(100 + RESTORE_SETTLE_S)
-        self.assertNotIn("moveto ui --resume", h.herdr.runs())
+        self.assertEqual(self.restart_herdr(h, 100), ["moveto ui", "moveto ui --watch", "moveto ui --wait"])
         booting[0] = False                # the boot has ended
-        h.deck.pending["ui"] = 200
-        h.deck.follow(200 + RESTORE_SETTLE_S)
-        self.assertEqual(h.herdr.runs(harness_of(h))[-1], "moveto ui --resume")
+        self.assertEqual(self.restart_herdr(h, 200), ["moveto ui", "moveto ui --watch", "moveto ui --resume"])
+
+    @staticmethod
+    def restart_herdr(h, start):
+        """One poll's outage, then follow until the restore's decision; the runs since."""
+        before = len(h.herdr.runs())
+        h.herdr.down = True
+        h.deck.follow(start)
+        h.herdr.down = False
+        for t in range(start + 1, start + 2 + RESTORE_SETTLE_S):
+            h.deck.follow(t)
+        return h.herdr.runs()[before:]
 
     def test_an_account_that_leaves_the_list_is_not_retried(self):
         h = Harness()
