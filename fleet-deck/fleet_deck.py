@@ -211,6 +211,9 @@ def log_tail(path: str, lines: int = 5) -> list[str]:
 
 def deck_argv(args) -> list[str]:
     argv = [DECK]
+    if getattr(args, "auto", False):
+        # The boot activates; the controller's restore must not resume at once.
+        argv.append("--no-resume")
     catalog = args.catalog or default_catalog()
     if catalog:
         argv += ["--catalog", catalog]
@@ -320,7 +323,7 @@ class DeckFleet:
         self.harness: dict[str, str] = {}
         self.workspace: dict[str, str | None] = {}
         self.logins: list[str] = []
-        self.live: dict[str, int] = {}
+        self.live: dict[str, int | None] = {}
         self.read_at: float | None = None
         self.mapped = False
 
@@ -357,11 +360,12 @@ class DeckFleet:
                 record = parse_state_line(line)
                 if for_this_host(record, self.host):
                     live = live_of(record, utc)
-                    self.live[record.login] = live.count if live is not None else 0
+                    # None: no fresh record, so whether a session runs is unknown.
+                    self.live[record.login] = live.count if live is not None and live.fresh else None
         return self.live
 
     def up(self, login: str) -> bool:
-        return self.live_counts().get(login, 0) >= 1
+        return (self.live_counts().get(login) or 0) >= 1
 
     def moveto(self, login: str):
         """This login's moveto in its harness pane's foreground, with the
@@ -377,7 +381,13 @@ class DeckFleet:
         return moveto_in(foreground, login), info
 
     def waiting(self, login: str) -> int | None:
-        """The pid of this login's `moveto --wait` when its pane shows the prompt."""
+        """The pid of this login's `moveto --wait` when its pane shows the
+        prompt and a fresh state record says no session runs: over ssh the
+        prompt line is the account's own output, which a running harness
+        could print too, so the record is the independent evidence; unknown
+        is not pressed."""
+        if self.live_counts().get(login) != 0:
+            return None
         try:
             found, _ = self.moveto(login)
             if found is None or found.mode != WAIT:
@@ -430,7 +440,11 @@ def control_agents(op: str, say: Callable[[str], None]) -> bool:
     if not fabric_ctl_has(op):
         say(f"control agents: fabric-ctl has no {op} yet; left as they are")
         return True
-    result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True, timeout=300)
+    try:
+        result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as error:
+        say(f"control agents: fabric-ctl all {op} failed: {boot.shown(str(error))}")
+        return False
     for line in (result.stdout + result.stderr).splitlines():
         say(f"control agents: {boot.shown(line)}")
     return result.returncode == 0
@@ -487,7 +501,10 @@ def stop_all(say: Callable[[str], None]) -> int:
     deck: set[str] = set()
     if server_up():
         deck = stop_sessions(say)
-        subprocess.run([BIN, "server", "stop"], capture_output=True, text=True, timeout=60)
+        try:
+            subprocess.run([BIN, "server", "stop"], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as error:  # the steps after still run
+            say(f"{BIN} server stop failed: {boot.shown(str(error))}")
         if wait_for(lambda: server_up() is None, SERVER_STOP_S):
             say(f"{BIN}'s server stopped")
         else:
@@ -497,7 +514,9 @@ def stop_all(say: Callable[[str], None]) -> int:
         say(f"{BIN}'s server is not running")
     stop_holder(say)
     # Read before the control agents stop: they are what answers the state stream.
-    live = {login for login, count in DeckFleet(say).live_counts().items() if count}
+    # Logins come from other accounts' state records: printable before shown.
+    live = {boot.shown(login) for login, count in DeckFleet(say).live_counts().items() if count}
+    deck = {boot.shown(login) for login in deck}
     ok = control_agents("control-stop", say) and ok
     if live & deck:
         say(f"the state stream still shows {', '.join(sorted(live & deck))} running; it can "
@@ -622,9 +641,14 @@ def start(args, say: Callable[[str], None]) -> int:
         # Once per boot, before the first pane is activated.
         try:
             first = next(iter(parse_moveto_list(moveto_list(), {getpass.getuser()})), None)
-        except (OSError, subprocess.SubprocessError):
-            first = None
-        line = probe_line(first.login if first else None)
+        except (OSError, subprocess.SubprocessError) as error:
+            say(f"cannot list the accounts (moveto --list: {boot.shown(str(error))}), so sshd "
+                "cannot be probed: nothing was started")
+            return 1
+        if first is None:
+            say("moveto --list names no account: nothing to boot")
+            return 1
+        line = probe_line(first.login)
         if line:
             say(line)
             return 1

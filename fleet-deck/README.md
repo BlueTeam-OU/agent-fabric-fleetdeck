@@ -47,7 +47,7 @@ server gives its panes. That is the link `<server socket>.agent`, which
 leads to the agent the server inherited. A server started without a live
 agent gives its panes none, and each pane asks for the key's passphrase.
 So `fleet-deck` starts no server and no controller until it has an agent
-holding the key. It looks at this terminal's `SSH_AUTH_SOCK`, then the
+holding the key. Only a socket this login owns and listens on counts. It looks at this terminal's `SSH_AUTH_SOCK`, then the
 desktop keyring's agent, then its own. If none holds the key, it runs
 `ssh-add` once, here: you type the passphrase once. If no agent answers at
 all, it starts one at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
@@ -85,7 +85,13 @@ restart the server: `stop --all`, then `start --auto`.
 The deck presses the Enter that `moveto <account> --wait` asks for, and
 nothing else. After the Enter, the prompt stays on screen while moveto
 refreshes the account. So only a new moveto at the prompt (the deck armed
-`--wait` again) counts as a failure, never the prompt alone. It presses only when the pane's foreground is that account's
+`--wait` again) counts as a failure, never the prompt alone. Over ssh the
+prompt line is the account's own output, so the deck also needs the state
+stream's fresh word that no session runs there. While that is unknown, it
+does not press. It checks again just before each press, after the 4 s gap.
+The controller that `--auto` starts resumes nothing on its own
+(`fabric-deck --no-resume`). An agent whose session ran before the stop
+waits at `--wait` for its tier like the rest. It presses only when the pane's foreground is that account's
 `moveto --wait` and its last line is "<account> - Enter to activate". A
 pane at a passphrase prompt, at a shell or running a harness is never
 typed into. Without `--auto`, panes wait for your Enter as before.

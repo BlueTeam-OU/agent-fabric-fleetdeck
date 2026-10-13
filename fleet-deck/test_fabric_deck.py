@@ -702,6 +702,16 @@ class Restore(unittest.TestCase):
             h.deck.follow(RESTORE_SETTLE_S)
             self.assertEqual(h.herdr.runs(harness_of(h)), [expected], live)
 
+    def test_under_an_automatic_boot_what_ran_before_waits_for_the_boot(self):
+        # fleet-deck start --auto activates in tier order and pace; the restore
+        # must not resume every such session at once.
+        h = Harness(befores={"ui": Before(running=True)})
+        h.deck.resume = False
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(RESTORE_SETTLE_S)
+        self.assertEqual(h.herdr.runs(harness_of(h)), ["moveto ui --wait"])
+
     def test_with_no_fresh_record_it_waits_then_arms_wait_never_resume(self):
         h = Harness(befores={"ui": Before(running=True)})
         h.records["ui"] = record("ui", age_s=3600)

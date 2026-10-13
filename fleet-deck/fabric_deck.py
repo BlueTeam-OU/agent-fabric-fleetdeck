@@ -41,6 +41,7 @@ from deck_tabs import (
     STATUS,
     WAIT,
     WATCH,
+    Arm,
     Before,
     Live,
     Seen,
@@ -592,6 +593,10 @@ class Deck:
     mapped_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
+    # False under `fleet-deck start --auto`: a session that ran before is not
+    # resumed at the restore, all at once, but left at --wait for the boot to
+    # activate in its tier and pace (fleet-deck/boot.py).
+    resume: bool = True
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
     fleet_unsettled: str | None = None
@@ -849,6 +854,8 @@ class Deck:
                                   "the restore decision is taken when it reaches its prompt")
                     continue
                 track, arm = restore(before_live(self.befores.get(login), live), live, now)
+                if arm.mode == RESUME and not self.resume:
+                    track, arm = Track(State.IDLE, armed_at=now, armed_mode=WAIT), Arm(WAIT)
                 self._arm(login, pane, arm.mode)
             except Exception as error:  # kept pending; the map is read again first
                 self.log(f"{login}: {printable(str(error))}")
@@ -1432,6 +1439,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--catalog", help="the role catalogue (identities/roles/catalog.json)")
     parser.add_argument("--exclude", action="append", default=[], help="a login to leave out")
     parser.add_argument("--cwd", default=os.path.expanduser("~/projects"))
+    parser.add_argument("--no-resume", action="store_true",
+                        help="arm --wait where a restore would resume (fleet-deck start --auto activates)")
     parser.add_argument("--no-fleet-tab", action="store_true",
                         help="do not open the fleet board as a tab of its own")
     args = parser.parse_args(argv)
@@ -1494,6 +1503,7 @@ def main(argv: list[str] | None = None) -> int:
         server=lambda: server_instance(socket_path),
         log=log,
         fleet_tab=not args.no_fleet_tab,
+        resume=not args.no_resume,
     )
     return run(deck, Stream(on_line=take, log=log), woken)
 

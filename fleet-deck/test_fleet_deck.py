@@ -387,6 +387,54 @@ class FleetDeckTest(unittest.TestCase):
         activate.assert_not_called()
         self.assertTrue(any("nothing was activated" in line for line in self.said))
 
+    def test_an_automatic_boot_starts_the_controller_without_resume(self):
+        args = self.args()
+        self.assertNotIn("--no-resume", fleet_deck.deck_argv(args))
+        args.auto = True
+        self.assertIn("--no-resume", fleet_deck.deck_argv(args))
+
+    def test_an_unlisted_fleet_stops_the_boot_before_anything_starts(self):
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "moveto_list", side_effect=subprocess.TimeoutExpired("moveto", 60)), \
+             mock.patch.object(fleet_deck, "probe_line") as probe, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab"]), 1)
+        probe.assert_not_called()
+        self.assertIn("cannot be probed", stderr.getvalue())
+        self.assertIsNone(fleet_deck.server_up())
+
+    def test_a_pane_is_not_waiting_while_its_session_state_is_unknown(self):
+        with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            fleet = fleet_deck.DeckFleet(self.say)
+        fleet.harness = {"a": "p1"}
+        fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
+        fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.WAIT), {}))
+        fleet.herdr = mock.Mock(text=mock.Mock(return_value="a - Enter to activate\n"))
+        for counts, expected in (({}, None), ({"a": None}, None), ({"a": 1}, None), ({"a": 0}, 7)):
+            fleet.live = counts
+            self.assertEqual(fleet.waiting("a"), expected, counts)
+
+    def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
+        self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
+        real_run = subprocess.run
+
+        def failing_stop(argv, **kw):
+            if argv[1:] == ["server", "stop"]:
+                raise subprocess.TimeoutExpired(argv, 60)
+            return real_run(argv, **kw)
+
+        with mock.patch.object(fleet_deck, "stop_sessions", return_value=set()), \
+             mock.patch.object(fleet_deck.subprocess, "run", side_effect=failing_stop), \
+             mock.patch.object(fleet_deck, "SERVER_STOP_S", 0), \
+             mock.patch.object(fleet_deck, "stop_holder") as holder, \
+             mock.patch.object(fleet_deck, "control_agents", return_value=True) as control, \
+             mock.patch.object(fleet_deck.DeckFleet, "live_counts", return_value={"x\x1b]52;c;Zm9v\x07": 1}), \
+             mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            self.assertEqual(fleet_deck.stop_all(self.say), 1)
+        holder.assert_called_once()
+        control.assert_called_once()
+        self.assertFalse(any("\x1b" in line or "\x07" in line for line in self.said), self.said)
+
     def test_auto_and_all_go_with_their_verbs(self):
         for argv in (["attach", "--auto"], ["stop", "--auto"], ["start", "--all"], ["stop", "--confirm"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr"), self.assertRaises(SystemExit):
