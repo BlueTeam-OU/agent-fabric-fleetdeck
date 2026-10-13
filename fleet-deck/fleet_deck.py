@@ -322,6 +322,7 @@ class DeckFleet:
         self.logins: list[str] = []
         self.live: dict[str, int] = {}
         self.read_at: float | None = None
+        self.mapped = False
 
     def read_map(self) -> None:
         self.logins = [a.login for a in parse_moveto_list(moveto_list(), self.exclude)]
@@ -329,6 +330,7 @@ class DeckFleet:
         tabs = self.herdr.account_tabs(set(self.logins))
         self.harness = {login: tab.panes[HARNESS] for login, tab in tabs.items() if HARNESS in tab.panes}
         self.workspace = {login: labels.get(tabs[login].workspace_id) for login in self.harness}
+        self.mapped = True
 
     def await_tabs(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
@@ -368,8 +370,10 @@ class DeckFleet:
         if pane is None:
             return None, {}
         info = self.herdr.process_info(pane)
-        foreground = [(p["pid"], p.get("argv") or []) for p in info.get("foreground_processes", [])
-                      if isinstance(p.get("pid"), int)]
+        # Sorted, so the same process (the outermost: sudo before its enter
+        # child) is found at every poll; a press is tied to its pid (boot.py).
+        foreground = sorted((p["pid"], p.get("argv") or []) for p in info.get("foreground_processes", [])
+                            if isinstance(p.get("pid"), int))
         return moveto_in(foreground, login), info
 
     def waiting(self, login: str) -> int | None:
@@ -435,6 +439,9 @@ def control_agents(op: str, say: Callable[[str], None]) -> bool:
 def boot_fleet(say: Callable[[str], None], exclude: Iterable[str]) -> int:
     fleet = DeckFleet(say, exclude)
     fleet.await_tabs(TABS_READY_S)
+    if not fleet.mapped:
+        say(f"the deck's tabs could not be read within {TABS_READY_S}s: nothing was activated")
+        return 1
     tiers = boot.plan_tiers(fleet.workspace)
     say("tiers: " + "; ".join(f"{tier} ({len(logins)})" for tier, logins in tiers))
     outcome = boot.activate(fleet.fleet(), tiers)

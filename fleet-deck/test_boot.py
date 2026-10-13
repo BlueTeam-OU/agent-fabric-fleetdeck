@@ -269,6 +269,23 @@ class AgentTest(unittest.TestCase):
                                            first=boot.link_target(api)), agent)
         self.assertIsNone(boot.link_problem(api, key=self.key))
 
+    def test_the_inherited_agent_gets_the_key_even_when_another_holds_it(self):
+        inherited, other = self.start_agent("inherited"), self.start_agent("other")
+        self.add_key(other)
+        said = []
+        env = {"SSH_AUTH_SOCK": other, "XDG_RUNTIME_DIR": self.sock_dir}
+        # herdr's panes use the live inherited agent whatever is registered.
+        self.assertEqual(boot.ensure_agent(said.append, interactive=True, key=self.key, env=env,
+                                           first=inherited), inherited)
+        self.assertEqual(boot.agent_state(inherited, boot.key_fingerprint(self.key)), boot.HOLDS)
+
+    def test_a_dead_inherited_agent_is_passed_over(self):
+        other = self.start_agent("other")
+        self.add_key(other)
+        env = {"SSH_AUTH_SOCK": other, "XDG_RUNTIME_DIR": self.sock_dir}
+        self.assertEqual(boot.ensure_agent([].append, interactive=False, key=self.key, env=env,
+                                           first=os.path.join(self.sock_dir, "gone")), other)
+
     def test_the_keyring_is_looked_for_in_the_runtime_directory(self):
         env = {"XDG_RUNTIME_DIR": self.sock_dir, "SSH_AUTH_SOCK": "/t/s"}
         self.assertEqual(boot.agent_candidates(env, first="/f"), [

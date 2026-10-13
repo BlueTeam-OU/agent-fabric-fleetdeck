@@ -295,14 +295,18 @@ def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_
         say(f"no deck key at {key} (its .pub or the key itself): nothing is started")
         return None
     candidates = agent_candidates(env, first)
-    found = find_agent(fingerprint, candidates, run)
+    # A live `first` is the agent herdr's panes use whatever else is registered:
+    # only the key in it helps, so no other agent is looked for.
+    first_live = first is not None and agent_state(first, fingerprint, run) != DEAD
+    found = find_agent(fingerprint, [first] if first_live else candidates, run)
     if found:
         return found
     if not interactive:
         say(f"no ssh-agent holds {key}, and this is no terminal to type its passphrase in: "
             "nothing is started")
         return None
-    target = next((s for s in candidates if agent_state(s, fingerprint, run) == LIVE), None)
+    target = first if first_live else next(
+        (s for s in candidates if agent_state(s, fingerprint, run) == LIVE), None)
     if target is None:
         target = own_agent_path(env)
         os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)

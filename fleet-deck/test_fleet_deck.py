@@ -378,6 +378,15 @@ class FleetDeckTest(unittest.TestCase):
         attach.assert_called_once()
         self.assertIn("fleet-deck restart", stderr.getvalue())
 
+    def test_a_boot_that_cannot_read_the_tabs_fails(self):
+        with mock.patch.object(fleet_deck, "moveto_list", side_effect=OSError("busy")), \
+             mock.patch.object(fleet_deck, "local_host", return_value="testhost"), \
+             mock.patch.object(fleet_deck, "TABS_READY_S", 0), \
+             mock.patch.object(fleet_deck.boot, "activate") as activate:
+            self.assertEqual(fleet_deck.boot_fleet(self.say, []), 1)
+        activate.assert_not_called()
+        self.assertTrue(any("nothing was activated" in line for line in self.said))
+
     def test_auto_and_all_go_with_their_verbs(self):
         for argv in (["attach", "--auto"], ["stop", "--auto"], ["start", "--all"], ["stop", "--confirm"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr"), self.assertRaises(SystemExit):

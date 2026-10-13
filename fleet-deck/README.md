@@ -59,7 +59,7 @@ not hold it, so stopping or restarting the controller leaves the panes'
 agent alone. `status` says whether the link leads to a live agent that
 holds the key. If it leads to a live agent without the key, the key is added
 to that agent: herdr prefers the agent its server inherited over a
-registered one. A plain `fleet-deck` still attaches to a server with a dead
+registered one, even when another agent holds the key. A plain `fleet-deck` still attaches to a server with a dead
 link, and says that `fleet-deck restart` mends it. Panes that a server made
 while it had no link at all keep asking for the passphrase. For those,
 restart the server: `stop --all`, then `start --auto`.
