@@ -356,6 +356,28 @@ class FleetDeckTest(unittest.TestCase):
         self.assertIsNone(fleet_deck.server_up())
         self.assertIsNone(lock_holder(lock_path()))
 
+    def test_a_plain_start_does_not_probe_sshd(self):
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "probe_line", return_value="refused") as probe, \
+             mock.patch.object(fleet_deck, "boot_fleet") as booted, \
+             mock.patch.object(fleet_deck, "ensure_link", return_value=True), \
+             mock.patch("sys.stderr"):
+            self.assertEqual(fleet_deck.main(["start", "--no-fleet-tab"]), 0)
+        probe.assert_not_called()
+        booted.assert_not_called()
+
+    def test_an_attach_with_a_dead_link_still_attaches_and_says_how_to_mend_it(self):
+        self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
+        self.assertTrue(fleet_deck.ensure_controller(self.args(), self.say, self.agent))
+        os.symlink(os.environ["STUB_SOCK"] + ".unavailable", os.environ["STUB_SOCK"] + ".agent")
+        with mock.patch.object(fleet_deck.boot, "ensure_agent") as ensure, \
+             mock.patch.object(fleet_deck, "attach", return_value=0) as attach, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main([]), 0)
+        ensure.assert_not_called()
+        attach.assert_called_once()
+        self.assertIn("fleet-deck restart", stderr.getvalue())
+
     def test_auto_and_all_go_with_their_verbs(self):
         for argv in (["attach", "--auto"], ["stop", "--auto"], ["start", "--all"], ["stop", "--confirm"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr"), self.assertRaises(SystemExit):
@@ -366,6 +388,11 @@ class FleetDeckTest(unittest.TestCase):
         os.environ["AGENT_FABRIC_FLEETDECK"] = "1"
         with mock.patch("sys.stderr"):
             self.assertEqual(fleet_deck.main(["stop", "--all"]), 2)
+        with mock.patch("sys.stderr"), mock.patch.object(fleet_deck, "spawn_detached") as spawn:
+            self.assertEqual(fleet_deck.main(["stop", "--all", "--confirm"]), 2,
+                             "an ordinary pane is refused, not told it is stopping")
+        spawn.assert_not_called()
+        os.environ["HERDR_POPUP"] = "1"
         with mock.patch("builtins.input", return_value="yes"), mock.patch("sys.stdout"), \
              mock.patch.object(fleet_deck, "spawn_detached") as spawn:
             self.assertEqual(fleet_deck.main(["stop", "--all", "--confirm"]), 1)

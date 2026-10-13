@@ -44,21 +44,27 @@ class TiersTest(unittest.TestCase):
 
 
 class Sim:
-    """A fleet on a simulated clock. `prompt_at[login]` is when its pane
-    first shows moveto's prompt; a pressed login comes up `up_after` seconds
-    later, unless it is in `fails`, whose moveto ends and is re-armed at once
-    (back at the prompt) that many times."""
+    """A fleet on a simulated clock, as a real pane behaves: `prompt_at`
+    is when a login's pane first shows moveto's prompt; after a press the
+    prompt stays on screen (moveto refreshes the account silently) until
+    the session is up, `up_after` seconds later. A login in `fails` has its
+    moveto end that many times, `fail_after` seconds after a press; the
+    deck then arms a new moveto --wait (another pid) at once."""
 
-    def __init__(self, prompt_at=None, up_after=10.0, already_up=(), fails=None, never_up=()):
+    def __init__(self, prompt_at=None, up_after=10.0, already_up=(), fails=None, never_up=(),
+                 fail_after=5.0):
         self.t = 0.0
         self.prompt_at = prompt_at or {}
         self.up_after = up_after
         self.up_at = {login: 0.0 for login in already_up}
         self.fails = dict(fails or {})
+        self.fail_after = fail_after
         self.never_up = set(never_up)
         self.presses: list[tuple[float, str]] = []
         self.lines: list[str] = []
-        self.at_prompt: set[str] = set()
+        self.pid: dict[str, int] = {}
+        self.rearm: dict[str, float] = {}
+        self.next_pid = 100
 
     def fleet(self):
         return Fleet(up=self.up, waiting=self.waiting, press=self.press, sleep=self.sleep,
@@ -68,19 +74,23 @@ class Sim:
         return login in self.up_at and self.t >= self.up_at[login]
 
     def waiting(self, login):
-        if login in self.at_prompt:
-            return True
-        if self.t >= self.prompt_at.get(login, 0.0) and not any(p[1] == login for p in self.presses):
-            return True
-        return False
+        if self.up(login) or self.t < self.prompt_at.get(login, 0.0):
+            return None
+        if login in self.rearm and self.t >= self.rearm[login]:
+            del self.rearm[login]
+            self.pid.pop(login, None)
+        if login not in self.pid:
+            self.next_pid += 1
+            self.pid[login] = self.next_pid
+        return self.pid[login]
 
     def press(self, login):
-        assert self.waiting(login), f"{login} pressed while not at its prompt"
+        assert self.waiting(login) is not None, f"{login} pressed while not at its prompt"
+        assert login not in self.rearm, f"{login} pressed again while its moveto still runs"
         self.presses.append((self.t, login))
-        self.at_prompt.discard(login)
         if self.fails.get(login, 0) > 0:
             self.fails[login] -= 1
-            self.at_prompt.add(login)  # moveto ended; the deck armed --wait again
+            self.rearm[login] = self.t + self.fail_after
         elif login not in self.never_up:
             self.up_at[login] = self.t + self.up_after
 
@@ -130,6 +140,21 @@ class ActivationTest(unittest.TestCase):
         self.assertEqual([login for _, login in sim.presses], ["b"])
         self.assertEqual(outcome.skipped, ["stuck"])
         self.assertTrue(any("stuck" in line and "skipped" in line for line in sim.lines))
+
+    def test_a_prompt_left_on_screen_during_the_refresh_is_not_pressed_again(self):
+        # moveto prints nothing while it refreshes the account after Enter.
+        sim = Sim(up_after=50.0)
+        outcome = boot.activate(sim.fleet(), [("Experts", ["a", "b"])])
+        self.assertEqual([login for _, login in sim.presses], ["a", "b"])
+        self.assertEqual(sorted(outcome.up), ["a", "b"])
+        self.assertEqual(outcome.skipped, [])
+
+    def test_every_press_keeps_the_gap_re_presses_included(self):
+        sim = Sim(fails={"a": 1, "b": 1}, fail_after=0.5)
+        boot.activate(sim.fleet(), [("Experts", ["a", "b"])])
+        times = [t for t, _ in sim.presses]
+        self.assertEqual(len(times), 4)
+        self.assertTrue(all(b - a >= 4.0 for a, b in zip(times, times[1:])), sim.presses)
 
     def test_a_moveto_that_ends_once_is_pressed_again(self):
         sim = Sim(fails={"a": 1})
@@ -231,6 +256,24 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(found, own)
         self.assertEqual(boot.agent_state(own, boot.key_fingerprint(self.key)), boot.HOLDS)
 
+    def test_a_link_to_an_agent_without_the_key_is_a_problem_until_it_holds_it(self):
+        agent = self.start_agent()
+        api = os.path.join(self.sock_dir, "api.sock")
+        os.symlink(agent, api + ".agent")
+        self.assertIn("does not hold", boot.link_problem(api, key=self.key))
+        # herdr keeps a live inherited agent over a registered one: the key
+        # goes into the agent the panes already use.
+        said = []
+        env = {"XDG_RUNTIME_DIR": self.sock_dir}
+        self.assertEqual(boot.ensure_agent(said.append, interactive=True, key=self.key, env=env,
+                                           first=boot.link_target(api)), agent)
+        self.assertIsNone(boot.link_problem(api, key=self.key))
+
+    def test_the_keyring_is_looked_for_in_the_runtime_directory(self):
+        env = {"XDG_RUNTIME_DIR": self.sock_dir, "SSH_AUTH_SOCK": "/t/s"}
+        self.assertEqual(boot.agent_candidates(env, first="/f"), [
+            "/f", "/t/s", os.path.join(self.sock_dir, "keyring", ".ssh"), boot.own_agent_path(env)])
+
     def test_no_key_starts_nothing(self):
         said = []
         self.assertIsNone(boot.ensure_agent(said.append, interactive=True,
@@ -260,9 +303,9 @@ class LinkTest(unittest.TestCase):
         listener = socket.socket(socket.AF_UNIX)
         listener.bind(target)
         self.addCleanup(listener.close)
-        self.assertIsNotNone(boot.link_problem(self.api), "bound but not listening")
+        self.assertIsNotNone(boot.link_problem(self.api, key=None), "bound but not listening")
         listener.listen(1)
-        self.assertIsNone(boot.link_problem(self.api))
+        self.assertIsNone(boot.link_problem(self.api, key=None))
 
     def test_no_server_socket_no_problem_said(self):
         self.assertIsNone(boot.link_problem(None))
@@ -303,6 +346,10 @@ class ProbeTest(unittest.TestCase):
             return lambda *_a, **_k: subprocess.CompletedProcess([], 0, answer, "")
         self.assertEqual(boot.ssh_pin("a", run("ssh 127.0.0.1 22\n")), ("127.0.0.1", 22))
         self.assertIsNone(boot.ssh_pin("a", run("sudo\n")))
+        with self.assertRaises(boot.PinUnreadable):
+            boot.ssh_pin("a", run("something else\n"))
+        with self.assertRaises(boot.PinUnreadable):
+            boot.ssh_pin("a", lambda *_a, **_k: subprocess.CompletedProcess([], 1, "", "no registry"))
 
 
 class AgentHoldTest(unittest.TestCase):

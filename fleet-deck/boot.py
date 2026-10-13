@@ -99,11 +99,11 @@ def at_prompt(text: str, login: str) -> bool:
 @dataclass
 class Fleet:
     """What activation needs of the deck, injected: whether a login's
-    session is up, whether its harness pane waits on moveto's prompt, the
-    press, the clock and the terminal."""
+    session is up; the pid of the `moveto --wait` its harness pane waits on
+    at moveto's prompt, or None; the press; the clock and the terminal."""
 
     up: Callable[[str], bool]
-    waiting: Callable[[str], bool]
+    waiting: Callable[[str], int | None]
     press: Callable[[str], None]
     sleep: Callable[[float], None]
     now: Callable[[], float]
@@ -117,12 +117,34 @@ class Outcome:
     late: list[str] = field(default_factory=list)
 
 
+@dataclass
+class _Run:
+    """One activation: every press, re-presses included, is PRESS_GAP_S
+    after the one before."""
+
+    fleet: Fleet
+    outcome: Outcome = field(default_factory=Outcome)
+    attempts: dict[str, int] = field(default_factory=dict)
+    # login -> the pid of the moveto that was pressed
+    pressed_pid: dict[str, int] = field(default_factory=dict)
+    last_press: float | None = None
+
+    def press(self, login: str, pid: int) -> None:
+        if self.last_press is not None:
+            gap = self.last_press + PRESS_GAP_S - self.fleet.now()
+            if gap > 0:
+                self.fleet.sleep(gap)
+        self.fleet.press(login)
+        self.last_press = self.fleet.now()
+        self.pressed_pid[login] = pid
+        self.attempts[login] = self.attempts.get(login, 0) + 1
+
+
 def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
     """Activate every login that is not up, tier by tier. The Coordinator
     tier is never activated: it is up before the deck boots the fleet, and a
     dormant coordinator pane is the operator's own call."""
-    outcome = Outcome()
-    attempts: dict[str, int] = {}
+    run = _Run(fleet)
     for tier, logins in tiers:
         if tier == COORDINATOR:
             fleet.say(f"{tier}: not activated (the coordinator is up before the boot)")
@@ -130,25 +152,24 @@ def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
         pressed: list[str] = []
         for login in logins:
             if fleet.up(login):
-                outcome.up.append(login)
+                run.outcome.up.append(login)
                 continue
-            if pressed:
-                fleet.sleep(PRESS_GAP_S)
-            if _press_when_waiting(fleet, login, attempts):
+            if _press_when_waiting(run, login):
                 pressed.append(login)
             else:
                 fleet.say(f"{login}: its pane never showed moveto's prompt; skipped")
-                outcome.skipped.append(login)
-        _await_tier(fleet, tier, pressed, attempts, outcome)
-    return outcome
+                run.outcome.skipped.append(login)
+        _await_tier(run, tier, pressed)
+    return run.outcome
 
 
-def _press_when_waiting(fleet: Fleet, login: str, attempts: dict[str, int]) -> bool:
+def _press_when_waiting(run: _Run, login: str) -> bool:
+    fleet = run.fleet
     deadline = fleet.now() + PROMPT_WAIT_S
     while True:
-        if fleet.waiting(login):
-            fleet.press(login)
-            attempts[login] = attempts.get(login, 0) + 1
+        pid = fleet.waiting(login)
+        if pid is not None:
+            run.press(login, pid)
             fleet.say(f"{login}: activated")
             return True
         if fleet.now() >= deadline:
@@ -156,34 +177,37 @@ def _press_when_waiting(fleet: Fleet, login: str, attempts: dict[str, int]) -> b
         fleet.sleep(POLL_S)
 
 
-def _await_tier(fleet: Fleet, tier: str, pressed: list[str], attempts: dict[str, int],
-                outcome: Outcome) -> None:
-    """Wait until every pressed login is up, or TIER_WAIT_S. A login whose
-    pane is back at the prompt before it came up has had its moveto end (the
-    deck armed --wait again): pressed once more, then given up."""
+def _await_tier(run: _Run, tier: str, pressed: list[str]) -> None:
+    """Wait until every pressed login is up, or TIER_WAIT_S after the last
+    press. The prompt stays on screen after a press while moveto refreshes
+    the account (it prints nothing then), so a prompt alone says nothing:
+    only another moveto at the prompt (the pressed one ended and the deck
+    armed --wait again) is a failure, pressed once more, then given up."""
+    fleet = run.fleet
     waiting = list(pressed)
-    deadline = fleet.now() + TIER_WAIT_S
     while waiting:
         for login in list(waiting):
             if fleet.up(login):
                 waiting.remove(login)
-                outcome.up.append(login)
-            elif fleet.waiting(login):
-                if attempts[login] >= ATTEMPTS:
-                    fleet.say(f"{login}: moveto ended before a session came up, "
-                              f"{attempts[login]} times; skipped")
-                    waiting.remove(login)
-                    outcome.skipped.append(login)
-                else:
-                    fleet.press(login)
-                    attempts[login] += 1
-                    fleet.say(f"{login}: moveto ended before a session came up; activated again")
+                run.outcome.up.append(login)
+                continue
+            pid = fleet.waiting(login)
+            if pid is None or pid == run.pressed_pid[login]:
+                continue
+            if run.attempts[login] >= ATTEMPTS:
+                fleet.say(f"{login}: moveto ended before a session came up, "
+                          f"{run.attempts[login]} times; skipped")
+                waiting.remove(login)
+                run.outcome.skipped.append(login)
+            else:
+                run.press(login, pid)
+                fleet.say(f"{login}: moveto ended before a session came up; activated again")
         if not waiting:
             break
-        if fleet.now() >= deadline:
+        if fleet.now() >= (run.last_press or 0.0) + TIER_WAIT_S:
             fleet.say(f"{tier}: {', '.join(waiting)} not up after {TIER_WAIT_S:.0f}s; "
                       "going on to the next tier")
-            outcome.late.extend(waiting)
+            run.outcome.late.extend(waiting)
             break
         fleet.sleep(POLL_S)
 
@@ -237,12 +261,15 @@ def own_agent_path(env: dict[str, str] | None = None) -> str:
     return os.path.join(runtime, "fabric-deck", "agent.sock")
 
 
-def agent_candidates(env: dict[str, str] | None = None) -> list[str]:
-    """The agent sockets tried, in order: this terminal's, the desktop
-    keyring's, then the deck's own."""
+def agent_candidates(env: dict[str, str] | None = None, first: str | None = None) -> list[str]:
+    """The agent sockets tried, in order: `first` (the agent a running
+    server already gives its panes), this terminal's, the desktop keyring's
+    (in the runtime directory, so a test's own directory never reaches the
+    operator's), then the deck's own."""
     env = os.environ if env is None else env
+    runtime = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     seen: list[str] = []
-    for path in (env.get("SSH_AUTH_SOCK", ""), f"/run/user/{os.getuid()}/keyring/.ssh",
+    for path in (first or "", env.get("SSH_AUTH_SOCK", ""), os.path.join(runtime, "keyring", ".ssh"),
                  own_agent_path(env)):
         if path and path not in seen:
             seen.append(path)
@@ -254,16 +281,20 @@ def find_agent(fingerprint: str, candidates: Iterable[str], run: Run = subproces
 
 
 def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_KEY,
-                 env: dict[str, str] | None = None, run: Run = subprocess.run) -> str | None:
+                 env: dict[str, str] | None = None, run: Run = subprocess.run,
+                 first: str | None = None) -> str | None:
     """The socket of a live agent holding the deck key. Without one, the key
     is added once, here, to the first live agent (an ssh-agent of the deck's
     own is started when none is live), and the operator types its
-    passphrase in this terminal. None, said, when that cannot be."""
+    passphrase in this terminal. None, said, when that cannot be. `first`
+    is tried before the others: herdr prefers the agent its server
+    inherited over any registered one, so a live inherited agent without
+    the key gets the key, not a rival."""
     fingerprint = key_fingerprint(key, run)
     if fingerprint is None:
         say(f"no deck key at {key} (its .pub or the key itself): nothing is started")
         return None
-    candidates = agent_candidates(env)
+    candidates = agent_candidates(env, first)
     found = find_agent(fingerprint, candidates, run)
     if found:
         return found
@@ -310,9 +341,18 @@ def socket_answers(path: str) -> bool:
         return False
 
 
-def link_problem(api_socket: str | None) -> str | None:
+def link_target(api_socket: str | None) -> str | None:
+    link = agent_link(api_socket)
+    try:
+        return os.readlink(link) if link else None
+    except OSError:
+        return None
+
+
+def link_problem(api_socket: str | None, key: str | None = DECK_KEY,
+                 run: Run = subprocess.run) -> str | None:
     """What is wrong with the panes' agent link of a running server, or None
-    when it leads to an agent that answers."""
+    when it leads to an agent that answers and, with `key`, holds that key."""
     link = agent_link(api_socket)
     if link is None:
         return None
@@ -326,6 +366,9 @@ def link_problem(api_socket: str | None) -> str | None:
         return f"cannot read {link}: {error.strerror}"
     if target.endswith(".unavailable") or not socket_answers(link):
         return f"herdr's panes' ssh-agent link {link} leads to no live agent ({target})"
+    fingerprint = key_fingerprint(key, run) if key else None
+    if fingerprint and agent_state(link, fingerprint, run) != HOLDS:
+        return f"the ssh-agent herdr's panes use ({target}) does not hold {key}"
     return None
 
 
@@ -429,18 +472,26 @@ class AgentHold:
 # --------------------------------------------------------- the sshd probe
 
 
+class PinUnreadable(RuntimeError):
+    pass
+
+
 def ssh_pin(login: str, run: Run = subprocess.run) -> tuple[str, int] | None:
     """The host's pinned sshd as moveto reads it (`fabric-host ssh-pin`), or
-    None when the account is entered with sudo or the pin cannot be read."""
+    None when the account is entered with sudo. A pin that cannot be read
+    raises PinUnreadable, as moveto refuses then."""
     try:
         result = run(["fabric-host", "ssh-pin", login], capture_output=True, text=True,
                      timeout=30, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PinUnreadable(f"cannot run fabric-host ssh-pin ({error.__class__.__name__})") from None
     words = result.stdout.split()
+    if result.returncode == 0 and words == ["sudo"]:
+        return None
     if result.returncode == 0 and len(words) == 3 and words[0] == "ssh" and words[2].isdigit():
         return words[1], int(words[2])
-    return None
+    why = shown((result.stderr.strip().splitlines() or [f"exit {result.returncode}"])[-1])
+    raise PinUnreadable(f"fabric-host ssh-pin {login} gave no pin ({why})")
 
 
 def probe_sshd(address: str, port: int, timeout: float = 5.0) -> str | None:

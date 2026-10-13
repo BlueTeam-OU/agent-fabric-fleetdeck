@@ -333,8 +333,11 @@ class DeckFleet:
     def await_tabs(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
         while True:
-            self.read_map()
-            if set(self.logins) <= set(self.harness) or time.monotonic() >= deadline:
+            try:
+                self.read_map()
+            except Exception as error:  # herdr or moveto busy: read again until the deadline
+                self.say(f"cannot read the deck's tabs yet ({boot.shown(str(error))})")
+            if (self.logins and set(self.logins) <= set(self.harness)) or time.monotonic() >= deadline:
                 break
             time.sleep(2)
         missing = sorted(set(self.logins) - set(self.harness))
@@ -369,19 +372,23 @@ class DeckFleet:
                       if isinstance(p.get("pid"), int)]
         return moveto_in(foreground, login), info
 
-    def waiting(self, login: str) -> bool:
+    def waiting(self, login: str) -> int | None:
+        """The pid of this login's `moveto --wait` when its pane shows the prompt."""
         try:
             found, _ = self.moveto(login)
             if found is None or found.mode != WAIT:
-                return False
+                return None
             text = self.herdr.text("pane", "read", self.harness[login], "--source", "recent",
                                    "--lines", "5")
         except Exception:  # herdr busy or the pane gone: not waiting, asked again
-            return False
-        return boot.at_prompt(text, login)
+            return None
+        return found.pid if boot.at_prompt(text, login) else None
 
     def press(self, login: str) -> None:
-        self.herdr.text("pane", "send-keys", self.harness[login], "enter")
+        try:
+            self.herdr.text("pane", "send-keys", self.harness[login], "enter")
+        except Exception as error:  # said; the login then counts as not up after the tier's wait
+            self.say(f"{login}: the Enter did not reach its pane ({boot.shown(str(error))})")
 
     def fleet(self) -> boot.Fleet:
         return boot.Fleet(up=self.up, waiting=self.waiting, press=self.press,
@@ -391,7 +398,10 @@ class DeckFleet:
 def probe_line(login: str | None) -> str | None:
     """None when the host's pinned sshd greets (or accounts are entered with
     sudo), otherwise the line that stops the boot."""
-    pin = boot.ssh_pin(login) if login else None
+    try:
+        pin = boot.ssh_pin(login) if login else None
+    except boot.PinUnreadable as error:
+        return f"{error}: sshd cannot be probed, so nothing was activated"
     if pin is None:
         return None
     why = boot.probe_sshd(*pin)
@@ -418,7 +428,7 @@ def control_agents(op: str, say: Callable[[str], None]) -> bool:
         return True
     result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True, timeout=300)
     for line in (result.stdout + result.stderr).splitlines():
-        say(f"control agents: {line}")
+        say(f"control agents: {boot.shown(line)}")
     return result.returncode == 0
 
 
@@ -445,7 +455,11 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
     for tier, logins in reversed(boot.plan_tiers(fleet.workspace)):
         hung = []
         for login in logins:
-            found, info = fleet.moveto(login)
+            try:
+                found, info = fleet.moveto(login)
+            except Exception as error:  # one pane must not stop the rest; herdr's stop ends it
+                say(f"{login}: cannot read its pane ({boot.shown(str(error))}); herdr's stop ends it")
+                continue
             group = info.get("foreground_process_group_id")
             if found is not None and isinstance(group, int) and boot.hang_up(group):
                 hung.append(login)
@@ -475,8 +489,9 @@ def stop_all(say: Callable[[str], None]) -> int:
     else:
         say(f"{BIN}'s server is not running")
     stop_holder(say)
-    ok = control_agents("control-stop", say) and ok
+    # Read before the control agents stop: they are what answers the state stream.
     live = {login for login, count in DeckFleet(say).live_counts().items() if count}
+    ok = control_agents("control-stop", say) and ok
     if live & deck:
         say(f"the state stream still shows {', '.join(sorted(live & deck))} running; it can "
             "lag a session that just ended (fabric-ctl all presence answers from the hosts)")
@@ -518,6 +533,11 @@ def hold_lock_path() -> str:
     return os.path.join(state_dir(), "agent-hold.lock")
 
 
+def hold_log_path() -> str:
+    # Its own file: deck.log is rotated under it when a controller starts.
+    return os.path.join(state_dir(), "agent-hold.log")
+
+
 def stop_holder(say: Callable[[str], None]) -> None:
     holder = lock_holder(hold_lock_path())
     if holder is None or holder <= 0:  # 0: another pid namespace (stop_controller)
@@ -537,13 +557,15 @@ def ensure_link(agent: str, say: Callable[[str], None]) -> bool:
         return True
     stop_holder(say)
     os.makedirs(state_dir(), mode=0o700, exist_ok=True)
-    say(f"registering the ssh-agent at {agent} with {BIN}'s server (log: {log_path()})")
+    say(f"registering the ssh-agent at {agent} with {BIN}'s server (log: {hold_log_path()})")
     script = os.path.join(BOARD_DIR, "fleet-deck")
-    spawn_detached([sys.executable, script, "hold-agent", "--socket", agent], log_path())
+    rotate_log(hold_log_path())
+    spawn_detached([sys.executable, script, "hold-agent", "--socket", agent], hold_log_path())
     if wait_for(lambda: boot.link_problem(herdr_socket_path()) is None, HOLD_READY_S):
         say("panes' ssh-agent: live")
         return True
     say(boot.link_problem(herdr_socket_path()) or "panes' ssh-agent: not live; the log says why")
+    stop_holder(say)  # a registration that did not mend the link is not kept running
     return False
 
 
@@ -582,12 +604,15 @@ def start(args, say: Callable[[str], None]) -> int:
         say(problem)
     starting = server is None or controller is None or args.verb == "restart"
     agent = None
-    if starting or problem or args.auto:
-        agent = boot.ensure_agent(say, interactive=sys.stdin.isatty())
+    if starting or args.auto:
+        agent = boot.ensure_agent(say, interactive=sys.stdin.isatty(),
+                                  first=boot.link_target(herdr_socket_path()) if server else None)
         if agent is None:
             return 1
-    if starting or args.auto:
-        # Once, before any pane: a controller that starts arms every pane at once.
+    elif problem:
+        say("attaching as before; `fleet-deck restart` mends the panes' ssh-agent")
+    if args.auto:
+        # Once per boot, before the first pane is activated.
         try:
             first = next(iter(parse_moveto_list(moveto_list(), {getpass.getuser()})), None)
         except (OSError, subprocess.SubprocessError):
@@ -661,14 +686,15 @@ def main(argv: list[str] | None = None) -> int:
         if not args.socket:
             parser.error("hold-agent needs --socket")
         return hold_agent(args.socket)
-    if args.verb == "stop" and args.confirm:
-        return confirm_stop_all(say)
     if in_herdr_pane() and (args.verb != "stop" or args.all):
         # server.socket_access = "outside_panes" refuses a pane's process, a
         # controller started here would be the pane's descendant, and stop
         # --all would end the pane it runs in half-way.
         say("run this from a terminal outside herdr's panes")
         return 2
+    if args.verb == "stop" and args.confirm:
+        # A popup is not a pane here (in_herdr_pane): the deck menu asks from one.
+        return confirm_stop_all(say)
     if args.verb == "stop":
         if args.all:
             return stop_all(say)

@@ -56,8 +56,12 @@ A server already running with a dead link is not replaced: its panes would
 go with it. Instead `fleet-deck hold-agent`, a small detached process,
 registers the agent with the server and holds it. The deck controller does
 not hold it, so stopping or restarting the controller leaves the panes'
-agent alone. `status` says whether the link is live. Panes that a server
-made while it had no link at all keep asking for the passphrase. For those,
+agent alone. `status` says whether the link leads to a live agent that
+holds the key. If it leads to a live agent without the key, the key is added
+to that agent: herdr prefers the agent its server inherited over a
+registered one. A plain `fleet-deck` still attaches to a server with a dead
+link, and says that `fleet-deck restart` mends it. Panes that a server made
+while it had no link at all keep asking for the passphrase. For those,
 restart the server: `stop --all`, then `start --auto`.
 
 **`start --auto`** boots the fleet once the coordinator is up:
@@ -79,7 +83,9 @@ restart the server: `stop --all`, then `start --auto`.
      pane never shows the prompt, is named and skipped.
 
 The deck presses the Enter that `moveto <account> --wait` asks for, and
-nothing else. It presses only when the pane's foreground is that account's
+nothing else. After the Enter, the prompt stays on screen while moveto
+refreshes the account. So only a new moveto at the prompt (the deck armed
+`--wait` again) counts as a failure, never the prompt alone. It presses only when the pane's foreground is that account's
 `moveto --wait` and its last line is "<account> - Enter to activate". A
 pane at a passphrase prompt, at a shell or running a harness is never
 typed into. Without `--auto`, panes wait for your Enter as before.
