@@ -496,7 +496,8 @@ account tabs as before.
   time to live has passed: 5 s for proc and states, up to 600 s for tokens
   (fleet.py's cost classes). When focus leaves, nothing new is fetched,
   and the status line leads with `PAUSED` and the oldest value's age,
-  before the title: a board 13 hours old once read as the fleet now. A fetch already running finishes,
+  then the title, then how to go live: a board 13 hours old once read
+  as the fleet now. A fetch already running finishes,
   since fleet.py bounds every source.
 - **Focus starts unknown.** FleetDeck reports focus changes only. So a view
   counts as focused from the first focus-in or key, and until then it

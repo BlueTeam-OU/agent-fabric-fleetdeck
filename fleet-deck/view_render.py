@@ -779,9 +779,11 @@ def status_line(title: str, st: Status, width: int) -> Line:
     if st.focused is True:
         return [(fit(f"{title} · live · {when}{tail}", width), BOLD)]
     # A paused view leads with it, and with how old what it shows is: after
-    # the title, a 13-hour-old board read as the fleet now (2026-10-14).
+    # the title, a 13-hour-old board read as the fleet now (2026-10-14). The
+    # title comes next and the hint last, so a narrow pane cuts the hint,
+    # never whose view this is.
     how = "not focused" if st.focused is False else "press a key to go live"
-    return [(fit(f"PAUSED · {when} · {how} · {title}{tail}", width), WARN)]
+    return [(fit(f"PAUSED · {when} · {title} · {how}{tail}", width), WARN)]
 
 
 def oldest_at(records) -> str | None:
@@ -791,7 +793,8 @@ def oldest_at(records) -> str | None:
 
 
 def board_title(agents: list[Agent], now: datetime.datetime) -> str:
-    # Short: on a narrow pane the status line's live/paused comes after it.
+    # Short: on a narrow pane the status line's live and its age come after
+    # it, and a paused line puts it after PAUSED and the age.
     need, unknown = needs_count(agents)
     title = f"Fleet · {need} of {len(agents)} need you"
     unwatched = sum(1 for a in agents if unwatched_since(a, now) is not None)
@@ -1112,8 +1115,8 @@ def agent_lines(a: Agent, samples: Samples, st: Status, scroll: int, width: int,
                 keys: str = AGENT_KEYS, ascii_only: bool = False) -> tuple[list[Line], int]:
     """The agent view and the scroll it was drawn at, clamped to the body.
     A height of None is as tall as the body."""
-    # The login and whether this is live come first: on a narrow overlay
-    # the rest is what gets cut.
+    # The login and whether this is live come first (paused: PAUSED, the
+    # age, then the login): on a narrow overlay the rest is what gets cut.
     top = [status_line(a.login, st, width), [(fit(agent_where(a), width), DIM)]]
     footer = [[(fit(keys, width), DIM)]]
     body = agent_body(a, samples, st.now, width, ascii_only)

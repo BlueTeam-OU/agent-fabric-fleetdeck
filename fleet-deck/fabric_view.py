@@ -781,8 +781,12 @@ def snapshot_lines(fleet, screen: str, login: str | None, width: int, metric: in
     view.snapshot = True
     asked = set(view.refresher.ttl)
     failures = collect(view, store, results, wait_s)
-    if asked and len(failures) == len(asked):
-        raise SnapshotError(f"no section could be read; {failures[0]}")
+    # Read is what answered without failing: a section still being read
+    # at the wait is no more read than one that failed.
+    pending = sorted(view.refresher.running)
+    if asked and len(failures) + len(pending) == len(asked):
+        parts = ([f"still reading after {wait_s:.0f} s: {', '.join(pending)}"] if pending else []) + failures[:1]
+        raise SnapshotError("no section could be read; " + "; ".join(parts))
     if screen == "agent":
         a = agents_of({login: placements[login]}, store, view.sections, view.whys, fleet)[0]
         samples = vr.Samples()
@@ -828,12 +832,17 @@ def snapshot_main(args: list[str], env: dict[str, str] | None = None) -> int:
         return 1
     try:
         fleet = import_fleet(root)
+    except Exception as e:  # noqa: BLE001 — a fleet.py that fails to load is one line, never a traceback
+        print(f"snapshot: agent-fabric's fleet.py could not be loaded: {vr.clean(f'{type(e).__name__}: {e}')}",
+              file=sys.stderr)
+        return 1
+    try:
         lines = snapshot_lines(fleet, a.view, a.login, width, a.metric - 1,
                                ascii_only="utf" not in (sys.stdout.encoding or "").lower())
     except LookupError as e:
         print(f"snapshot: {e}", file=sys.stderr)
         return 2
-    except (ImportError, SnapshotError) as e:
+    except SnapshotError as e:
         print(f"snapshot: {vr.clean(str(e))}", file=sys.stderr)
         return 1
     sys.stdout.write(snapshot_text(lines))

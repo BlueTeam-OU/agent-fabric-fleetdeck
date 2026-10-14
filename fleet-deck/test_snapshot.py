@@ -128,6 +128,20 @@ class Failures(unittest.TestCase):
         with self.assertRaises(LookupError):
             fv.snapshot_lines(FakeFleet(), "agent", "nobody", 140)
 
+    def test_nothing_answered_by_the_wait_is_an_error_too(self):
+        gate = threading.Event()
+        try:
+            with self.assertRaises(fv.SnapshotError) as e:
+                fv.snapshot_lines(FakeFleet(hold={s: gate for s in TTLS}), "board", None, 140, wait_s=0.3)
+            self.assertIn("still reading after 0 s: ", str(e.exception))
+            held = FakeFleet(fail=set(TTLS) - {"tokens"}, hold={"tokens": gate})
+            with self.assertRaises(fv.SnapshotError) as e:
+                fv.snapshot_lines(held, "board", None, 140, wait_s=0.3)
+            self.assertIn("still reading after 0 s: tokens", str(e.exception))
+            self.assertIn("fabric-ctl refused", str(e.exception))
+        finally:
+            gate.set()
+
     def test_a_section_still_reading_at_the_wait_is_said_not_awaited(self):
         gate = threading.Event()
         try:
@@ -160,6 +174,34 @@ class Command(unittest.TestCase):
             fleet_deck.main(["snapshot", "agent"])
         self.assertEqual(e.exception.code, 2)
         self.assertIn("a login goes with agent", err.getvalue())
+
+    def test_snapshot_after_an_option_is_refused_never_a_start(self):
+        import fleet_deck
+        started = []
+        real = fleet_deck.start
+        fleet_deck.start = lambda *a: started.append(a) or 0
+        try:
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as e:
+                fleet_deck.main(["--cwd", "/x", "snapshot"])
+        finally:
+            fleet_deck.start = real
+        self.assertEqual((e.exception.code, started), (2, []))
+
+    def test_a_fleet_py_that_fails_to_load_is_one_line(self):
+        import os
+        import sys
+        import tempfile
+        # Another test module may have imported the real fleet.py already.
+        real = sys.modules.pop("fleet", None)
+        self.addCleanup(lambda: real is None or sys.modules.__setitem__("fleet", real))
+        self.addCleanup(lambda: sys.path.remove(os.path.join(root, "tools", "fabric")))
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "tools", "fabric"))
+            with open(os.path.join(root, "tools", "fabric", "fleet.py"), "w") as f:
+                f.write("raise RuntimeError('half-written')\n")
+            code, err = self.run_main(["board"], {"AGENT_FABRIC_ROOT": root})
+        self.assertEqual(code, 1)
+        self.assertEqual(err.splitlines(), ["snapshot: agent-fabric's fleet.py could not be loaded: RuntimeError: half-written"])
 
     def test_no_fleet_py_is_exit_1_with_one_line(self):
         code, err = self.run_main(["board"], {"AGENT_FABRIC_ROOT": "/nonexistent"})

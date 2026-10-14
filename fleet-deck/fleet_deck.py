@@ -695,7 +695,9 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["snapshot"]:
         # Read-only, and no herdr socket: unlike the verbs below it runs
-        # inside a pane too, where the agents who read the deck are.
+        # inside a pane too, where the agents who read the deck are. Never
+        # a verb choice below: `--cwd x snapshot` would parse and reach
+        # start(), booting the deck under a read-only name.
         import fabric_view  # noqa: PLC0415 — the views load fleet.py; only snapshot needs them
 
         return fabric_view.snapshot_main(args[1:])
@@ -710,12 +712,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "verb", nargs="?", default="attach",
-        choices=["attach", "start", "stop", "restart", "status", "hold-agent", "snapshot"],
+        choices=["attach", "start", "stop", "restart", "status", "hold-agent"],
         help="attach (default): start what is missing, then attach this terminal; "
         "start: the same without attaching; stop|restart: the controller; "
         "status: what runs (exit 0 when both run, 3 otherwise); "
         "hold-agent: started by start itself; "
-        "snapshot board|agent LOGIN|compare|plan|prs: print that view as text (snapshot -h)",
+        "snapshot board|agent LOGIN|compare|plan|prs: print that view as text "
+        "(snapshot -h; it comes first, before any option)",
     )
     parser.add_argument("--socket", help=argparse.SUPPRESS)
     parser.add_argument("--auto", action="store_true",
