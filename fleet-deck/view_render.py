@@ -776,8 +776,12 @@ def status_line(title: str, st: Status, width: int) -> Line:
     tail = f" · reading {', '.join(st.fetching)}" if st.fetching else ""
     if st.snapshot:
         return [(fit(f"{title} · snapshot · {when}{tail}", width), BOLD)]
-    mode = {True: "live", False: "paused: not focused", None: "paused: press a key to go live"}[st.focused]
-    return [(fit(f"{title} · {mode} · {when}{tail}", width), BOLD if st.focused is True else WARN)]
+    if st.focused is True:
+        return [(fit(f"{title} · live · {when}{tail}", width), BOLD)]
+    # A paused view leads with it, and with how old what it shows is: after
+    # the title, a 13-hour-old board read as the fleet now (2026-10-14).
+    how = "not focused" if st.focused is False else "press a key to go live"
+    return [(fit(f"PAUSED · {when} · {how} · {title}{tail}", width), WARN)]
 
 
 def oldest_at(records) -> str | None:

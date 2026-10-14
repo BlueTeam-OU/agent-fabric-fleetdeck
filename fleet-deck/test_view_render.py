@@ -174,14 +174,18 @@ class Board(unittest.TestCase):
     def test_the_status_line_says_live_paused_cached_and_reading(self):
         self.assertIn("live", texts([vr.status_line("Fleet", status(), 100)])[0])
         paused = texts([vr.status_line("Fleet", status(focused=False), 100)])[0]
-        self.assertIn("paused: not focused", paused)
+        self.assertTrue(paused.startswith("PAUSED · oldest value 4 min ago · not focused · Fleet"), paused)
         unknown = texts([vr.status_line("Fleet", status(focused=None), 100)])[0]
-        self.assertIn("paused: press a key to go live", unknown)
+        self.assertTrue(unknown.startswith("PAUSED · oldest value 4 min ago · press a key to go live"), unknown)
         snap = texts([vr.status_line("Fleet", status(focused=None, snapshot=True), 100)])[0]
         self.assertEqual(snap, "Fleet · snapshot · oldest value 4 min ago")
         cached = texts([vr.status_line("Fleet", status(from_cache=True, fetching=("jobs", "prs")), 100)])[0]
         self.assertIn("from cache, 4 min ago", cached)
         self.assertIn("reading jobs, prs", cached)
+
+    def test_a_paused_line_on_a_narrow_pane_keeps_the_pause_and_the_age(self):
+        narrow = texts([vr.status_line("Fleet · 3 of 26 need you", status(focused=None), 34)])[0]
+        self.assertIn("PAUSED · oldest value 4 min ago", narrow)
 
     def test_a_natural_height_draws_every_row_unpadded_and_none_selected(self):
         many = [vr.Agent(f"agent-{i:02}", "h", "agent", {}) for i in range(40)]
