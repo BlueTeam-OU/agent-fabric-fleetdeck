@@ -764,6 +764,8 @@ class Status:
     now: datetime.datetime
     oldest: str | None           # the oldest `at` among the records shown
     from_cache: bool             # nothing fetched yet: everything shown is the cache's
+    # Read once for `snapshot`, never refreshed: neither live nor paused.
+    snapshot: bool = False
 
 
 def status_line(title: str, st: Status, width: int) -> Line:
@@ -771,8 +773,10 @@ def status_line(title: str, st: Status, width: int) -> Line:
         when = f"from cache, {age(st.oldest, st.now)}" if st.oldest else "nothing read yet"
     else:
         when = f"oldest value {age(st.oldest, st.now)}" if st.oldest else "nothing read yet"
-    mode = {True: "live", False: "paused: not focused", None: "paused: press a key to go live"}[st.focused]
     tail = f" · reading {', '.join(st.fetching)}" if st.fetching else ""
+    if st.snapshot:
+        return [(fit(f"{title} · snapshot · {when}{tail}", width), BOLD)]
+    mode = {True: "live", False: "paused: not focused", None: "paused: press a key to go live"}[st.focused]
     return [(fit(f"{title} · {mode} · {when}{tail}", width), BOLD if st.focused is True else WARN)]
 
 
@@ -798,12 +802,13 @@ def board_keys(needs_first: bool, compact: bool) -> str:
 
 
 def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
-                selected: int, width: int, height: int, needs_first: bool = False,
+                selected: int | None, width: int, height: int | None, needs_first: bool = False,
                 compact: bool = False, notice: str | None = None) -> list[Line]:
     """The whole board for a width × height window: a status line, the
     header, the rows (scrolled to keep the selection in view), and the
     footer: host memory, what was not read, a notice, the keys. `agents`
-    are in the order drawn (board_order)."""
+    are in the order drawn (board_order). A height of None is as tall as
+    every row, and a selection of None marks no row: a snapshot."""
     cols = board_columns(agents, width, compact)
     top = [status_line(board_title(agents, st.now), st, width), board_header(cols)]
     footer = [host_line(h, r) for h, r in sorted(hosts.items())]
@@ -812,9 +817,9 @@ def board_lines(agents: list[Agent], hosts: dict[str, dict | None], st: Status,
         footer.append([(fit(notice, width), BOLD)])
     footer.append([(fit(board_keys(needs_first, compact), width), DIM)])
     footer.append([(fit(BOARD_KEYS, width), DIM)])
-    room = max(1, height - len(top) - len(footer))
+    room = max(1, len(agents) if height is None else height - len(top) - len(footer))
     first = 0
-    if agents:
+    if agents and selected is not None:
         selected = max(0, min(selected, len(agents) - 1))
         first = min(max(0, selected - room + 1), max(0, len(agents) - room))
     rows = [board_row(a, cols, i == selected, st.now) for i, a in enumerate(agents)][first: first + room]
@@ -1099,15 +1104,16 @@ def agent_where(a: Agent) -> str:
     return f"{role} · {project} · {a.host}"
 
 
-def agent_lines(a: Agent, samples: Samples, st: Status, scroll: int, width: int, height: int,
+def agent_lines(a: Agent, samples: Samples, st: Status, scroll: int, width: int, height: int | None,
                 keys: str = AGENT_KEYS, ascii_only: bool = False) -> tuple[list[Line], int]:
-    """The agent view and the scroll it was drawn at, clamped to the body."""
+    """The agent view and the scroll it was drawn at, clamped to the body.
+    A height of None is as tall as the body."""
     # The login and whether this is live come first: on a narrow overlay
     # the rest is what gets cut.
     top = [status_line(a.login, st, width), [(fit(agent_where(a), width), DIM)]]
     footer = [[(fit(keys, width), DIM)]]
     body = agent_body(a, samples, st.now, width, ascii_only)
-    room = max(1, height - len(top) - len(footer))
+    room = max(1, len(body) if height is None else height - len(top) - len(footer))
     scroll = max(0, min(scroll, len(body) - room))
     shown = body[scroll: scroll + room]
     shown += [[("", NORMAL)]] * (room - len(shown))

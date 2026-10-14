@@ -177,9 +177,19 @@ class Board(unittest.TestCase):
         self.assertIn("paused: not focused", paused)
         unknown = texts([vr.status_line("Fleet", status(focused=None), 100)])[0]
         self.assertIn("paused: press a key to go live", unknown)
+        snap = texts([vr.status_line("Fleet", status(focused=None, snapshot=True), 100)])[0]
+        self.assertEqual(snap, "Fleet · snapshot · oldest value 4 min ago")
         cached = texts([vr.status_line("Fleet", status(from_cache=True, fetching=("jobs", "prs")), 100)])[0]
         self.assertIn("from cache, 4 min ago", cached)
         self.assertIn("reading jobs, prs", cached)
+
+    def test_a_natural_height_draws_every_row_unpadded_and_none_selected(self):
+        many = [vr.Agent(f"agent-{i:02}", "h", "agent", {}) for i in range(40)]
+        lines = texts(vr.board_lines(many, {}, status(snapshot=True), None, 100, None))
+        rows = [t for t in lines if t.lstrip().startswith("agent-")]
+        self.assertEqual(len(rows), 40)
+        self.assertFalse(any(t.startswith(">") for t in lines))
+        self.assertNotIn("", [t.strip() for t in lines], "no padding between the rows and the footer")
 
     def test_unread_cells_before_any_answer(self):
         bare = vr.Agent("x", "h", "agent", {})

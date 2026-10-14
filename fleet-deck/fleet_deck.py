@@ -692,6 +692,14 @@ def start_unlocked(args, say: Callable[[str], None]) -> int:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ["snapshot"]:
+        # Read-only, and no herdr socket: unlike the verbs below it runs
+        # inside a pane too, where the agents who read the deck are.
+        import fabric_view  # noqa: PLC0415 — the views load fleet.py; only snapshot needs them
+
+        return fabric_view.snapshot_main(args[1:])
+
     parser = argparse.ArgumentParser(
         prog="fleet-deck",
         description="Fleet Deck in one command: herdr's server, the deck controller "
@@ -702,11 +710,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "verb", nargs="?", default="attach",
-        choices=["attach", "start", "stop", "restart", "status", "hold-agent"],
+        choices=["attach", "start", "stop", "restart", "status", "hold-agent", "snapshot"],
         help="attach (default): start what is missing, then attach this terminal; "
         "start: the same without attaching; stop|restart: the controller; "
         "status: what runs (exit 0 when both run, 3 otherwise); "
-        "hold-agent: started by start itself",
+        "hold-agent: started by start itself; "
+        "snapshot board|agent LOGIN|compare|plan|prs: print that view as text (snapshot -h)",
     )
     parser.add_argument("--socket", help=argparse.SUPPRESS)
     parser.add_argument("--auto", action="store_true",
@@ -720,7 +729,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cwd", help="the deck's working directory for new tabs")
     parser.add_argument("--no-fleet-tab", action="store_true",
                         help="do not open the fleet board as a tab of its own")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args)
     if args.auto and args.verb != "start":
         parser.error("--auto goes with start")
     if args.all and args.verb != "stop":
