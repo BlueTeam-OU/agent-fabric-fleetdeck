@@ -5,6 +5,8 @@
     fabric-view agent [--agent L]     one agent; the login defaults to the
                                       herdr tab the pane was opened from
     fabric-view prs                   in-flight pull requests by owner
+    fabric-view snapshot VIEW …       a view printed as text, read once
+                                      (also `fleet-deck snapshot`)
     fabric-view open board|agent|prs  for a plugin action: open that pane
 
 The data is agent-fabric's tools/fabric/fleet.py, imported from the
@@ -289,6 +291,9 @@ class View:
                                      for s in sections if s not in fleet.SECTIONS
                                      or (derived(fleet, s) and s not in DERIVE)}
         self.fleet = fleet
+        # Read once and printed (`snapshot`): its status line says so, and
+        # it marks no row selected.
+        self.snapshot = False
 
     def tick(self, focused: bool | None) -> None:
         for s in self.refresher.due(time.monotonic(), focused):
@@ -379,7 +384,7 @@ def status(view: View, agents: list[vr.Agent], focused: bool, store: Store) -> v
     records = [r for a in agents for s, r in a.sections.items() if s in view.sections]
     return vr.Status(focused=focused, fetching=tuple(s for s in view.sections if s in view.refresher.running),
                      now=datetime.datetime.now(datetime.timezone.utc), oldest=vr.oldest_at(records),
-                     from_cache=not store.fetched)
+                     from_cache=not store.fetched, snapshot=view.snapshot)
 
 
 # ── the terminal ────────────────────────────────────────────────────
@@ -634,14 +639,16 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,
-                 width: int, height: int, ascii_only: bool) -> list[vr.Line]:
+                 width: int, height: int | None, ascii_only: bool) -> list[vr.Line]:
     """The fleet pane's current screen. Each screen reads its own view's
-    sections, so its status line says how old what it shows is."""
+    sections, so its status line says how old what it shows is. A height
+    of None draws the whole screen, unscrolled: a snapshot."""
     agents = agents_of(placements, store, view.sections, view.whys, view.fleet)
     if nav.screen == BOARD:
         nav.place(vr.board_order(agents, nav.needs_first, datetime.datetime.now(datetime.timezone.utc)))
         return vr.board_lines(nav.rows, host_records(agents), status(view, agents, focused, store),
-                              nav.selected, width, height, nav.needs_first, nav.compact, nav.notice)
+                              None if view.snapshot else nav.selected, width, height, nav.needs_first,
+                              nav.compact, nav.notice)
     if nav.screen == COMPARE:
         lines, nav.scroll = rr.compare_lines(agents, nav.metric, status(view, agents, focused, store),
                                              nav.scroll, width, height, ascii_only)
@@ -667,7 +674,7 @@ def fleet_record(store: Store, section: str, whys: dict[str, str]) -> dict | Non
 def fleet_status(view: View, records: list, focused: bool | None, store: Store) -> vr.Status:
     return vr.Status(focused=focused, fetching=tuple(s for s in view.sections if s in view.refresher.running),
                      now=datetime.datetime.now(datetime.timezone.utc), oldest=vr.oldest_at(records),
-                     from_cache=not store.fetched)
+                     from_cache=not store.fetched, snapshot=view.snapshot)
 
 
 def host_records(agents: list[vr.Agent]) -> dict[str, dict | None]:
@@ -712,9 +719,139 @@ def show_message(curses, screen, painter: Painter, title: str, text: str) -> int
             return 0
 
 
+# ── snapshot: a view as text ────────────────────────────────────────
+
+# How long a snapshot waits for its fetches. fleet.py bounds each source;
+# this bounds the whole, and a section still being read when it passes is
+# printed as the pane draws one: `…`, and `reading <section>` in the
+# status line.
+SNAPSHOT_WAIT_S = 120.0
+# The width when stdout is no terminal (an agent's shell): every column the
+# board has, so nothing is cut that the owner's wide pane would show.
+SNAPSHOT_WIDTH = 200
+SNAPSHOT_USAGE = ("usage: snapshot board | agent LOGIN | compare [--metric 1-6] | plan | prs  "
+                  "[--width N]")
+
+
+class SnapshotError(Exception):
+    """The data a snapshot needs could not be read: one line, exit 1."""
+
+
+def collect(view: View, store: Store, results: "queue.Queue[Result]", wait_s: float,
+            clock: Callable[[], float] = time.monotonic) -> list[str]:
+    """Fetch each of the view's sections once and put what comes back in
+    the store, as the pane does at open. The whys of the sections whose
+    fetch failed whole, in the order they came."""
+    view.tick(focused=None)       # at open: every section once, whatever the focus
+    failures: list[str] = []
+    deadline = clock() + wait_s
+    while view.refresher.running:
+        left = deadline - clock()
+        if left <= 0:
+            break
+        try:
+            r = results.get(timeout=left)
+        except queue.Empty:
+            break
+        store.put(r.section, r.records)
+        for section, records in r.extra.items():
+            store.put(section, records)
+        store.fetched = store.fetched or not r.why
+        view.take(r)
+        if r.why:
+            failures.append(f"{r.section}: {r.why}")
+    return failures
+
+
+def snapshot_lines(fleet, screen: str, login: str | None, width: int, metric: int = 0,
+                   ascii_only: bool = False, wait_s: float = SNAPSHOT_WAIT_S) -> list[vr.Line]:
+    """One screen as the pane draws it, read afresh, every row shown.
+    SnapshotError when the registry cannot be read, or every section it
+    fetched failed: there is nothing of the fleet to print."""
+    try:
+        placements = fleet.load_placements(fleet.roots.engine_root())
+    except Exception as e:  # noqa: BLE001 — said in one line, never a traceback
+        raise SnapshotError(f"the hosts registry could not be read: {e}") from e
+    if screen == "agent" and login not in placements:
+        raise LookupError(f"{login} is not a placed agent (runtime/hosts/registry.json)")
+    store = Store()
+    results: "queue.Queue[Result]" = queue.Queue()
+    sections = vr.AGENT_SECTIONS if screen == "agent" else SCREEN_SECTIONS[screen]
+    view = View(fleet, sections, login if screen == "agent" else None, store, results)
+    view.snapshot = True
+    asked = set(view.refresher.ttl)
+    failures = collect(view, store, results, wait_s)
+    # Read is what answered without failing: a section still being read
+    # at the wait is no more read than one that failed.
+    pending = sorted(view.refresher.running)
+    if asked and len(failures) + len(pending) == len(asked):
+        parts = ([f"still reading after {wait_s:.0f} s: {', '.join(pending)}"] if pending else []) + failures[:1]
+        raise SnapshotError("no section could be read; " + "; ".join(parts))
+    if screen == "agent":
+        a = agents_of({login: placements[login]}, store, view.sections, view.whys, fleet)[0]
+        samples = vr.Samples()
+        samples.add(store.get("proc", login))
+        # The Enter view, as it opens over the board: its keys are the board's.
+        return vr.agent_lines(a, samples, status(view, [a], None, store), 0, width, None,
+                              vr.AGENT_KEYS, ascii_only)[0]
+    return screen_lines(Nav(screen, metric=metric), view, placements, store, None, width, None, ascii_only)
+
+
+def snapshot_text(lines: list[vr.Line]) -> str:
+    """The lines as plain text: every state the pane colours has its word
+    or mark beside it, so dropping the styles drops no meaning."""
+    return "".join(vr.line_text(line).rstrip() + "\n" for line in lines)
+
+
+def snapshot_main(args: list[str], env: dict[str, str] | None = None) -> int:
+    """`snapshot <view> …`: print one view as text and exit, for an agent to
+    read what the owner sees. Opens no pane and reads no herdr socket, so
+    it runs inside one too."""
+    import argparse  # noqa: PLC0415
+
+    env = dict(os.environ) if env is None else env
+    parser = argparse.ArgumentParser(
+        prog="snapshot", usage=SNAPSHOT_USAGE.removeprefix("usage: "),
+        description="Print one Fleet Deck view as text, read afresh, every row shown. "
+        "Exit 0 with the view, 1 when the fleet's data cannot be read, 2 on usage.")
+    parser.add_argument("view", choices=["board", "agent", "compare", "plan", "prs"])
+    parser.add_argument("login", nargs="?", help="agent only: the agent's login")
+    parser.add_argument("--metric", type=int, choices=range(1, len(rr.METRICS) + 1), default=1,
+                        metavar="1-6", help="compare only: " + rr.metric_list(-1).strip())
+    parser.add_argument("--width", type=int, help=f"columns (default: the terminal's, else {SNAPSHOT_WIDTH})")
+    a = parser.parse_args(args)
+    if (a.view == "agent") != (a.login is not None):
+        parser.error("a login goes with agent, and only with it")
+    if a.width is not None and a.width < 20:
+        parser.error("--width is at least 20")
+    width = a.width or (os.get_terminal_size(sys.stdout.fileno()).columns
+                        if sys.stdout.isatty() else SNAPSHOT_WIDTH)
+    root = fabric_root(env)
+    if root is None:
+        print("snapshot: agent-fabric not found: set AGENT_FABRIC_ROOT, or put fabric-ctl on PATH", file=sys.stderr)
+        return 1
+    try:
+        fleet = import_fleet(root)
+    except Exception as e:  # noqa: BLE001 — a fleet.py that fails to load is one line, never a traceback
+        print(f"snapshot: agent-fabric's fleet.py could not be loaded: {vr.clean(f'{type(e).__name__}: {e}')}",
+              file=sys.stderr)
+        return 1
+    try:
+        lines = snapshot_lines(fleet, a.view, a.login, width, a.metric - 1,
+                               ascii_only="utf" not in (sys.stdout.encoding or "").lower())
+    except LookupError as e:
+        print(f"snapshot: {e}", file=sys.stderr)
+        return 2
+    except SnapshotError as e:
+        print(f"snapshot: {vr.clean(str(e))}", file=sys.stderr)
+        return 1
+    sys.stdout.write(snapshot_text(lines))
+    return 0
+
+
 # ── the commands ────────────────────────────────────────────────────
 
-USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | open board|agent|prs|stop"
+USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | snapshot VIEW … | open board|agent|prs|stop"
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:
@@ -751,6 +888,8 @@ def main(argv: list[str] | None = None) -> int:
         print(USAGE, file=sys.stderr if not args else sys.stdout)
         return 0 if args else 2
     mode, rest = args[0], args[1:]
+    if mode == "snapshot":
+        return snapshot_main(rest)
     if mode == "open":
         if rest not in (["board"], ["agent"], ["prs"], ["stop"]):
             print(USAGE, file=sys.stderr)

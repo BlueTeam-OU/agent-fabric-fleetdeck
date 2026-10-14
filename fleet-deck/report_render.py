@@ -88,7 +88,7 @@ def metric_value(a: Agent, m: Metric) -> tuple[float | None, str, str]:
     return v, m.show(v), NORMAL
 
 
-def compare_lines(agents: list[Agent], metric: int, st: Status, scroll: int, width: int, height: int,
+def compare_lines(agents: list[Agent], metric: int, st: Status, scroll: int, width: int, height: int | None,
                   ascii_only: bool = False) -> tuple[list[Line], int]:
     """One bar per agent for one metric, longest first, scaled to the
     largest. Operational, not a score: the label says so where the metric
@@ -163,8 +163,9 @@ def section_problems(agents: list[Agent], section: str, now: datetime.datetime) 
 
 
 def framed(top: list[Line], body: list[Line], footer: list[Line], scroll: int, width: int,
-           height: int) -> tuple[list[Line], int]:
-    room = max(1, height - len(top) - len(footer))
+           height: int | None) -> tuple[list[Line], int]:
+    """A height of None is as tall as the body: a snapshot."""
+    room = max(1, len(body) if height is None else height - len(top) - len(footer))
     scroll = max(0, min(scroll, len(body) - room))
     shown = body[scroll: scroll + room]
     shown += [[("", NORMAL)]] * (room - len(shown))
@@ -204,7 +205,7 @@ def text_of(value, default: str = NONE) -> str:
     return value if isinstance(value, str) and value else default
 
 
-def plan_lines(record: dict | None, st: Status, scroll: int, width: int, height: int,
+def plan_lines(record: dict | None, st: Status, scroll: int, width: int, height: int | None,
                ascii_only: bool = False, keys: str = PLAN_KEYS) -> tuple[list[Line], int]:
     top = [status_line("Plans", st, width)]
     footer = [[(fit(keys, width), DIM)]]
@@ -438,7 +439,7 @@ def pr_caveat(data: dict) -> str:
 
 
 def prs_lines(agents: list[Agent], unplaced: dict | None, st: Status, scroll: int, width: int,
-              height: int, keys: str = PRS_KEYS) -> tuple[list[Line], int]:
+              height: int | None, keys: str = PRS_KEYS) -> tuple[list[Line], int]:
     """In-flight pull requests by owner, each with the gate's verdict. An
     agent with none is left out; one whose PRs were not read is said."""
     body: list[Line] = []

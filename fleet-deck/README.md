@@ -39,6 +39,7 @@ fleet-deck restart   # stops the controller and starts a new one
 fleet-deck start     # starts what is missing, without attaching
 fleet-deck start --auto   # the same, then every agent, tier by tier, no Enter typed
 fleet-deck stop --all     # every agent's session, the controller, the server, the control agents
+fleet-deck snapshot board # a view printed as text, for an agent to read (see Views)
 ```
 
 **The ssh-agent comes first.** Every pane enters its account with `ssh`,
@@ -493,8 +494,10 @@ account tabs as before.
   how old it is, and fetches. While the pane has focus (terminal focus
   reporting, DECSET 1004), it fetches each section again once that section's
   time to live has passed: 5 s for proc and states, up to 600 s for tokens
-  (fleet.py's cost classes). When focus leaves, the status line says
-  `paused` and nothing new is fetched. A fetch already running finishes,
+  (fleet.py's cost classes). When focus leaves, nothing new is fetched,
+  and the status line leads with `PAUSED` and the oldest value's age,
+  then the title, then how to go live: a board 13 hours old once read
+  as the fleet now. A fetch already running finishes,
   since fleet.py bounds every source.
 - **Focus starts unknown.** FleetDeck reports focus changes only. So a view
   counts as focused from the first focus-in or key, and until then it
@@ -507,6 +510,34 @@ account tabs as before.
   (board, compare), the owner's line (PRs) or the section (agent view)
   says whose, since when and why. The selected row is marked `>`, and every state is a word, never
   only a colour. `NO_COLOR` turns colour off.
+- **Snapshot: how an agent reads the deck.** An agent never reads the
+  owner's pane: it may be paused, it shows only what it scrolled to, and
+  what is behind a key needs typing into it. Instead:
+
+  ```sh
+  fleet-deck snapshot board              # the fleet tab
+  fleet-deck snapshot agent <login>      # Enter on that agent's row
+  fleet-deck snapshot compare [--metric 1-6]
+  fleet-deck snapshot plan
+  fleet-deck snapshot prs
+  ```
+
+  Each fetches the view's sections once, as a pane does at open (each
+  section's own TTL, fleet.py's cache within it), draws them with the
+  pane's own renderer at `--width N` (default the terminal's, else 200),
+  every row and the whole body, no row selected, and prints the text.
+  The status line says `snapshot` where a pane says live or paused,
+  beside the oldest value's age. A section still being read after 120 s
+  is drawn `…` and named `reading` there. `fabric-view snapshot …` is
+  the same command.
+  - Exit 0 with the view on stdout. A section that failed alone is drawn
+    as the pane draws it: `?`, and its why in the footer.
+  - Exit 1, one line on stderr: the hosts registry or fleet.py cannot be
+    read, or no section could.
+  - Exit 2: usage, or a login that is no placed agent.
+
+  It opens no pane and calls no FleetDeck socket, so it runs inside a
+  pane too. What it reads is what the login running it may read (next).
 - **Who can read what.** fleet.py's `jobs`, `usage`, `host`, `tokens` and
   `accounts` sections answer only a host operator. The views are meant for
   the operator's login; on any other they show those sections as `?`,
@@ -529,8 +560,9 @@ account tabs as before.
 `just fleet-deck-test` runs the state machine (`test_deck_tabs`) and the
 deck against a fake FleetDeck, a fake `/proc` and a real Unix socket
 (`test_fabric_deck`), without a server. It also runs both views' layout on
-fixture records (`test_view_render`, `test_report_render`), and the views' input,
-navigation, refresh rule and data location (`test_fabric_view`).
+fixture records (`test_view_render`, `test_report_render`), the views' input,
+navigation, refresh rule and data location (`test_fabric_view`), and each
+view's snapshot through a fake fleet.py (`test_snapshot`).
 
 The deck was also run against a real, isolated FleetDeck server, with
 stand-ins for `moveto` and `fabric-ctl`. The `moveto` stand-in has the
