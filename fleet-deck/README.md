@@ -340,6 +340,14 @@ blocked`) sounds as any agent that needs attention does.
     one of those ends. Otherwise the pane is a sudo pane with no harness:
     `running elsewhere` while the account has a live session, idle when
     it has none.
+  - A session whose ssh connected before enter-ssh recorded `ssh_client`
+    carries no end. When no session of the account's record, live or
+    over, carries one, exactly one is live, and only one tab bears the
+    account's login, that session is taken as the pane's. A session that
+    was never entered over ssh (a sudo or local start) then also shows as
+    running there; an Enter there is still refused by `fabric-resume`.
+    Any `ssh_client` in the record, a second live session or a second tab
+    of the login leaves the pane to the match above.
   - When the deck reads no end (a ProxyJump or ProxyCommand ssh talks
     through a pipe, a ControlMaster client through a unix socket, and an
     ssh still connecting has no established socket), nothing links the
