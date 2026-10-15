@@ -399,22 +399,27 @@ def tell_focus(herdr, pane: str, login: str) -> None:
     read and the send, and herdr's report of that move would arrive before
     this one. Sent only while the view holds the pane's foreground: three
     bytes for it, never for a shell."""
+    def tell(report: str) -> bool:
+        if not any(is_agent_view(p.get("argv") or [], login)
+                   for p in herdr.process_info(pane).get("foreground_processes") or []):
+            return False
+        herdr.call("pane", "send-text", pane, report)
+        return True
+
     told = None
     for _ in range(FOCUS_READS):
         now = any(p.get("pane_id") == pane and p.get("focused") is True
                   for p in herdr.call("pane", "list").get("panes", []))
         if now == told:
             return
-        if not any(is_agent_view(p.get("argv") or [], login)
-                   for p in herdr.process_info(pane).get("foreground_processes") or []):
+        if not tell(FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT):
             return
-        herdr.call("pane", "send-text", pane, FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT)
         told = now
     if told:
         # No read agreed with the last report, and it said focused: left
         # unverified, it could keep a hidden view fetching. Unfocused
         # instead: a person who is there gets it live at a key.
-        herdr.call("pane", "send-text", pane, FOCUS_OUT_REPORT)
+        tell(FOCUS_OUT_REPORT)
 
 
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
@@ -462,11 +467,22 @@ def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
     return next((e[len(prefix):].decode("ascii", "replace") for e in entries if e.startswith(prefix)), None)
 
 
+# The programs fabric-view runs as on its way to the view: env(1), the
+# launcher's bash, then the Python it execs (fabric-python or a python3).
+_VIEW_STARTERS = frozenset({"env", "bash", "fabric-python"})
+
+
 def _is_fabric_view(argv: list[str]) -> bool:
     """fabric-view at any step of its start: env(1) or the bash launcher,
     each naming the `fabric-view` script, then the Python the launcher
     execs, whose code imports fabric_view. The arguments stay last
-    throughout, and the pid is the same one from env to Python."""
+    throughout, and the pid is the same one from env to Python. Another
+    program given the script (an editor, a pager) is not it."""
+    if not argv:
+        return False
+    program = os.path.basename(argv[0])
+    if program not in _VIEW_STARTERS and not program.startswith("python"):
+        return False
     return any(os.path.basename(arg) == "fabric-view" or "from fabric_view import main" in arg
                for arg in argv[1:])
 
@@ -488,14 +504,22 @@ def same_dir(a: str | None, b: str) -> bool:
 
 
 def at_bare_shell(info: dict) -> bool:
-    """A shell at its prompt: its own foreground group, and a shell's argv.
-    A plugin pane's program also leads its own group, so the group alone
-    would take a running view for a shell."""
+    """A shell at its prompt: its own foreground group, and a shell's argv
+    with no command: options only (`-l`, `-i`), never `-c` or a script. A
+    plugin pane's program also leads its own group, and a shell running a
+    script (`bash -c …`, `bash x.sh`) is a program reading its own input:
+    whatever is typed there goes to it, not to a prompt."""
     shell, group = info.get("shell_pid"), info.get("foreground_process_group_id")
     if shell is None or shell != group:
         return False
     fg = info.get("foreground_processes") or []
-    return bool(fg) and all(os.path.basename((p.get("argv") or ["?"])[0]).lstrip("-") in SHELLS for p in fg)
+    return bool(fg) and all(_interactive_shell(p.get("argv") or []) for p in fg)
+
+
+def _interactive_shell(argv: list[str]) -> bool:
+    if not argv or os.path.basename(argv[0]).lstrip("-") not in SHELLS:
+        return False
+    return all(arg.startswith("-") and "c" not in arg.lstrip("-") for arg in argv[1:])
 
 
 def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:

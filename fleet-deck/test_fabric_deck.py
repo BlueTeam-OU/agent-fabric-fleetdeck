@@ -1066,6 +1066,60 @@ class Restore(unittest.TestCase):
         self.assertEqual(sent[-1], "\x1b[O")
         self.assertEqual(len(sent), fabric_deck.FOCUS_READS + 1)
 
+    def test_the_last_unfocusing_report_too_reaches_only_the_view(self):
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", in_view("ui"))])
+        herdr.panes["p3"]["focused"] = True
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:2] == ("pane", "send-text"):
+                herdr.panes["p3"]["focused"] = not herdr.panes["p3"]["focused"]
+                if len([c for c in herdr.calls if c[:2] == args[:2]]) == fabric_deck.FOCUS_READS:
+                    herdr.proc["p3"] = BARE   # the view ends just then
+            return out
+
+        herdr.call = call
+        fabric_deck.tell_focus(herdr, "p3", "ui")
+        sent = [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
+        self.assertEqual(len(sent), fabric_deck.FOCUS_READS, "nothing more into the shell")
+
+    def test_a_shell_running_a_script_is_no_prompt_to_type_at(self):
+        from fabric_deck import at_bare_shell
+
+        def shell(*argv):
+            return {"shell_pid": 10, "foreground_process_group_id": 10,
+                    "foreground_processes": [{"pid": 10, "argv": list(argv)}]}
+
+        for argv in (["bash"], ["/bin/bash"], ["-bash"], ["bash", "-l"], ["zsh", "-i"]):
+            self.assertTrue(at_bare_shell(shell(*argv)), argv)
+        for argv in (["bash", "-c", "read -r answer"], ["bash", "-lc", "read"], ["bash", "x.sh"],
+                     ["sh", "/usr/bin/script", "arg"], ["vim"]):
+            self.assertFalse(at_bare_shell(shell(*argv)), argv)
+
+    def test_an_agent_pane_running_a_script_is_never_typed_into(self):
+        script = {"shell_pid": 10, "foreground_process_group_id": 10,
+                  "foreground_processes": [{"pid": 10, "argv": ["bash", "-c", "read -r answer"]}]}
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", script)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        for at in range(1, 9, 2):
+            h.deck.follow(at)
+        self.assertEqual(herdr.runs("p3"), [])
+
+    def test_only_fabric_views_own_steps_are_taken_for_it(self):
+        import fabric_deck
+        script = "/x/fleet-deck/fabric-view"
+        for argv in (["env", "FABRIC_VIEW_START=m", script, "agent"], ["bash", script, "agent"],
+                     ["/usr/local/bin/fabric-python", "-B", "-c", "from fabric_view import main", "/x", "agent"]):
+            self.assertTrue(fabric_deck.is_overlay_view(argv), argv)
+        for argv in (["vim", script, "agent"], ["less", script, "agent"]):
+            self.assertFalse(fabric_deck.is_overlay_view(argv), argv)
+
     def test_no_report_reaches_a_pane_the_view_has_left(self):
         import fabric_deck
         herdr = FakeHerdr()

@@ -281,6 +281,13 @@ class Toggle(unittest.TestCase):
             fv.open_overlay = real
         self.assertEqual(opened, [], "said, and nothing opened beside it")
 
+    def test_a_script_in_the_agent_pane_is_never_typed_into(self):
+        script = {"shell_pid": 10, "foreground_process_group_id": 10,
+                  "foreground_processes": [{"pid": 10, "argv": ["bash", "-c", "read -r answer"]}]}
+        herdr = FakeHerdr(TAB_PANES, {"a": script})
+        fv.toggle(context(focused="h"), herdr, sleep=lambda _: None)
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")], "shown, nothing typed")
+
     def test_a_label_alone_never_closes_a_pane(self):
         # Another plugin's pane, or anything, labelled "this agent" by hand:
         # the close would end what runs there.
