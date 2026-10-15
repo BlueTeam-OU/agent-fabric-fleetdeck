@@ -471,6 +471,25 @@ class FleetDeckTest(unittest.TestCase):
         self.assertEqual(activate.call_args.args[1],
                          [(fleet_deck.boot.COORDINATOR, ["coord"]), ("C-Level", ["cto"])])
 
+    def test_stop_all_ends_a_coordinator_in_c_level_last(self):
+        listed = "coord fabric-coordinator agent-fabric\ncto architect-cto agent-fabric\nops devex-tooling x\n"
+        tab = lambda ws: mock.Mock(workspace_id=ws, panes={fleet_deck.HARNESS: "p"})
+        herdr = mock.Mock(workspaces=mock.Mock(return_value=[{"workspace_id": "w1", "label": "C-Level"},
+                                                             {"workspace_id": "w2", "label": "Infrastructure"}]),
+                          account_tabs=mock.Mock(return_value={"coord": tab("w1"), "cto": tab("w1"),
+                                                               "ops": tab("w2")}))
+        group = {"coord": 1, "cto": 2, "ops": 3}
+        ended = []
+        with mock.patch.object(fleet_deck, "moveto_list", return_value=listed), \
+             mock.patch.object(fleet_deck, "Herdr", return_value=herdr), \
+             mock.patch.object(fleet_deck.DeckFleet, "moveto",
+                               lambda self, login: (object(), {"foreground_process_group_id": group[login]})), \
+             mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
+             mock.patch.object(fleet_deck.boot, "hang_up",
+                               side_effect=lambda g: ended.append({v: k for k, v in group.items()}[g]) or True):
+            fleet_deck.stop_sessions(self.say)
+        self.assertEqual(ended, ["ops", "cto", "coord"], "the reverse of the boot order")
+
     def test_a_pane_is_not_waiting_while_its_session_state_is_unknown(self):
         with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
             fleet = fleet_deck.DeckFleet(self.say)
