@@ -177,6 +177,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # move_tab_next = ""       # optional, e.g. "alt+shift+right" moves the tab toward the back
 # switch_tab = "prefix+1..9"
 # switch_workspace = ""   # optional indexed binding, e.g. "prefix+shift+1..9"
+# select_pane_tab = "prefix+f1..f9"  # show pane N of the second tab row (ui.pane_tabs)
 # close_tab = "prefix+shift+x"
 # rename_pane = "prefix+shift+p"
 # edit_scrollback = "prefix+e"

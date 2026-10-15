@@ -97,13 +97,14 @@ impl BindingConfig {
             }
             match parse_binding_string(raw) {
                 Some(ParsedBinding::Single(binding)) => {
-                    if matches!(binding.trigger.combo().0, KeyCode::Char('1'..='9')) {
+                    if index_key(binding.trigger.combo().0).is_some() {
                         labels.push(binding.label);
                     }
                 }
                 Some(ParsedBinding::Range(range)) => {
                     labels.extend(range.into_iter().filter_map(|binding| {
-                        matches!(binding.trigger.combo().0, KeyCode::Char('1'..='9'))
+                        index_key(binding.trigger.combo().0)
+                            .is_some()
                             .then_some(binding.label)
                     }));
                 }
@@ -318,7 +319,8 @@ impl IndexedKeybind {
         let combo = self.trigger.combo();
         let (expected_code, _) = normalize_key_combo(combo);
         let KeyCode::Char(key_number @ '1'..='9') = expected_code else {
-            return None;
+            // F1-F9 have no shifted-symbol form to accept.
+            return index_key(expected_code).filter(|_| terminal_key_matches_combo(key, combo));
         };
         let legacy_shifted_number = matches!(key.code, KeyCode::Char(c)
             if shifted_number_symbol(c) == Some(key_number)
@@ -383,6 +385,7 @@ pub struct Keybinds {
     pub move_tab_next: ActionKeybinds,
     pub switch_tab: Vec<IndexedKeybind>,
     pub switch_workspace: Vec<IndexedKeybind>,
+    pub select_pane_tab: Vec<IndexedKeybind>,
     pub close_tab: ActionKeybinds,
     pub rename_pane: ActionKeybinds,
     pub edit_scrollback: ActionKeybinds,
@@ -570,6 +573,7 @@ impl Config {
             move_tab_next: empty_action!(),
             switch_tab: Vec::new(),
             switch_workspace: Vec::new(),
+            select_pane_tab: Vec::new(),
             close_tab: empty_action!(),
             rename_pane: empty_action!(),
             edit_scrollback: empty_action!(),
@@ -718,6 +722,8 @@ impl Config {
                 &self.keys.indexed.workspaces,
                 source
             );
+            // No legacy [keys.indexed] form exists for it.
+            apply_indexed!(keybinds.select_pane_tab, select_pane_tab, "", source);
             apply_action!(keybinds.close_tab, close_tab, source);
             apply_action!(keybinds.rename_pane, rename_pane, source);
             apply_action!(keybinds.edit_scrollback, edit_scrollback, source);
@@ -986,9 +992,9 @@ fn push_indexed_binding(
     source: BindingSource,
     bindings: &mut Vec<IndexedKeybind>,
 ) {
-    if !matches!(binding.trigger.combo().0, KeyCode::Char('1'..='9')) {
+    if index_key(binding.trigger.combo().0).is_none() {
         let diag = format!(
-            "indexed keybinding must use 1..9: {field} = {:?}; disabling binding",
+            "indexed keybinding must use 1..9 or f1..f9: {field} = {:?}; disabling binding",
             binding.label
         );
         warn!(message = %diag, "config diagnostic");
@@ -1139,13 +1145,14 @@ fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
         (false, trimmed)
     };
 
-    if let Some(range_modifiers) = parse_range_modifiers(body) {
-        let bindings = (1..=9)
+    if let Some((range_modifiers, range)) = parse_range_modifiers(body) {
+        let bindings = (1..=9u8)
             .map(|idx| {
-                let combo = (
-                    KeyCode::Char(char::from_digit(idx, 10).unwrap_or('1')),
-                    range_modifiers,
-                );
+                let code = match range {
+                    IndexRange::Digits => KeyCode::Char(char::from(b'0' + idx)),
+                    IndexRange::FunctionKeys => KeyCode::F(idx),
+                };
+                let combo = (code, range_modifiers);
                 let key_label = format_key_combo(combo);
                 ResolvedBinding {
                     trigger: if trigger_prefix {
@@ -1249,21 +1256,44 @@ fn parse_modifier_token(token: &str) -> Option<KeyModifiers> {
     }
 }
 
-fn parse_range_modifiers(s: &str) -> Option<KeyModifiers> {
+/// The keys an indexed action (switch_tab, select_pane_tab, ...) takes its
+/// index from: 1-9, or F1-F9 for a binding that must leave the digits to
+/// another indexed action under the same prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexRange {
+    Digits,
+    FunctionKeys,
+}
+
+/// The 0-based index a key gives an indexed action, or None.
+fn index_key(code: KeyCode) -> Option<usize> {
+    match code {
+        KeyCode::Char(c @ '1'..='9') => Some((c as usize) - ('1' as usize)),
+        KeyCode::F(n @ 1..=9) => Some(usize::from(n) - 1),
+        _ => None,
+    }
+}
+
+fn parse_range_modifiers(s: &str) -> Option<(KeyModifiers, IndexRange)> {
     let mut modifiers = KeyModifiers::empty();
-    let mut saw_range = false;
+    let mut range = None;
     for part in s.split('+') {
         let trimmed = part.trim();
-        if trimmed == "1..9" {
-            if saw_range {
+        let this = match trimmed.to_ascii_lowercase().as_str() {
+            "1..9" => Some(IndexRange::Digits),
+            "f1..f9" => Some(IndexRange::FunctionKeys),
+            _ => None,
+        };
+        if let Some(this) = this {
+            if range.is_some() {
                 return None;
             }
-            saw_range = true;
+            range = Some(this);
         } else {
             modifiers |= parse_modifier_token(trimmed)?;
         }
     }
-    saw_range.then_some(modifiers)
+    range.map(|range| (modifiers, range))
 }
 
 fn parse_modifier_combo(s: &str) -> Option<KeyModifiers> {
@@ -2335,6 +2365,41 @@ switch_workspace = "prefix+shift+1..9"
             BindingTrigger::Prefix((KeyCode::Char('1'), KeyModifiers::SHIFT))
         );
         assert_eq!(kb.switch_workspace[0].label, "prefix+shift+1");
+    }
+
+    #[test]
+    fn function_key_ranges_index_like_digits() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+select_pane_tab = "prefix+F1..F9"
+"#,
+        )
+        .unwrap();
+        let kb = config.keybinds();
+        assert_eq!(kb.select_pane_tab.len(), 9);
+        assert_eq!(
+            kb.select_pane_tab[2].trigger,
+            BindingTrigger::Prefix((KeyCode::F(3), KeyModifiers::empty()))
+        );
+        assert_eq!(kb.select_pane_tab[2].label, "prefix+f3");
+        let f3 = TerminalKey::new(KeyCode::F(3), KeyModifiers::empty());
+        assert_eq!(kb.select_pane_tab[2].matched_index(&f3), Some(2));
+        assert_eq!(kb.select_pane_tab[3].matched_index(&f3), None);
+        let shifted = TerminalKey::new(KeyCode::F(3), KeyModifiers::SHIFT);
+        assert_eq!(kb.select_pane_tab[2].matched_index(&shifted), None);
+    }
+
+    #[test]
+    fn a_function_key_past_f9_is_no_index() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+select_pane_tab = "prefix+f10"
+"#,
+        )
+        .unwrap();
+        assert!(config.keybinds().select_pane_tab.is_empty());
     }
 
     #[test]

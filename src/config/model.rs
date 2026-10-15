@@ -403,6 +403,9 @@ pub struct KeysConfig {
     pub switch_tab: BindingConfig,
     /// Switch to workspace 1-9 from prefix mode. Unset by default.
     pub switch_workspace: BindingConfig,
+    /// Show pane 1-9 of the second tab row (`ui.pane_tabs`).
+    /// Default: "prefix+f1..f9" (F1 harness, F2 shell, F3 status, F4 agent).
+    pub select_pane_tab: BindingConfig,
     /// Close the active tab. Default: "prefix+shift+x".
     pub close_tab: BindingConfig,
     /// Rename the focused pane. Default: "prefix+shift+p".
@@ -541,6 +544,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     switch_workspace: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    select_pane_tab: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     close_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rename_pane: Option<BindingConfig>,
@@ -677,6 +682,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(move_tab_next);
         apply_field!(switch_tab);
         apply_field!(switch_workspace);
+        apply_field!(select_pane_tab);
         apply_field!(close_tab);
         apply_field!(rename_pane);
         apply_field!(edit_scrollback);
@@ -782,6 +788,7 @@ impl KeysConfig {
         copy_effective_action_field!(move_tab_next, keybinds.move_tab_next);
         copy_effective_indexed_field!(switch_tab, keybinds.switch_tab);
         copy_effective_indexed_field!(switch_workspace, keybinds.switch_workspace);
+        copy_effective_indexed_field!(select_pane_tab, keybinds.select_pane_tab);
         copy_effective_action_field!(close_tab, keybinds.close_tab);
         copy_effective_action_field!(rename_pane, keybinds.rename_pane);
         copy_effective_action_field!(edit_scrollback, keybinds.edit_scrollback);
@@ -1201,6 +1208,8 @@ impl Default for KeysConfig {
             move_tab_next: BindingConfig::empty(),
             switch_tab: BindingConfig::one("prefix+1..9"),
             switch_workspace: BindingConfig::empty(),
+            // The owner's chord (2026-10-15): prefix+1..9 stays switch_tab.
+            select_pane_tab: BindingConfig::one("prefix+f1..f9"),
             close_tab: BindingConfig::one("prefix+shift+x"),
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),

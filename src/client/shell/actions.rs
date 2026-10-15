@@ -963,6 +963,10 @@ impl ClientShellState {
                 self.reveal_workspace(&workspace_id);
                 Some(Method::WorkspaceFocus(WorkspaceTarget { workspace_id }))
             }
+            KeybindAction::SelectPaneTab(index) => {
+                let row = super::pane_tabs::pane_tab_row(snapshot, &self.config.pane_tabs)?;
+                Some(super::pane_tabs::pick_pane_tab(row.get(index)?.pane_id))
+            }
             KeybindAction::SwitchTab(index) => {
                 let tabs = snapshot
                     .tabs
