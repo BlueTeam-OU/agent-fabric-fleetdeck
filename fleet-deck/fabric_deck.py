@@ -1478,7 +1478,12 @@ class Deck:
             self._say(f"hear:{reason}", f"agent screens waiting to hear their focus: {reason}")
             panes = []
         for (login, pane), (mark, since) in list(self.unheard.items()):
-            if view_ready(panes, pane, login, mark):
+            # Only a focus-in is told: a view starts unfocused already, and the
+            # pane list's focus is the default target's, which another client
+            # may have moved while this view's own viewer stays on it. Waiting
+            # while it reads unfocused, a later focus-in still reaches it.
+            focused = any(p.get("pane_id") == pane and p.get("focused") is True for p in panes)
+            if focused and view_ready(panes, pane, login, mark):
                 try:
                     with view_lock(self.lock_dir):
                         tell_focus(self.herdr, pane, login)

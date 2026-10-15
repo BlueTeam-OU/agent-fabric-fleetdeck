@@ -9,7 +9,7 @@ under the tab names, `harness · shell · status · agent`, marks the one
 shown, and a click or `ctrl+6` then F1-F4 shows another; the others keep
 running unseen. The harness is shown after every deck restore. The row is
 FleetDeck's (`ui.pane_tabs`, `keys.select_pane_tab`), and stays in a narrow
-window, under its header. A tab whose panes do not carry exactly those four
+window, under its header, its cells shortened to the names, then the keys. A tab whose panes do not carry exactly those four
 labels shows no second row, and the deck leaves all its panes in sight.
 
 | pane | runs | for |

@@ -1146,6 +1146,34 @@ class Restore(unittest.TestCase):
         h.deck.follow(PANE_MAP_REFRESH_S + 2)
         self.assertNotIn(("ui", "p3"), h.deck.unheard)
 
+    def test_a_ready_view_read_unfocused_is_told_nothing_and_still_waits(self):
+        # Another client moved the server's default target away while this
+        # view's own viewer stays on it: no focus-out is told from that.
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=False)
+        h.deck.follow(2)
+        sent = lambda: [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
+        self.assertEqual(sent(), [], "no focus-out from the default target's focus")
+        self.assertIn(("ui", "p3"), h.deck.unheard)
+        herdr.panes["p3"]["focused"] = True
+        h.deck.follow(3)
+        self.assertEqual(sent(), [("pane", "send-text", "p3", "\x1b[I")])
+
     def test_a_view_that_never_takes_its_focus_is_given_up_in_time(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
