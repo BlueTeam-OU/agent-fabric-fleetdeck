@@ -1040,6 +1040,53 @@ class Restore(unittest.TestCase):
         h.deck.follow(4 * PANE_MAP_REFRESH_S + 5)
         self.assertEqual(herdr.runs("p3"), [VIEW], "not typed again until seen running again")
 
+    def test_a_failing_look_while_a_screen_waits_to_hear_leaves_the_deck_running(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+        failing = {"on": False}
+
+        def call(*args):
+            if failing["on"] and args[:2] == ("pane", "list"):
+                raise RuntimeError("herdr pane list: exit 1: timed out")
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertIn(("ui", "p3"), h.deck.unheard)
+        failing["on"] = True
+        h.deck.follow(2)  # raises nothing
+        h.deck.follow(3)
+        self.assertEqual(sum("timed out" in line for line in h.logs), 1, "said once")
+        self.assertIn(("ui", "p3"), h.deck.unheard, "still waiting")
+        failing["on"] = False
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
+        h.deck.follow(4)
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
+                         [("pane", "send-text", "p3", "\x1b[I")])
+
+    def test_a_forgotten_account_gets_no_agent_screen_started_again(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        herdr.panes["p0"]["label"] = "mine"  # the person took the harness pane over
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 2)
+        self.assertNotIn("ui", h.deck.harness_pane, "forgotten")
+        herdr.proc["p3"] = BARE
+        for at in range(3, 7):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [], "nothing typed into a tab no longer followed")
+
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle
         # has already typed the view there.

@@ -1368,6 +1368,13 @@ class Deck:
         self.sent.pop(login, None)
         for key in [k for k in self.waiting if k[0] == login]:
             del self.waiting[key]
+        # Its agent screen is the deck's no more either: never started again
+        # in a pane the deck no longer follows.
+        agent = self.agent_pane.pop(login, None)
+        if agent is not None:
+            self.view_seen.discard(agent)
+        for key in [k for k in self.unheard if k[0] == login]:
+            del self.unheard[key]
 
     # ---------------------------------------------------------- observing
 
@@ -1446,16 +1453,35 @@ class Deck:
         """Tell each view started unfocused its focus once its title says it
         can hear: a focus moved onto it before then is dropped by herdr, and
         the view would wait for a key before its first fetch. One pane list a
-        pass, for every such view; given up after VIEW_HEARD_WAIT_S."""
+        pass, for every such view; given up after VIEW_HEARD_WAIT_S.
+
+        The focus told is the pane list's, the server's default target, as for
+        a view started focused (tell_focus): herdr answers no client's own
+        focus. So a last client that detaches while the view starts leaves it
+        told focus-in, fetching unseen until a client next leaves the pane; a
+        per-client answer would be a new server method."""
         if not self.unheard:
             return
-        panes = self.herdr.call("pane", "list").get("panes", [])
+        try:
+            panes = self.herdr.call("pane", "list").get("panes", [])
+        except Exception as error:  # looked at again next pass, within the bound
+            reason = printable(str(error))
+            self._say(f"hear:{reason}", f"agent screens waiting to hear their focus: {reason}")
+            self.mapped_at = None  # the map is read again first, as after any failed look
+            panes = []
         for (login, pane), (mark, since) in list(self.unheard.items()):
             if view_ready(panes, pane, login, mark):
-                with view_lock(self.lock_dir):
-                    tell_focus(self.herdr, pane, login)
-                del self.unheard[(login, pane)]
-            elif now - since >= VIEW_HEARD_WAIT_S:
+                try:
+                    with view_lock(self.lock_dir):
+                        tell_focus(self.herdr, pane, login)
+                except Exception as error:  # the pane closed, or herdr failed: tried again next pass
+                    reason = printable(str(error))
+                    self._say(f"{pane}:hear:{reason}", f"{login}: its agent screen in {pane} was not "
+                              f"told its focus: {reason}")
+                else:
+                    del self.unheard[(login, pane)]
+                    continue
+            if now - since >= VIEW_HEARD_WAIT_S:
                 # Left to wait for a key, never fetching while hidden.
                 del self.unheard[(login, pane)]
                 self._say(f"{pane}:unheard", f"{login}: its agent screen in {pane} did not report "
@@ -1473,9 +1499,9 @@ class Deck:
                 continue
             try:
                 info = self.herdr.process_info(pane)
-            except Exception:  # pane gone: the next restore maps the tab again
-                del self.agent_pane[login]
-                self.view_seen.discard(pane)
+            except Exception as error:  # looked at again at the next map read; a pane gone is _forget's
+                self._say(f"{pane}:look:{printable(str(error))}",
+                          f"{login}: its agent pane {pane} could not be looked at: {printable(str(error))}")
                 continue
             if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
                 self.view_seen.add(pane)
