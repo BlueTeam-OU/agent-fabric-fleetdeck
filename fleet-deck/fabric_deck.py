@@ -862,8 +862,8 @@ class Deck:
         # Everything the restore owes this account is recorded before the
         # first observation, so a herdr call failing below leaves it waiting
         # for its decision, never followed half-restored. The harness waits
-        # for the decision at its prompt, the shell and status panes to be
-        # started at theirs; decide_pending drops whichever turns out to run
+        # for the decision at its prompt, the shell, status and agent panes to
+        # be started at theirs; decide_pending drops whichever turns out to run
         # this account's moveto already.
         self.harness_pane[login] = harness
         self.pending[login] = now

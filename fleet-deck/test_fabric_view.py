@@ -114,6 +114,14 @@ class Toggle(unittest.TestCase):
         self.assertEqual(fv.toggle_step(roles, "a"), ("h", "--off"), "the same chord, back")
         self.assertEqual(fv.toggle_step(roles, "s"), ("a", "--on"), "from anywhere else in the tab")
 
+    def test_a_repeated_label_names_the_pane_the_deck_follows(self):
+        from fabric_deck import PaneInfo, read_tab
+        panes = [{"pane_id": "h", "tab_id": "t1", "label": "harness"},
+                 {"pane_id": "a1", "tab_id": "t1", "label": "agent"},
+                 {"pane_id": "a2", "tab_id": "t1", "label": "agent"}]
+        deck = read_tab("ui", "t1", "w", [PaneInfo(p["pane_id"], p["tab_id"], p["label"]) for p in panes])
+        self.assertEqual(fv.tab_roles(panes, "t1"), deck.panes)
+
     def test_a_tab_without_both_panes_is_none_of_the_toggles(self):
         self.assertIsNone(fv.toggle_step(fv.tab_roles(TAB_PANES, "t2"), "a2"))
         self.assertIsNone(fv.toggle_step(fv.tab_roles(TAB_PANES, None), "h"))
@@ -129,7 +137,9 @@ class Toggle(unittest.TestCase):
     def test_a_view_that_ended_is_started_again_before_it_is_shown(self):
         herdr = FakeHerdr(TAB_PANES, {"a": BARE})
         fv.toggle(context(focused="h"), herdr)
-        self.assertEqual(herdr.calls[1:], [("pane", "run", "a", fv.agent_view_command("ui")),
+        # The zoom focuses the pane before the view reports focus: it is told,
+        # or it would wait for a key before its first fetch.
+        self.assertEqual(herdr.calls[1:], [("pane", "run", "a", f"{fv.OPENED_FOCUSED}=1 {fv.agent_view_command('ui')}"),
                                            ("pane", "zoom", "a", "--on")])
 
     def test_a_label_that_is_no_plain_login_is_never_typed(self):

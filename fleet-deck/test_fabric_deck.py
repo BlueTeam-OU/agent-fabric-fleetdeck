@@ -890,8 +890,14 @@ class Restore(unittest.TestCase):
             self.assertEqual(herdr.runs("p3"), [VIEW])
 
     def test_the_view_is_typed_as_one_safe_word_per_argument(self):
-        self.assertEqual(VIEW, f"{BOARD_DIR}/fabric-view agent --agent ui --in-tab".replace(
-            f"{BOARD_DIR}/fabric-view", shlex.quote(f"{BOARD_DIR}/fabric-view")))
+        import fabric_deck
+        real = fabric_deck.BOARD_DIR
+        fabric_deck.BOARD_DIR = "/home/o p/fleet-deck"   # a checkout path with a space
+        try:
+            typed = agent_view_command("ui")
+        finally:
+            fabric_deck.BOARD_DIR = real
+        self.assertEqual(shlex.split(typed), ["/home/o p/fleet-deck/fabric-view", "agent", "--agent", "ui", "--in-tab"])
         self.assertTrue(is_agent_view(in_view("ui")["foreground_processes"][0]["argv"], "ui"))
         self.assertFalse(is_agent_view(in_view("ui")["foreground_processes"][0]["argv"], "u"))
         self.assertFalse(is_agent_view(["vim", "agent", "--agent", "ui", "--in-tab"], "ui"))

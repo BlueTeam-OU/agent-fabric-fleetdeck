@@ -883,13 +883,14 @@ def plugin_context(env: dict[str, str]) -> dict:
 
 
 def tab_roles(panes: list[dict], tab_id: str | None) -> dict[str, str]:
-    """The tab's panes by the role the deck labelled them with, the first
-    of each label, as the deck reads a tab."""
+    """The tab's panes by the role the deck labelled them with: the last of
+    each label, as read_tab takes it, so a label a person repeated names
+    the same pane to the toggle as to the deck."""
     roles: dict[str, str] = {}
     for pane in panes:
         label = pane.get("label")
         if tab_id is not None and pane.get("tab_id") == tab_id and isinstance(label, str):
-            roles.setdefault(label, pane.get("pane_id"))
+            roles[label] = pane.get("pane_id")
     return roles
 
 
@@ -930,8 +931,10 @@ def toggle(env: dict[str, str], herdr) -> int:
     if zoom == "--on" and isinstance(login, str) and SAFE_LOGIN.match(login) \
             and at_bare_shell(herdr.process_info(pane)):
         # The view ended (or never started): started again where the person
-        # is about to look, in the operator's own shell there.
-        herdr.call("pane", "run", pane, agent_view_command(login))
+        # is about to look, in the operator's own shell there. The zoom below
+        # focuses the pane before the view turns focus reporting on, so no
+        # focus-in reaches it: it is told, as `open` tells an overlay.
+        herdr.call("pane", "run", pane, f"{OPENED_FOCUSED}=1 {agent_view_command(login)}")
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 
