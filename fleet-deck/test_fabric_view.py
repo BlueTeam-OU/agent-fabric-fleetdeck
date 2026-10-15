@@ -8,7 +8,7 @@ import unittest
 
 import fabric_view as fv
 from deck_tabs import PANE_ROLES
-from fabric_deck import agent_view_command, view_title
+from fabric_deck import OVERLAY_TITLE, DeckError, agent_view_command, view_title
 
 
 class Input(unittest.TestCase):
@@ -103,6 +103,9 @@ BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
 VIEWING = {"shell_pid": 10, "foreground_process_group_id": 40, "foreground_processes": [{"pid": 40, "argv": [
     "fabric-python", "-B", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from fabric_view import main",
     "/x/fleet-deck", "agent", "--agent", "ui", "--in-tab"]}]}
+# The plugin's overlay, still in fabric-view's bash launcher.
+OVERLAY = {"shell_pid": 60, "foreground_process_group_id": 60, "foreground_processes": [
+    {"pid": 60, "argv": ["bash", "/x/fleet-deck/fabric-view", "agent"]}]}
 # Something else the operator runs in the agent pane.
 EDITING = {"shell_pid": 10, "foreground_process_group_id": 50,
            "foreground_processes": [{"pid": 50, "argv": ["vim", "notes"]}]}
@@ -246,7 +249,7 @@ class Toggle(unittest.TestCase):
             def call(self, *args):
                 if args[:3] == ("plugin", "pane", "close"):
                     self.calls.append(args)
-                    raise RuntimeError("plugin_pane_not_found")
+                    raise DeckError("herdr plugin pane close v: exit 1: plugin_pane_not_found")
                 return super().call(*args)
 
         herdr = Refusing([*TAB_PANES[:3], shell_view], {"v": {"foreground_processes": [{"pid": 61, "argv": argv}]}})
@@ -260,6 +263,45 @@ class Toggle(unittest.TestCase):
         finally:
             fv.open_overlay = real
         self.assertEqual(len(opened), 1)
+
+    def test_an_overlay_that_will_not_close_opens_no_second_one(self):
+        class Failing(FakeHerdr):
+            def call(self, *args):
+                if args[:3] == ("plugin", "pane", "close"):
+                    raise DeckError("herdr plugin pane close o: exit 1: server_unavailable")
+                return super().call(*args)
+
+        overlay = {"pane_id": "o", "tab_id": "t1", "label": OVERLAY_TITLE}
+        opened = []
+        real, fv.open_overlay = fv.open_overlay, lambda env: opened.append(env) or 0
+        try:
+            with self.assertRaises(DeckError):
+                fv.toggle(context(focused="h"), Failing([*TAB_PANES[:3], overlay], {"o": OVERLAY}))
+        finally:
+            fv.open_overlay = real
+        self.assertEqual(opened, [], "said, and nothing opened beside it")
+
+    def test_a_label_alone_never_closes_a_pane(self):
+        # Another plugin's pane, or anything, labelled "this agent" by hand:
+        # the close would end what runs there.
+        other = {"pane_id": "x", "tab_id": "t1", "label": OVERLAY_TITLE}
+        herdr = FakeHerdr([*TAB_PANES[:3], other], {"x": EDITING})
+        opened = []
+        real, fv.open_overlay = fv.open_overlay, lambda env: opened.append(env) or 0
+        try:
+            fv.toggle(context(focused="h"), herdr)
+        finally:
+            fv.open_overlay = real
+        self.assertEqual((acts(herdr), len(opened)), ([], 1))
+
+    def test_focus_waits_for_a_view_still_in_its_launcher(self):
+        launching = {"shell_pid": 10, "foreground_process_group_id": 40, "foreground_processes": [
+            {"pid": 40, "argv": ["bash", "/x/fleet-deck/fabric-view", "agent", "--agent", "ui", "--in-tab"]}]}
+        herdr = FakeHerdr([dict(p, terminal_title="bash") if p["pane_id"] == "a" else p for p in TAB_PANES],
+                          {"a": launching})
+        looks = []
+        fv.toggle(context(focused="h"), herdr, sleep=lambda _: looks.append(1))
+        self.assertEqual(len(looks), fv_polls(), "waited for it, not zoomed at once")
 
     def test_a_renamed_overlay_is_still_closed_by_the_chord(self):
         overlay_argv = VIEWING["foreground_processes"][0]["argv"][:5] + ["agent"]
@@ -353,7 +395,8 @@ class Toggle(unittest.TestCase):
         def open_overlay(env):
             clock.sleep(0.05)   # FleetDeck making the pane, while the other press waits
             opened.append(env)
-            herdr.panes = [*herdr.panes, {"pane_id": f"o{len(opened)}", "tab_id": "t1", "label": fv.OVERLAY_TITLE}]
+            herdr.panes = [*herdr.panes, {"pane_id": f"o{len(opened)}", "tab_id": "t1", "label": OVERLAY_TITLE}]
+            herdr.proc[f"o{len(opened)}"] = OVERLAY
             return 0
 
         real, fv.open_overlay = fv.open_overlay, open_overlay
@@ -366,7 +409,7 @@ class Toggle(unittest.TestCase):
         finally:
             fv.open_overlay = real
         self.assertEqual(len(opened), 1, "the second press found the first one's overlay")
-        self.assertFalse(any(p["label"] == fv.OVERLAY_TITLE for p in herdr.panes), "and closed it")
+        self.assertFalse(any(p["label"] == OVERLAY_TITLE for p in herdr.panes), "and closed it")
 
     def test_the_overlay_is_opened_and_waited_for_within_a_bound(self):
         import subprocess
@@ -383,8 +426,8 @@ class Toggle(unittest.TestCase):
     def test_a_press_that_finds_the_overlay_open_closes_it_whatever_it_was_told(self):
         # Two presses read at once both carry the harness as focused; the
         # second runs after the first opened the overlay, and closes it.
-        overlay = {"pane_id": "o", "tab_id": "t1", "label": fv.OVERLAY_TITLE}
-        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {})
+        overlay = {"pane_id": "o", "tab_id": "t1", "label": OVERLAY_TITLE}
+        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {"o": OVERLAY})
         self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
         self.assertEqual(herdr.calls[1:], [("plugin", "pane", "close", "o")])
 
@@ -398,8 +441,8 @@ class Toggle(unittest.TestCase):
 
 
     def test_the_same_chord_closes_the_overlay_it_opened(self):
-        overlay = {"pane_id": "o", "tab_id": "t1", "label": fv.OVERLAY_TITLE}
-        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {})
+        overlay = {"pane_id": "o", "tab_id": "t1", "label": OVERLAY_TITLE}
+        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {"o": OVERLAY})
         self.assertEqual(fv.toggle(context(focused="o"), herdr), 0)
         self.assertEqual(herdr.calls[1:], [("plugin", "pane", "close", "o")])
 
@@ -408,8 +451,8 @@ class Toggle(unittest.TestCase):
         import tomllib
         with open(os.path.join(os.path.dirname(os.path.abspath(fv.__file__)), "herdr-plugin.toml"), "rb") as f:
             panes = {p["id"]: p for p in tomllib.load(f)["panes"]}
-        self.assertEqual(panes["agent"]["title"], fv.OVERLAY_TITLE)
-        self.assertNotIn(fv.OVERLAY_TITLE, PANE_ROLES)
+        self.assertEqual(panes["agent"]["title"], OVERLAY_TITLE)
+        self.assertNotIn(OVERLAY_TITLE, PANE_ROLES)
 
     def test_in_tab_needs_its_login_and_toggle_takes_nothing(self):
         import contextlib, io

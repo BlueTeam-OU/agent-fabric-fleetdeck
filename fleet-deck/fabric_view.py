@@ -53,8 +53,8 @@ from deck_tabs import AGENT, HARNESS
 # OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
 # before the view can hear it.
 from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
-                         is_overlay_view, start_view, view_lock, view_mark, view_title, wait_ready,
-                         OVERLAY_TITLE)
+                         is_overlay_view, start_view, view_lock, view_mark, view_title,
+                         wait_ready, DeckError)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -917,8 +917,6 @@ def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] |
     return (harness, "--off") if focused == agent else (agent, "--on")
 
 
-
-
 # Where view_lock is taken, for a test only; never set on a host.
 LOCK_DIR_ENV = "FABRIC_DECK_LOCK_DIR"
 
@@ -945,19 +943,24 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
                        ctx.get("focused_pane_id"))
         step = toggle_step(tab_roles(panes, tab), focused)
         if step is None:
-            # Known by what runs in it, not by its label, which a person
-            # may change.
+            # Known by what runs in it, never by its label: a person may set
+            # "this agent" on any pane, and the close ends what runs there.
             overlays = [p.get("pane_id") for p in panes
-                        if tab is not None and p.get("tab_id") == tab and (
-                            p.get("label") == OVERLAY_TITLE or any(
-                                is_overlay_view(fp.get("argv") or [])
-                                for fp in herdr.process_info(p.get("pane_id")).get("foreground_processes") or []))]
+                        if tab is not None and p.get("tab_id") == tab and any(
+                            is_overlay_view(fp.get("argv") or [])
+                            for fp in herdr.process_info(p.get("pane_id")).get("foreground_processes") or [])]
             closed = []
             for overlay in overlays:
                 try:
                     herdr.call("plugin", "pane", "close", overlay)
                     closed.append(overlay)
-                except Exception as error:  # noqa: BLE001 — not a plugin pane: a person's view or label, skipped
+                except DeckError as error:
+                    # Only a pane herdr says is no plugin pane (a person's own
+                    # view, or a label set by hand) is passed over. Any other
+                    # failure is raised: opening another overlay beside one
+                    # that would not close is the stacking this refuses.
+                    if "plugin_pane_not_found" not in str(error):
+                        raise
                     print(f"fabric-view toggle: {overlay} is no overlay to close: {error}", file=sys.stderr)
             # Opened before the lock is let go, so the next press finds it.
             return 0 if closed else open_overlay(env)

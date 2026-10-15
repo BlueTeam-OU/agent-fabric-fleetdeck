@@ -1045,6 +1045,27 @@ class Restore(unittest.TestCase):
         fabric_deck.tell_focus(herdr, "p3", "ui")
         self.assertEqual([c[3] for c in herdr.calls if c[:2] == ("pane", "send-text")], ["\x1b[I", "\x1b[O"])
 
+    def test_focus_that_never_settles_is_left_unfocused(self):
+        # The person moves within every round trip: the last report is not
+        # verified, and a focused one could keep a hidden view fetching.
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", in_view("ui"))])
+        herdr.panes["p3"]["focused"] = True
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:2] == ("pane", "send-text"):
+                herdr.panes["p3"]["focused"] = not herdr.panes["p3"]["focused"]
+            return out
+
+        herdr.call = call
+        fabric_deck.tell_focus(herdr, "p3", "ui")
+        sent = [c[3] for c in herdr.calls if c[:2] == ("pane", "send-text")]
+        self.assertEqual(sent[-1], "\x1b[O")
+        self.assertEqual(len(sent), fabric_deck.FOCUS_READS + 1)
+
     def test_no_report_reaches_a_pane_the_view_has_left(self):
         import fabric_deck
         herdr = FakeHerdr()

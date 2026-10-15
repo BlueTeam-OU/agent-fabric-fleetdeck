@@ -386,8 +386,10 @@ def new_mark() -> str:
     return uuid.uuid4().hex[:12]
 
 
-# How many times the focus is read and told before it settles: a change
-# after the last read reaches the view as herdr's own report.
+# How many times the focus is read and told before it settles. A change after
+# a read that agrees with what was told reaches the view as herdr's own
+# report, after this one. Past the bound (the person moving again within
+# every round trip), the view is left unfocused (tell_focus).
 FOCUS_READS = 3
 
 
@@ -408,6 +410,11 @@ def tell_focus(herdr, pane: str, login: str) -> None:
             return
         herdr.call("pane", "send-text", pane, FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT)
         told = now
+    if told:
+        # No read agreed with the last report, and it said focused: left
+        # unverified, it could keep a hidden view fetching. Unfocused
+        # instead: a person who is there gets it live at a key.
+        herdr.call("pane", "send-text", pane, FOCUS_OUT_REPORT)
 
 
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
@@ -455,18 +462,25 @@ def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
     return next((e[len(prefix):].decode("ascii", "replace") for e in entries if e.startswith(prefix)), None)
 
 
+def _is_fabric_view(argv: list[str]) -> bool:
+    """fabric-view at any step of its start: env(1) or the bash launcher,
+    each naming the `fabric-view` script, then the Python the launcher
+    execs, whose code imports fabric_view. The arguments stay last
+    throughout, and the pid is the same one from env to Python."""
+    return any(os.path.basename(arg) == "fabric-view" or "from fabric_view import main" in arg
+               for arg in argv[1:])
+
+
 def is_overlay_view(argv: list[str]) -> bool:
-    """fabric-view's agent overlay (the plugin's `agent` pane), as its
-    launcher leaves it: the mode alone, last."""
-    return bool(argv) and argv[-1] == "agent" and any(
-        "from fabric_view import main" in arg for arg in argv[1:])
+    """fabric-view's agent overlay (the plugin's `agent` pane): the mode
+    alone, last."""
+    return bool(argv) and argv[-1] == "agent" and _is_fabric_view(argv)
 
 
 def is_agent_view(argv: list[str], login: str) -> bool:
-    """fabric-view's agent screen for this login, kept in its tab, as its
-    launcher leaves it: the mode and its arguments last."""
-    return argv[-4:] == ["agent", "--agent", login, "--in-tab"] and any(
-        "from fabric_view import main" in arg for arg in argv[1:])
+    """fabric-view's agent screen for this login, kept in its tab: the mode
+    and its arguments last."""
+    return argv[-4:] == ["agent", "--agent", login, "--in-tab"] and _is_fabric_view(argv)
 
 
 def same_dir(a: str | None, b: str) -> bool:
