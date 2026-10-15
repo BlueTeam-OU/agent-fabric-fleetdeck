@@ -697,6 +697,12 @@
           "description": "Switch to workspace 1-9 from prefix mode. Unset by default."
         },
         {
+          "key": "keys.select_pane_tab",
+          "type": "keybinding",
+          "default": "\"prefix+f1..f9\"",
+          "description": "Show pane 1-9 of the second tab row (`ui.pane_tabs`): F1 harness, F2 shell, F3 status, F4 agent. Indexed bindings take `1..9` or `f1..f9`."
+        },
+        {
           "key": "keys.close_tab",
           "type": "keybinding",
           "default": "\"prefix+shift+x\"",
@@ -1031,6 +1037,12 @@
             "top",
             "bottom"
           ]
+        },
+        {
+          "key": "ui.pane_tabs",
+          "type": "list of strings",
+          "default": "[\"harness\", \"shell\", \"status\", \"agent\"]",
+          "description": "Pane labels for the second tab row. A tab whose panes carry exactly these labels, each once, shows one pane at a time and a yellow row under the tab row that picks it. An empty list turns the row off."
         },
         {
           "key": "ui.tab_bar_right",

@@ -176,14 +176,18 @@ If you have old custom keybindings and want the new defaults, run `herdr config 
 
 ## Indexed jumps
 
-Indexed keybindings use `1..9` in normal keybinding fields:
+Indexed keybindings use `1..9`, or `f1..f9`, in normal keybinding fields:
 
 ```toml
 [keys]
 switch_tab = "prefix+1..9"
 switch_workspace = "prefix+shift+1..9"
 focus_agent = "prefix+alt+1..9"
+select_pane_tab = "prefix+f1..f9"
 ```
+
+`f1..f9` lets two indexed actions share one prefix: by default the digits
+after the prefix switch tabs and F1-F9 pick a pane of the second tab row.
 
 The legacy `[keys.indexed]` table is still parsed for compatibility, but new configs should prefer the explicit action fields.
 
@@ -312,6 +316,8 @@ The active palette is applied in this order: built-in theme, `[theme.custom]`, t
 The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](/docs/config-reference/) for sizing, collapsed mode, Agent panel ordering, mouse behavior, pane borders, and other presentation settings.
 
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
+
+A tab whose panes carry exactly the labels in `ui.pane_tabs` (by default `harness`, `shell`, `status` and `agent`, each once) shows one pane at a time, full size, and a yellow second row under the tab row. The row names each pane with the key that picks it (`keys.select_pane_tab`, F1-F4 after the prefix by default) and marks the one shown; a click picks one too. The other panes keep running unseen. The row follows the server's zoom: the shown pane is the zoomed tab's focused pane, so whoever zooms a pane moves the mark. Set `pane_tabs = []` to turn the row off.
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 
