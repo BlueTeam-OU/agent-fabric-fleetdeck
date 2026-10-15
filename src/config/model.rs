@@ -934,6 +934,13 @@ impl<'de> Deserialize<'de> for PaneBordersConfig {
     }
 }
 
+// FleetDeck's account tab, as fleet-deck/deck_tabs.py PANE_ROLES builds it.
+fn default_pane_tabs() -> Vec<String> {
+    ["harness", "shell", "status", "agent"]
+        .map(String::from)
+        .to_vec()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -992,6 +999,11 @@ pub struct UiConfig {
     pub tab_bar_right: Vec<TabBarRightEntryConfig>,
     /// Text inserted between visible right-side tab bar entries. Default: one space.
     pub tab_bar_right_separator: String,
+    /// Pane labels that make a tab show one pane at a time, picked from a second tab
+    /// row, in this order. A tab qualifies when its panes carry exactly these labels.
+    /// Empty disables the row. Default: FleetDeck's account tab, "harness", "shell",
+    /// "status" and "agent".
+    pub pane_tabs: Vec<String>,
     /// Format for the outer terminal window title. Empty leaves the title alone.
     /// Default: "{hostname}: {workspace}".
     pub window_title: String,
@@ -1258,6 +1270,7 @@ impl Default for UiConfig {
             tab_bar_position: TabBarPositionConfig::Top,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
+            pane_tabs: default_pane_tabs(),
             window_title: super::window_title::default_window_title(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,

@@ -340,6 +340,11 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # tab_bar_right = []
 # tab_bar_right_separator = " "
 
+# A tab whose panes carry exactly these labels shows one pane at a time, chosen
+# from a second row under the tab row; the other panes keep running unseen.
+# Set to [] to show such a tab's panes side by side.
+# pane_tabs = ["harness", "shell", "status", "agent"]
+
 # Title FleetDeck writes to the terminal it runs in, which is what window managers
 # show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},
 # {pane}, and {terminal_title}; {{ and }} are literal braces.

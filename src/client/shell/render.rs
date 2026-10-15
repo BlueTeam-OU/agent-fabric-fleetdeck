@@ -321,6 +321,17 @@ pub(super) fn render_shell(
             &mut hits,
         );
     }
+    if layout.pane_tabs.height > 0 {
+        if let Some(row) = super::pane_tabs::pane_tab_row(snapshot, &config.pane_tabs) {
+            super::pane_tabs::render_pane_tab_row(
+                buffer,
+                layout.pane_tabs,
+                &row,
+                &config.palette,
+                &mut hits,
+            );
+        }
+    }
     if !config.mouse_capture {
         hits.sidebar_divider = Rect::default();
         hits.sidebar_section_divider = Rect::default();
