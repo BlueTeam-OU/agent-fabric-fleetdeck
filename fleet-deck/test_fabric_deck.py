@@ -183,12 +183,18 @@ VIEW = agent_view_command("ui", start=MARK)
 LOCK_DIR = tempfile.TemporaryDirectory()
 
 
+_REAL_MARK = None
+
+
 def setUpModule():
+    global _REAL_MARK
     import fabric_deck
-    fabric_deck.new_mark = lambda: MARK
+    _REAL_MARK, fabric_deck.new_mark = fabric_deck.new_mark, lambda: MARK
 
 
 def tearDownModule():
+    import fabric_deck
+    fabric_deck.new_mark = _REAL_MARK
     LOCK_DIR.cleanup()
 
 

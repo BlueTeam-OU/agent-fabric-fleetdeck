@@ -122,9 +122,17 @@ class FakeHerdr:
 
 # The toggle's lock lives here, never beside a running deck's.
 LOCK_DIR = tempfile.TemporaryDirectory()
+_REAL_VIEW_MARK = fv.view_mark
+
+
+def setUpModule():
+    # A fake view's pid is no process of this host: its mark is never read
+    # from the host's /proc. A test that needs one patches it again.
+    fv.view_mark = lambda pid: None
 
 
 def tearDownModule():
+    fv.view_mark = _REAL_VIEW_MARK
     LOCK_DIR.cleanup()
 
 
@@ -204,6 +212,18 @@ class Toggle(unittest.TestCase):
         self.assertEqual(len(looks), 2)
         self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
 
+    def test_a_view_that_never_reports_ready_is_shown_and_said(self):
+        import contextlib
+        import io
+        herdr = FakeHerdr([dict(p, terminal_title="bash") if p["pane_id"] == "a" else p for p in TAB_PANES],
+                          {"a": VIEWING})
+        looks, said = [], io.StringIO()
+        with contextlib.redirect_stderr(said):
+            self.assertEqual(fv.toggle(context(focused="h"), herdr, sleep=lambda _: looks.append(1)), 0)
+        self.assertEqual(len(looks), fv_polls(), "waited to the bound")
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")], "and shown anyway")
+        self.assertIn("did not report ready", said.getvalue())
+
     def test_focus_moves_at_once_where_no_view_of_this_login_can_be_waited_for(self):
         for label, held in (("ui", EDITING), ("ui; x", VIEWING), ("ui; x", BARE)):
             herdr = FakeHerdr([dict(p, terminal_title=None) for p in TAB_PANES], {"a": held})
@@ -260,6 +280,20 @@ class Toggle(unittest.TestCase):
             fv.open_overlay = real
         self.assertEqual(len(opened), 1)
         self.assertFalse(any(c[1] == "zoom" for c in herdr.calls))
+
+    def test_a_press_from_a_tab_the_person_has_left_does_nothing(self):
+        # Pressed in t1, run after the person went to t2: FleetDeck opens an
+        # overlay in the tab shown, and zooms whatever it is told.
+        opened = []
+        for panes in (TAB_PANES[:3], TAB_PANES):
+            left = [dict(p, focused=p["pane_id"] == "a2") for p in panes + [TAB_PANES[4]]]
+            herdr = FakeHerdr(left, {"a": VIEWING})
+            real, fv.open_overlay = fv.open_overlay, lambda env: opened.append(env) or 0
+            try:
+                self.assertEqual(fv.toggle(context(tab_id="t1", focused="h"), herdr), 0)
+            finally:
+                fv.open_overlay = real
+            self.assertEqual((acts(herdr), opened), ([], []))
 
     def test_two_presses_at_once_open_one_overlay_and_close_it(self):
         import threading

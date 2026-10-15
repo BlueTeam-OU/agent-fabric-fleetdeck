@@ -592,7 +592,6 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     size = None
     while True:
         current = agent_view or view_of(nav.screen)
-        current.tick(focused)
         while True:
             try:
                 r = results.get_nowait()
@@ -660,6 +659,11 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
                 agent_view = View(fleet, vr.AGENT_SECTIONS, target, store, results)
                 samples, scroll = vr.Samples(), 0
                 samples.add(store.get("proc", target))
+        # Fetches are decided after the input is read, never before: a focus
+        # report queued while the view started (a second press moving the
+        # focus away) is applied first, so nothing is fetched for a pane
+        # already hidden. The first fetch waits one tick for it.
+        (agent_view or view_of(nav.screen)).tick(focused)
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,
@@ -932,6 +936,12 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
     tab = ctx.get("tab_id")
     with view_lock(env.get(LOCK_DIR_ENV)):
         panes = herdr.call("pane", "list").get("panes", [])
+        if any(p.get("focused") is True for p in panes) and \
+                not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes):
+            # The person has left the tab the press was made in (presses
+            # queued, then another tab): FleetDeck would open an overlay in
+            # the tab shown now, which no press here was about.
+            return 0
         focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
                        ctx.get("focused_pane_id"))
         step = toggle_step(tab_roles(panes, tab), focused)
