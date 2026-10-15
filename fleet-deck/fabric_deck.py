@@ -300,6 +300,9 @@ def is_board(argv: list[str]) -> bool:
         "from fabric_view import main" in arg for arg in argv[1:])
 
 
+# The agent overlay's title in herdr-plugin.toml, which FleetDeck makes its
+# pane's label: never "agent", the deck's own pane (deck_tabs.AGENT).
+OVERLAY_TITLE = "this agent"
 # The mode of a `waiting` entry for the agent pane: not a moveto, but the
 # agent's screen started in the operator's own shell there.
 VIEW = "view"
@@ -383,6 +386,30 @@ def new_mark() -> str:
     return uuid.uuid4().hex[:12]
 
 
+# How many times the focus is read and told before it settles: a change
+# after the last read reaches the view as herdr's own report.
+FOCUS_READS = 3
+
+
+def tell_focus(herdr, pane: str, login: str) -> None:
+    """Send the view its pane's focus as it is, and again while a read after
+    the send disagrees with what was sent: the person may move between the
+    read and the send, and herdr's report of that move would arrive before
+    this one. Sent only while the view holds the pane's foreground: three
+    bytes for it, never for a shell."""
+    told = None
+    for _ in range(FOCUS_READS):
+        now = any(p.get("pane_id") == pane and p.get("focused") is True
+                  for p in herdr.call("pane", "list").get("panes", []))
+        if now == told:
+            return
+        if not any(is_agent_view(p.get("argv") or [], login)
+                   for p in herdr.process_info(pane).get("foreground_processes") or []):
+            return
+        herdr.call("pane", "send-text", pane, FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT)
+        told = now
+
+
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
     """Type the agent's screen into a bare pane, under view_lock, and hold
     on until the next one to look cannot misread the pane: until the shell
@@ -403,9 +430,7 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
     if focused:
         sleep(VIEW_POLL_S)
         if wait_ready(herdr, pane, login, sleep, start):
-            now = any(p.get("pane_id") == pane and p.get("focused") is True
-                      for p in herdr.call("pane", "list").get("panes", []))
-            herdr.call("pane", "send-text", pane, FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT)
+            tell_focus(herdr, pane, login)
         return
     # Unfocused (the deck's restore): the shell's foreground handed on is
     # enough here; the toggle waits for the view to hear focus before it
@@ -987,6 +1012,12 @@ class Deck:
             panes[SHELL] = self._split(harness, "right", HARNESS_RATIO, SHELL)
         if STATUS not in panes:
             panes[STATUS] = self._split(panes[SHELL], "down", 0.5, STATUS)
+        if AGENT in panes and any(is_overlay_view(p.get("argv") or []) for p in
+                                  self.herdr.process_info(panes[AGENT]).get("foreground_processes") or []):
+            # The overlay of a FleetDeck from before the agent pane, which its
+            # manifest titled "agent": given the overlay's title, and the tab
+            # its own agent pane.
+            self.herdr.call("pane", "rename", panes.pop(AGENT), OVERLAY_TITLE)
         if AGENT not in panes:
             # A tab from before the agent pane gets one too.
             panes[AGENT] = self._split(panes[STATUS], "down", 0.5, AGENT)

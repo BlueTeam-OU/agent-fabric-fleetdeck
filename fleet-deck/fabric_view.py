@@ -53,7 +53,8 @@ from deck_tabs import AGENT, HARNESS
 # OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
 # before the view can hear it.
 from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
-                         is_overlay_view, start_view, view_lock, view_mark, view_title, wait_ready)
+                         is_overlay_view, start_view, view_lock, view_mark, view_title, wait_ready,
+                         OVERLAY_TITLE)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -916,9 +917,6 @@ def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] |
     return (harness, "--off") if focused == agent else (agent, "--on")
 
 
-# The overlay's title in herdr-plugin.toml, which FleetDeck makes its pane's
-# label: how the toggle knows the overlay it opened.
-OVERLAY_TITLE = "this agent"
 
 
 # Where view_lock is taken, for a test only; never set on a host.
@@ -954,10 +952,15 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
                             p.get("label") == OVERLAY_TITLE or any(
                                 is_overlay_view(fp.get("argv") or [])
                                 for fp in herdr.process_info(p.get("pane_id")).get("foreground_processes") or []))]
+            closed = []
             for overlay in overlays:
-                herdr.call("plugin", "pane", "close", overlay)
+                try:
+                    herdr.call("plugin", "pane", "close", overlay)
+                    closed.append(overlay)
+                except Exception as error:  # noqa: BLE001 — not a plugin pane: a person's view or label, skipped
+                    print(f"fabric-view toggle: {overlay} is no overlay to close: {error}", file=sys.stderr)
             # Opened before the lock is let go, so the next press finds it.
-            return 0 if overlays else open_overlay(env)
+            return 0 if closed else open_overlay(env)
         return _turn(ctx, herdr, step, sleep)
 
 
@@ -980,8 +983,9 @@ def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None
         # is about to look, in the operator's own shell there. Zoomed first,
         # so it starts at the size it is seen at; the zoom focuses the pane
         # before the view turns focus reporting on, so no focus-in reaches
-        # it: it is told, as `open` tells an overlay, and the lock is held
-        # until it can hear the next press move the focus away.
+        # it: start_view tells it its focus once it can hear (on a timeout
+        # it waits for a key), and the lock is held until then, so the next
+        # press's focus change reaches it.
         herdr.call("pane", "zoom", pane, zoom)
         start_view(herdr, pane, login, True, sleep)
         return 0

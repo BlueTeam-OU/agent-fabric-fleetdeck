@@ -886,6 +886,23 @@ class Restore(unittest.TestCase):
         self.assertEqual(herdr.runs(agent), [VIEW])
         self.assertIs(h.deck.tracks["ui"].state, State.RUNNING, "the harness is followed as before")
 
+    def test_an_overlay_from_before_the_agent_pane_is_not_taken_for_it(self):
+        # FleetDeck before this change titled the overlay "agent".
+        overlay = {"shell_pid": 70, "foreground_process_group_id": 70, "foreground_processes": [
+            {"pid": 70, "argv": BOARD["foreground_processes"][0]["argv"][:-1] + ["agent"]}]}
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", overlay)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        self.assertEqual(herdr.panes["p3"]["label"], "this agent")
+        agent = [p for p, pane in herdr.panes.items() if pane["label"] == "agent"]
+        self.assertEqual(len(agent), 1)
+        self.assertNotEqual(agent[0], "p3")
+        h.deck.follow(1)
+        self.assertEqual(herdr.runs(agent[0]), [VIEW])
+        self.assertEqual(herdr.runs("p3"), [], "the overlay is left as it is")
+
     def test_an_agent_pane_already_showing_the_agent_is_left_as_it_is(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", four_panes("ui", "p"))
@@ -918,10 +935,23 @@ class Restore(unittest.TestCase):
         herdr.panes["p3"]["focused"] = True
         h = Harness(herdr)
         h.records["ui"] = record("ui")
+        real_run = herdr.call
+
+        def call(*args):
+            out = real_run(*args)
+            if args[:3] == ("pane", "run", "p3"):   # the view comes up, and holds the pane
+                import fabric_deck
+                herdr.panes["p3"]["terminal_title"] = fabric_deck.view_title("ui", MARK)
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
         h.deck.restore(0)
         h.deck.follow(1)
         (typed,) = herdr.runs("p3")
         self.assertEqual(typed, VIEW, "marked, as every start")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
+                         [("pane", "send-text", "p3", "\x1b[I")], "told it is focused, once it can hear")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle
@@ -992,10 +1022,36 @@ class Restore(unittest.TestCase):
                 if len(looks) == 2:   # the view sets its title; the person may have gone
                     herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK),
                                              focused=still_there)
+                    herdr.proc["p3"] = in_view("ui")
 
             fabric_deck.start_view(herdr, "p3", "ui", True, sleep)
             sent = [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
             self.assertEqual(sent, told, still_there)
+
+    def test_a_move_between_the_read_and_the_send_is_told_again(self):
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", in_view("ui"))])
+        herdr.panes["p3"].update(focused=True)
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:2] == ("pane", "send-text") and len([c for c in herdr.calls if c[:2] == args[:2]]) == 1:
+                herdr.panes["p3"]["focused"] = False   # the person moved just as it was sent
+            return out
+
+        herdr.call = call
+        fabric_deck.tell_focus(herdr, "p3", "ui")
+        self.assertEqual([c[3] for c in herdr.calls if c[:2] == ("pane", "send-text")], ["\x1b[I", "\x1b[O"])
+
+    def test_no_report_reaches_a_pane_the_view_has_left(self):
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", BARE)])
+        herdr.panes["p3"]["focused"] = True
+        fabric_deck.tell_focus(herdr, "p3", "ui")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [], "never into a shell")
 
     def test_a_view_that_never_reports_ready_is_told_nothing(self):
         # It holds its focus unknown: it fetches at a key or a real report,

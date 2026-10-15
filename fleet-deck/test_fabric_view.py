@@ -236,6 +236,31 @@ class Toggle(unittest.TestCase):
         self.assertIsNone(fv.initial_focus({fv.OPENED_FOCUSED: "1", "FABRIC_VIEW_START": "m7"}))
         self.assertIsNone(fv.initial_focus({}))
 
+    def test_a_pane_that_only_looks_like_an_overlay_does_not_stop_the_chord(self):
+        # A person's own `fabric-view agent` in a shell pane: herdr refuses
+        # to close it as a plugin pane, and the chord opens the overlay.
+        argv = VIEWING["foreground_processes"][0]["argv"][:5] + ["agent"]
+        shell_view = {"pane_id": "v", "tab_id": "t1", "label": None}
+
+        class Refusing(FakeHerdr):
+            def call(self, *args):
+                if args[:3] == ("plugin", "pane", "close"):
+                    self.calls.append(args)
+                    raise RuntimeError("plugin_pane_not_found")
+                return super().call(*args)
+
+        herdr = Refusing([*TAB_PANES[:3], shell_view], {"v": {"foreground_processes": [{"pid": 61, "argv": argv}]}})
+        opened = []
+        real, fv.open_overlay = fv.open_overlay, lambda env: opened.append(env) or 0
+        try:
+            import contextlib
+            import io
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
+        finally:
+            fv.open_overlay = real
+        self.assertEqual(len(opened), 1)
+
     def test_a_renamed_overlay_is_still_closed_by_the_chord(self):
         overlay_argv = VIEWING["foreground_processes"][0]["argv"][:5] + ["agent"]
         renamed = {"pane_id": "o", "tab_id": "t1", "label": "notes"}
@@ -251,9 +276,8 @@ class Toggle(unittest.TestCase):
     def test_a_view_that_ended_is_started_again_where_it_is_shown(self):
         herdr = FakeHerdr(TAB_PANES, {"a": BARE})
         fv.toggle(context(focused="h"), herdr, sleep=lambda s: None)
-        # Zoomed first, so it starts at the size it is seen at; the zoom
-        # focuses the pane before the view reports focus: it is told, or it
-        # would wait for a key before its first fetch.
+        # Zoomed first, so it starts at the size it is seen at (its focus is
+        # told by start_view, tested in test_fabric_deck).
         self.assertEqual(acts(herdr)[:2], [("pane", "zoom", "a", "--on"),
                                            ("pane", "run", "a", agent_view_command("ui", mark_of(herdr)))])
         self.assertTrue(acts(herdr)[1][3].startswith("env FABRIC_VIEW_START="))
