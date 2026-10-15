@@ -4,6 +4,11 @@
                                       row each; c compare, p plan, P PRs
     fabric-view agent [--agent L]     one agent; the login defaults to the
                                       herdr tab the pane was opened from
+    fabric-view agent --agent L --in-tab
+                                      the same, in the account tab's agent
+                                      pane: it fetches at the first focus
+    fabric-view toggle                for a plugin action: the account tab
+                                      between its harness and agent screen
     fabric-view prs                   in-flight pull requests by owner
     fabric-view snapshot VIEW …       a view printed as text, read once
                                       (also `fleet-deck snapshot`)
@@ -20,8 +25,10 @@ nothing after it.
 
 A view only reads. It calls no herdr socket: `server.socket_access =
 "outside_panes"` refuses a pane's process, and the agent view takes its
-login from HERDR_PLUGIN_CONTEXT_JSON instead. `open` is the one herdr call,
-and it runs as a plugin action, which herdr places outside the panes.
+login from HERDR_PLUGIN_CONTEXT_JSON instead. So the agent pane cannot
+leave itself: the way back to the harness is the toggle's chord. `open` and
+`toggle` are the only herdr calls, and they run as plugin actions, which
+herdr places outside the panes.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ import queue
 import select
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -41,14 +49,18 @@ from typing import Callable
 
 import report_render as rr
 import view_render as vr
+from deck_tabs import AGENT, HARNESS
+# OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
+# before the view can hear it.
+from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
+                         is_overlay_view, start_view, view_lock, view_mark, view_title,
+                         wait_ready, DeckError)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
 TICK_S = 0.25
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
-# Set by `open`: the pane was opened focused, at the person's key.
-OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 
 
 # ── where agent-fabric is ───────────────────────────────────────────
@@ -154,8 +166,14 @@ class Refresher:
     ttl: dict[str, float]
     finished: dict[str, float] = field(default_factory=dict)
     running: set[str] = field(default_factory=set)
+    # Even the first fetch waits for focus: the agent pane of every account
+    # tab starts with the deck, and one look per tab would be the fleet
+    # fetched N times at once, for screens nobody sees.
+    lazy: bool = False
 
     def due(self, now: float, focused: bool | None) -> list[str]:
+        if self.lazy and focused is not True:
+            return []
         return [s for s, ttl in self.ttl.items()
                 if s not in self.running
                 and (s not in self.finished or (focused is True and now - self.finished[s] >= ttl))]
@@ -275,7 +293,7 @@ class View:
     """One screen: its sections, its refresher, its fetcher."""
 
     def __init__(self, fleet, sections: tuple[str, ...], agent: str | None, store: Store,
-                 results: "queue.Queue[Result]") -> None:
+                 results: "queue.Queue[Result]", lazy: bool = False) -> None:
         self.sections = sections
         self.agent = agent
         self.store = store
@@ -283,7 +301,7 @@ class View:
         # fetches bring (derive), never fetched: fleet.py gives it no TTL
         # and no cache, so a refresher would ask for it on every tick.
         self.refresher = Refresher({s: fleet.SECTIONS[s].ttl for s in sections
-                                    if s in fleet.SECTIONS and not derived(fleet, s)})
+                                    if s in fleet.SECTIONS and not derived(fleet, s)}, lazy=lazy)
         self.fetcher = Fetcher(fleet, agent, results, self)
         # A section this agent-fabric's fleet.py does not serve yet is said,
         # never asked for: the view runs against whatever checkout is there.
@@ -522,11 +540,14 @@ class Nav:
         return None
 
 
-def run(curses, screen, fleet, mode: str, login: str | None) -> int:
+def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = False) -> int:
     curses.curs_set(0)
     curses.raw()
     curses.noecho()
-    sys.stdout.write(FOCUS_ON)
+    # In the tab, the title after focus reporting: its sign, read from
+    # outside, that a focus change now reaches it (fabric_deck.start_view).
+    title = in_tab_title(login, os.environ) if in_tab else None
+    sys.stdout.write(FOCUS_ON + (f"\x1b]2;{title}\x07" if title else ""))
     sys.stdout.flush()
     painter = Painter(curses, screen)
     ascii_only = "utf" not in (sys.stdout.encoding or "").lower()
@@ -560,19 +581,22 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         return views[name]
 
     nav = Nav(PRS if mode == "prs" else BOARD)
-    agent_view = View(fleet, vr.AGENT_SECTIONS, login, store, results) if mode == "agent" else None
+    agent_view = View(fleet, vr.AGENT_SECTIONS, login, store, results, lazy=in_tab) if mode == "agent" else None
     samples = vr.Samples()
     scroll = 0
     # Unknown until herdr reports a change or a key arrives, unless `open`
     # says the pane was opened focused. herdr reports focus changes only,
     # and a pane opened in the background never had focus to lose:
-    # assuming focus at open would fetch in the background.
-    focused: bool | None = True if env.get(OPENED_FOCUSED) == "1" else None
+    # assuming focus at open would fetch in the background. A marked view
+    # (in an agent pane) is told its focus once it can hear it
+    # (fabric_deck.start_view), and trusts no hint.
+    focused = initial_focus(env)
+    # A refetch asked for with `r`, run once the input it came with is read.
+    refetch_asked: View | None = None
     pending = b""
     size = None
     while True:
         current = agent_view or view_of(nav.screen)
-        current.tick(focused)
         while True:
             try:
                 r = results.get_nowait()
@@ -595,7 +619,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         if agent_view is not None:
             a = agents_of({agent_view.agent: placements[agent_view.agent]}, store, agent_view.sections,
                           agent_view.whys, fleet)[0]
-            keys = vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
+            keys = vr.TAB_KEYS if in_tab else vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
             lines, scroll = vr.agent_lines(a, samples, status(agent_view, [a], focused, store), scroll,
                                            width, height, keys, ascii_only)
         else:
@@ -618,7 +642,11 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
             focused = True    # a key reached this pane, so it has focus
             if agent_view is not None:
                 if ev == "r":
-                    agent_view.refetch()
+                    refetch_asked = agent_view
+                elif in_tab and ev in ("q", "Q", ESCAPE):
+                    # Nothing to close: ended, the pane would be a bare shell
+                    # where the agent's screen was. The chord leaves it.
+                    continue
                 elif ev in ("q", "Q") or (ev == ESCAPE and mode == "agent"):
                     return 0
                 elif ev in (ESCAPE, BACK, "h") and mode != "agent":
@@ -630,12 +658,24 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
             if action == QUIT:
                 return 0
             if action == REFETCH:
-                view_of(nav.screen).refetch()
+                refetch_asked = view_of(nav.screen)
             elif action == OPEN_AGENT:
                 target = nav.login if nav.login in placements else list(placements)[max(0, min(nav.selected, len(placements) - 1))]
                 agent_view = View(fleet, vr.AGENT_SECTIONS, target, store, results)
                 samples, scroll = vr.Samples(), 0
                 samples.add(store.get("proc", target))
+        # Fetches are decided after the input is read, never before: a focus
+        # report queued while the view started (a second press moving the
+        # focus away) is applied first, so nothing is fetched for a pane
+        # already hidden. The first fetch waits one tick for it.
+        # `r` too: run once the focus that came with it is known, and only
+        # while focused (pressed and left at once, it waits for the focus to
+        # come back). Before the tick: a section the tick would start unforced
+        # is then already running, forced, as `r` asks.
+        if refetch_asked is not None and focused is True:
+            refetch_asked.refetch()
+            refetch_asked = None
+        (agent_view or view_of(nav.screen)).tick(focused)
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,
@@ -851,7 +891,155 @@ def snapshot_main(args: list[str], env: dict[str, str] | None = None) -> int:
 
 # ── the commands ────────────────────────────────────────────────────
 
-USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | snapshot VIEW … | open board|agent|prs|stop"
+USAGE = ("usage: fabric-view board | agent [--agent LOGIN [--in-tab]] | prs | snapshot VIEW … "
+         "| open board|agent|prs|stop | toggle")
+
+
+def plugin_context(env: dict[str, str]) -> dict:
+    try:
+        ctx = json.loads(env.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
+    except ValueError:
+        return {}
+    return ctx if isinstance(ctx, dict) else {}
+
+
+def tab_roles(panes: list[dict], tab_id: str | None) -> dict[str, str]:
+    """The tab's panes by the role the deck labelled them with: the last of
+    each label, as read_tab takes it, so a label a person repeated names
+    the same pane to the toggle as to the deck."""
+    roles: dict[str, str] = {}
+    for pane in panes:
+        label = pane.get("label")
+        if tab_id is not None and pane.get("tab_id") == tab_id and isinstance(label, str):
+            roles[label] = pane.get("pane_id")
+    return roles
+
+
+def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] | None:
+    """The zoom that turns the tab over: from the agent screen to the harness
+    in its tab (zoom off, the harness focused), from anywhere else in the
+    tab to the agent screen (zoomed, focused). herdr's zoom focuses the pane
+    it names. None for a tab without both panes: not one the deck keeps."""
+    harness, agent = roles.get(HARNESS), roles.get(AGENT)
+    if not harness or not agent:
+        return None
+    return (harness, "--off") if focused == agent else (agent, "--on")
+
+
+# Where view_lock is taken, for a test only; never set on a host.
+LOCK_DIR_ENV = "FABRIC_DECK_LOCK_DIR"
+
+
+def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sleep) -> int:
+    """A plugin action's command: one chord, the account tab between its
+    harness and its agent screen. The harness's session runs on in its
+    pane; only the zoom and the focus change. In a tab without an agent
+    pane (one the deck has not restored yet), the agent's overlay, as
+    before the pane existed, and the same chord closes it. Each press acts
+    under view_lock on the tab as it is then, its focus read from the pane
+    list, never from the context captured at the key, which a press still
+    running may have made stale."""
+    ctx = plugin_context(env)
+    tab = ctx.get("tab_id")
+    with view_lock(env.get(LOCK_DIR_ENV)):
+        panes = herdr.call("pane", "list").get("panes", [])
+        if left_tab(panes, tab):
+            # The person has left the tab the press was made in (presses
+            # queued, then another tab): FleetDeck would open an overlay in
+            # the tab shown now, which no press here was about.
+            return 0
+        focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
+                       ctx.get("focused_pane_id"))
+        step = toggle_step(tab_roles(panes, tab), focused)
+        if step is None:
+            # Known by what runs in it, never by its label: a person may set
+            # "this agent" on any pane, and the close ends what runs there.
+            overlays = [p.get("pane_id") for p in panes
+                        if tab is not None and p.get("tab_id") == tab and any(
+                            is_overlay_view(fp.get("argv") or [])
+                            for fp in herdr.process_info(p.get("pane_id")).get("foreground_processes") or [])]
+            closed = []
+            for overlay in overlays:
+                try:
+                    herdr.call("plugin", "pane", "close", overlay)
+                    closed.append(overlay)
+                except DeckError as error:
+                    # Only a pane herdr says is no plugin pane (a person's own
+                    # view, or a label set by hand) is passed over. Any other
+                    # failure is raised: opening another overlay beside one
+                    # that would not close is the stacking this refuses.
+                    if "plugin_pane_not_found" not in str(error):
+                        raise
+                    print(f"fabric-view toggle: {overlay} is no overlay to close: {error}", file=sys.stderr)
+            # Opened before the lock is let go, so the next press finds it.
+            return 0 if closed else open_overlay(env)
+        return _turn(ctx, herdr, step, sleep)
+
+
+def left_tab(panes: list[dict], tab: str | None) -> bool:
+    """Whether the person is now in another tab than `tab`: FleetDeck marks
+    one pane focused, the active tab's."""
+    return any(p.get("focused") is True for p in panes) and \
+        not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes)
+
+
+def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
+    pane, zoom = step
+    login = ctx.get("tab_label")
+    if zoom != "--on" or not isinstance(login, str) or not SAFE_LOGIN.match(login):
+        herdr.call("pane", "zoom", pane, zoom)
+        return 0
+    info = herdr.process_info(pane)
+    if at_bare_shell(info):
+        # The view ended (or never started): started again where the person
+        # is about to look, in the operator's own shell there. Zoomed first,
+        # so it starts at the size it is seen at; the zoom focuses the pane
+        # before the view turns focus reporting on, so no focus-in reaches
+        # it: start_view tells it its focus once it can hear (on a timeout
+        # it waits for a key), and the lock is held until then, so the next
+        # press's focus change reaches it.
+        herdr.call("pane", "zoom", pane, zoom)
+        start_view(herdr, pane, login, True, sleep)
+        return 0
+    view = next((p for p in info.get("foreground_processes") or []
+                 if is_agent_view(p.get("argv") or [], login) and isinstance(p.get("pid"), int)), None)
+    if view is not None:
+        # This login's view, which the deck may have started a moment ago:
+        # focus moved onto it before it turns focus reporting on is dropped,
+        # and it would wait for a key before its first fetch. Its own start's
+        # title is waited for, bounded; anything else in the pane is zoomed
+        # at once.
+        if not wait_ready(herdr, pane, login, sleep, view_mark(view["pid"])):
+            # Shown anyway: a chord that shows nothing reads as broken. Said
+            # in the plugin's log; the screen fetches at its first key.
+            print(f"fabric-view toggle: {login}'s agent screen in {pane} did not report ready "
+                  "within the bound; shown, and it fetches at the first key", file=sys.stderr)
+        if left_tab(herdr.call("pane", "list").get("panes", []), ctx.get("tab_id")):
+            # The person went elsewhere while the view came up: the zoom
+            # would focus this pane and take them back to the tab they left.
+            return 0
+    herdr.call("pane", "zoom", pane, zoom)
+    return 0
+
+
+def open_overlay(env: dict[str, str]) -> int:
+    """The agent's overlay, opened and waited for: the toggle holds its lock
+    until FleetDeck has the pane, where `open` hands its process over. Bound
+    as every other herdr call is (Herdr.text): a server that never answers
+    must not hold every later press at the lock."""
+    herdr = env.get("HERDR_BIN_PATH") or shutil.which(BIN)
+    if not herdr:
+        print("fabric-view: no agent-fabric-fleetdeck to ask (HERDR_BIN_PATH is not set)", file=sys.stderr)
+        return 2
+    try:
+        return subprocess.run(open_argv(herdr, env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "agent"),
+                              stdout=subprocess.DEVNULL, timeout=OPEN_TIMEOUT_S).returncode
+    except subprocess.TimeoutExpired:
+        print(f"fabric-view: FleetDeck did not open the overlay within {OPEN_TIMEOUT_S} s", file=sys.stderr)
+        return 1
+
+
+OPEN_TIMEOUT_S = 30
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:
@@ -895,13 +1083,23 @@ def main(argv: list[str] | None = None) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         return open_pane(rest[0], dict(os.environ))
+    if mode == "toggle" and not rest:
+        env = dict(os.environ)
+        try:
+            return toggle(env, Herdr(binary=env.get("HERDR_BIN_PATH") or shutil.which(BIN) or BIN))
+        except Exception as e:  # noqa: BLE001 — herdr's refusal, said in the plugin's log
+            print(f"fabric-view toggle: {e}", file=sys.stderr)
+            return 1
     if mode not in ("board", "agent", "prs"):
         print(USAGE, file=sys.stderr)
         return 2
     login = None
+    in_tab = False
     if mode == "agent":
         if rest[:1] == ["--agent"] and len(rest) == 2:
             login = rest[1]
+        elif rest[:1] == ["--agent"] and rest[2:] == ["--in-tab"]:
+            login, in_tab = rest[1], True
         elif rest:
             print(USAGE, file=sys.stderr)
             return 2
@@ -924,9 +1122,29 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("ESCDELAY", "25")
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
-        return curses.wrapper(lambda screen: run(curses, screen, fleet, mode, login))
+        return curses.wrapper(lambda screen: run(curses, screen, fleet, mode, login, in_tab))
     except KeyboardInterrupt:
         return 0
     finally:
-        sys.stdout.write(FOCUS_OFF)
+        sys.stdout.write(closing(in_tab))
         sys.stdout.flush()
+
+
+def initial_focus(env) -> bool | None:
+    """A view's focus before any report: True for an overlay `open` focused,
+    unknown otherwise, and unknown for a marked view whatever it is told,
+    which its start reports once it can hear (fabric_deck.start_view)."""
+    return True if env.get(OPENED_FOCUSED) == "1" and not env.get(VIEW_START) else None
+
+
+def in_tab_title(login: str | None, env) -> str | None:
+    """The title an in-tab view sets once it hears focus: its start's own
+    (fabric_deck.view_title), the sign the deck and the toggle wait for."""
+    return view_title(login, env.get(VIEW_START)) if login else None
+
+
+def closing(in_tab: bool) -> str:
+    """What a view writes as it ends: focus reporting off, and in the tab its
+    title cleared. Left set, the title would read as the next view in the
+    pane ready before that view can hear focus (fabric_deck.view_ready)."""
+    return FOCUS_OFF + ("\x1b]2;\x07" if in_tab else "")

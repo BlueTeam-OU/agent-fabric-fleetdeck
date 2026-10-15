@@ -53,10 +53,12 @@ def known_reason(value) -> str | None:
 WAIT, RESUME, WATCH, PLAIN = "--wait", "--resume", "--watch", ""
 MODES = frozenset({WAIT, RESUME, WATCH})
 
-HARNESS, SHELL, STATUS = "harness", "shell", "status"
-PANE_ROLES = (HARNESS, SHELL, STATUS)
-# The harness is the pane a person works in; the shell and status panes
-# share the rest, one above the other.
+HARNESS, SHELL, STATUS, AGENT = "harness", "shell", "status", "agent"
+PANE_ROLES = (HARNESS, SHELL, STATUS, AGENT)
+# The harness is the pane a person works in; the shell, status and agent
+# panes share the rest, one above the other. The agent pane holds the
+# agent's screen (fabric-view agent), shown zoomed in the harness's place
+# by the views' toggle (README, Views).
 HARNESS_RATIO = 0.65
 
 

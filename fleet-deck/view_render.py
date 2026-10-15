@@ -51,6 +51,9 @@ BOARD_KEYS = "↑↓ select  Enter agent  c compare  p plan  P PRs  r refetch  q
 ATTENTION_KEYS = "n/N next who needs you  {order}  {density}"
 AGENT_KEYS = "↑↓ scroll  r refetch  Esc back  q close"
 OVERLAY_KEYS = "↑↓ scroll  r refetch  q close"
+# The agent pane of an account tab: nothing to close, and the way back to the
+# harness is the toggle's chord (README, Views).
+TAB_KEYS = "↑↓ scroll  r refetch  prefix+a harness"
 
 
 # ── values ──────────────────────────────────────────────────────────

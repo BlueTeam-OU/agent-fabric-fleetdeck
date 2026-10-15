@@ -1,8 +1,9 @@
 """Fleet Deck: the operator's console over the fleet, on herdr.
 
-One herdr tab per agent account, labelled with its login, holding three
+One herdr tab per agent account, labelled with its login, holding four
 panes: the harness (moveto <account> --wait, activated by one Enter), the
-account's shell, and its status. The deck restores the tabs after a herdr or
+account's shell, its status, and the agent's screen (fabric-view, the
+operator's own view of the account). The deck restores the tabs after a herdr or
 host restart and then follows them, showing each harness pane's state in
 herdr's agent panel.
 
@@ -19,18 +20,24 @@ server. The adapters at the bottom run the real commands.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import fcntl
 import ipaddress
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
 from deck_tabs import (
+    AGENT,
     HARNESS,
     HARNESS_RATIO,
     MODES,
@@ -101,7 +108,9 @@ BOARD_DIR = os.path.dirname(os.path.realpath(__file__))
 
 # A login is typed into the operator's shell as part of a moveto command, so
 # only a plain Linux login is ever used; anything else is skipped, said.
-SAFE_LOGIN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+# \Z, never $: `$` also matches before a trailing newline, and a login
+# typed into a shell with one would end the line there.
+SAFE_LOGIN = re.compile(r"\A[a-z_][a-z0-9_-]{0,31}\Z")
 
 
 @dataclass(frozen=True)
@@ -293,19 +302,239 @@ def is_board(argv: list[str]) -> bool:
         "from fabric_view import main" in arg for arg in argv[1:])
 
 
+# The agent overlay's title in herdr-plugin.toml, which FleetDeck makes its
+# pane's label: never "agent", the deck's own pane (deck_tabs.AGENT).
+OVERLAY_TITLE = "this agent"
+# The mode of a `waiting` entry for the agent pane: not a moveto, but the
+# agent's screen started in the operator's own shell there.
+VIEW = "view"
+# Tells an overlay it opens focused (fabric_view.run): herdr reports focus
+# changes only, and a pane focused before the view turns reporting on never
+# sends it one. An agent pane's view is told its focus by its start instead.
+OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
+# The terminal's focus reports (DECSET 1004), as a view reads them.
+FOCUS_IN_REPORT, FOCUS_OUT_REPORT = "\x1b[I", "\x1b[O"
+# This start's own mark, which the view puts in its title (view_title): a
+# title an earlier view left in the pane must not read as this one ready.
+# A view started with one holds its focus unknown until a report arrives.
+VIEW_START = "FABRIC_VIEW_START"
+
+
+def agent_view_command(login: str, start: str | None = None) -> str:
+    """What the deck, or the toggle, types into an agent pane at the
+    operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
+    fetches at its first focus, and q and Esc do not end it). Not `exec`: a
+    view that cannot start leaves its reason on the screen and the pane in
+    place, and the toggle starts it again at the next press. Its start's
+    mark goes through env(1): a csh-family shell (tcsh is among SHELLS)
+    has no NAME=value prefix, and env execs the view, so its argv is still
+    is_agent_view's."""
+    command = (f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent "
+               f"--agent {shlex.quote(login)} --in-tab")
+    return f"env {VIEW_START}={start} {command}" if start else command
+
+
+def view_title(login: str, start: str | None = None) -> str:
+    """The terminal title an in-tab view sets once it hears focus changes
+    (fabric_view.run writes it after turning focus reporting on): from
+    outside the pane, the one sign that a focus change now reaches it. With
+    the start's mark, so it is this start's sign; the view clears the
+    title as it ends."""
+    return f"fabric-view agent {login} {start}" if start else f"fabric-view agent {login}"
+
+
+@contextlib.contextmanager
+def view_lock(directory: str | None = None):
+    """One start of an agent screen, or one toggle, at a time for this OS
+    user: the deck's restore and FleetDeck's concurrent plugin actions
+    would otherwise each find the same pane bare and type into it twice.
+    The directory is fixed by the uid, never by the caller's environment,
+    which the deck and a plugin action do not share: /tmp where the uid
+    has no /run/user directory, never tempfile's TMPDIR."""
+    uid = os.getuid()
+    run_dir = f"/run/user/{uid}"
+    base = directory or (run_dir if os.path.isdir(run_dir) else "/tmp")
+    with open(os.path.join(base, f"fabric-deck-views.{uid}.lock"), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+# How long a start waits for the view it typed, polled: Python's start and
+# fleet.py's import, with a margin. Past it the lock is let go regardless.
+VIEW_START_POLLS = 40
+VIEW_POLL_S = 0.125
+
+
+def view_ready(panes: list[dict], pane: str, login: str, start: str | None = None) -> bool:
+    """Whether the view in `pane` has turned focus reporting on, by its
+    title: this start's own, or, for a view whose mark could not be read
+    (view_mark), any agent screen's for this login."""
+    title = next((p.get("terminal_title") for p in panes if p.get("pane_id") == pane), None)
+    if not isinstance(title, str):
+        return False
+    if start:
+        return title == view_title(login, start)
+    return title == view_title(login) or title.startswith(view_title(login) + " ")
+
+
+def wait_ready(herdr, pane: str, login: str, sleep: Callable[[float], None], start: str | None = None) -> bool:
+    for _ in range(VIEW_START_POLLS):
+        if view_ready(herdr.call("pane", "list").get("panes", []), pane, login, start):
+            return True
+        sleep(VIEW_POLL_S)
+    return False
+
+
+def new_mark() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+# How many times the focus is read and told before it settles. A change after
+# a read that agrees with what was told reaches the view as herdr's own
+# report, after this one. Past the bound (the person moving again within
+# every round trip), the view is left unfocused (tell_focus).
+FOCUS_READS = 3
+
+
+def tell_focus(herdr, pane: str, login: str) -> None:
+    """Send the view its pane's focus as it is, and again while a read after
+    the send disagrees with what was sent: the person may move between the
+    read and the send, and herdr's report of that move would arrive before
+    this one. Sent only while the view holds the pane's foreground: three
+    bytes for it, never for a shell."""
+    def tell(report: str) -> bool:
+        if not any(is_agent_view(p.get("argv") or [], login)
+                   for p in herdr.process_info(pane).get("foreground_processes") or []):
+            return False
+        herdr.call("pane", "send-text", pane, report)
+        return True
+
+    told = None
+    for _ in range(FOCUS_READS):
+        now = any(p.get("pane_id") == pane and p.get("focused") is True
+                  for p in herdr.call("pane", "list").get("panes", []))
+        if now == told:
+            return
+        if not tell(FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT):
+            return
+        told = now
+    if told:
+        # No read agreed with the last report, and it said focused: left
+        # unverified, it could keep a hidden view fetching. Unfocused
+        # instead: a person who is there gets it live at a key.
+        tell(FOCUS_OUT_REPORT)
+
+
+def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
+    """Type the agent's screen into a bare pane, under view_lock, and hold
+    on until the next one to look cannot misread the pane: until the shell
+    has handed its foreground on; and, for a pane focused at the start,
+    until the view sets its title (it hears focus changes from then on) and
+    is told its focus as it is then.
+
+    A marked view holds its focus unknown, fetching nothing, until a focus
+    report or a key: the focus at the start is a snapshot, and herdr drops
+    every change made before the view turns reporting on. So the report is
+    the real one, read once the view can hear, and a view that never gets
+    it (it took longer than the bound) waits for a key, never fetches while
+    hidden."""
+    # Every start is marked: the toggle reads a running view's mark
+    # (view_mark) to know its title from one a killed view left behind.
+    start = new_mark()
+    herdr.call("pane", "run", pane, agent_view_command(login, start))
+    if focused:
+        sleep(VIEW_POLL_S)
+        if wait_ready(herdr, pane, login, sleep, start):
+            tell_focus(herdr, pane, login)
+        return
+    # Unfocused (the deck's restore): the shell's foreground handed on is
+    # enough here; the toggle waits for the view to hear focus before it
+    # moves the focus there (fabric_view._turn), so a restore of every tab
+    # does not wait for each view's Python to start.
+    for _ in range(VIEW_START_POLLS):
+        sleep(VIEW_POLL_S)
+        if not at_bare_shell(herdr.process_info(pane)):
+            return
+
+
+def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
+    """The start mark in a running view's environment (the deck and the
+    toggle run as the operator, as the view does), or None: unreadable, or
+    a view started without one."""
+    try:
+        with open(os.path.join(proc_root, str(pid), "environ"), "rb") as handle:
+            entries = handle.read().split(b"\0")
+    except OSError:
+        return None
+    prefix = f"{VIEW_START}=".encode()
+    return next((e[len(prefix):].decode("ascii", "replace") for e in entries if e.startswith(prefix)), None)
+
+
+# The programs fabric-view runs as on its way to the view: env(1), the
+# launcher's bash, then the Python it execs (fabric-python or a python3).
+_VIEW_STARTERS = frozenset({"env", "bash", "fabric-python"})
+
+
+def _is_fabric_view(argv: list[str]) -> bool:
+    """fabric-view at any step of its start: env(1) or the bash launcher,
+    each naming the `fabric-view` script, then the Python the launcher
+    execs, whose code imports fabric_view. The arguments stay last
+    throughout, and the pid is the same one from env to Python. Another
+    program given the script (an editor, a pager) is not it."""
+    if not argv:
+        return False
+    # The launcher's code is no argument an editor or pager is given: it
+    # names the view whatever the interpreter is called (AGENT_FABRIC_PYTHON).
+    if any("from fabric_view import main" in arg for arg in argv[1:]):
+        return True
+    program = os.path.basename(argv[0])
+    return (program in _VIEW_STARTERS or program.startswith("python")) and any(
+        os.path.basename(arg) == "fabric-view" for arg in argv[1:])
+
+
+def is_overlay_view(argv: list[str]) -> bool:
+    """fabric-view's agent overlay (the plugin's `agent` pane): the mode
+    alone, last."""
+    return bool(argv) and argv[-1] == "agent" and _is_fabric_view(argv)
+
+
+def is_agent_view(argv: list[str], login: str) -> bool:
+    """fabric-view's agent screen for this login, kept in its tab: the mode
+    and its arguments last."""
+    return argv[-4:] == ["agent", "--agent", login, "--in-tab"] and _is_fabric_view(argv)
+
+
 def same_dir(a: str | None, b: str) -> bool:
     return isinstance(a, str) and os.path.realpath(a) == os.path.realpath(b)
 
 
 def at_bare_shell(info: dict) -> bool:
-    """A shell at its prompt: its own foreground group, and a shell's argv.
-    A plugin pane's program also leads its own group, so the group alone
-    would take a running view for a shell."""
+    """A shell at its prompt: its own foreground group, and a shell's argv
+    with no command: options only (`-l`, `-i`), never `-c` or a script. A
+    plugin pane's program also leads its own group, and a shell running a
+    script (`bash -c …`, `bash x.sh`) is a program reading its own input:
+    whatever is typed there goes to it, not to a prompt."""
     shell, group = info.get("shell_pid"), info.get("foreground_process_group_id")
     if shell is None or shell != group:
         return False
     fg = info.get("foreground_processes") or []
-    return bool(fg) and all(os.path.basename((p.get("argv") or ["?"])[0]).lstrip("-") in SHELLS for p in fg)
+    return bool(fg) and all(_interactive_shell(p.get("argv") or []) for p in fg)
+
+
+# The options a shell may have and still be at its prompt, by allowlist: any
+# other (-c, fish's --command=, a script, --rcfile's value) may run a command
+# that reads what is typed. Short ones may cluster (-il).
+_PROMPT_SHORT_OPTIONS = frozenset("ilsp")
+_PROMPT_LONG_OPTIONS = frozenset({"--login", "--interactive", "--norc", "--noprofile", "--noediting",
+                                  "--no-config", "--no-rcs", "--posix", "--private"})
+
+
+def _interactive_shell(argv: list[str]) -> bool:
+    if not argv or os.path.basename(argv[0]).lstrip("-") not in SHELLS:
+        return False
+    return all(arg in _PROMPT_LONG_OPTIONS or (
+        arg.startswith("-") and not arg.startswith("--") and len(arg) > 1
+        and set(arg[1:]) <= _PROMPT_SHORT_OPTIONS) for arg in argv[1:])
 
 
 def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:
@@ -662,7 +891,8 @@ class Deck:
     # Accounts that waited for a role through the host's first setup: seeded
     # as on first setup once bound, whatever tabs the others have since.
     seed_on_bind: set[str] = field(default_factory=set)
-    # (login, pane, mode) -> since when a shell or status pane waits to be bare
+    # (login, pane, mode) -> since when a shell, status or agent pane waits to
+    # be bare; the agent pane's mode is VIEW
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
@@ -684,6 +914,10 @@ class Deck:
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
     fleet_unsettled: str | None = None
+    # view_lock's directory (None: the uid's own) and the pause between looks
+    # while a started agent screen comes up: a test's, not the host's.
+    lock_dir: str | None = None
+    sleep: Callable[[float], None] = time.sleep
 
     # ------------------------------------------------------------ restore
 
@@ -831,17 +1065,26 @@ class Deck:
             panes[SHELL] = self._split(harness, "right", HARNESS_RATIO, SHELL)
         if STATUS not in panes:
             panes[STATUS] = self._split(panes[SHELL], "down", 0.5, STATUS)
+        if AGENT in panes and any(is_overlay_view(p.get("argv") or []) for p in
+                                  self.herdr.process_info(panes[AGENT]).get("foreground_processes") or []):
+            # The overlay of a FleetDeck from before the agent pane, which its
+            # manifest titled "agent": given the overlay's title, and the tab
+            # its own agent pane.
+            self.herdr.call("pane", "rename", panes.pop(AGENT), OVERLAY_TITLE)
+        if AGENT not in panes:
+            # A tab from before the agent pane gets one too.
+            panes[AGENT] = self._split(panes[STATUS], "down", 0.5, AGENT)
         # Everything the restore owes this account is recorded before the
         # first observation, so a herdr call failing below leaves it waiting
         # for its decision, never followed half-restored. The harness waits
-        # for the decision at its prompt, the shell and status panes to be
-        # started at theirs; decide_pending drops whichever turns out to run
+        # for the decision at its prompt, the shell, status and agent panes to
+        # be started at theirs; decide_pending drops whichever turns out to run
         # this account's moveto already.
         self.harness_pane[login] = harness
         self.pending[login] = now
         self.unsettled.add(login)
         self.tracks[login] = Track(State.IDLE)
-        for role, mode in ((SHELL, PLAIN), (STATUS, WATCH)):
+        for role, mode in ((SHELL, PLAIN), (STATUS, WATCH), (AGENT, VIEW)):
             self.waiting[(login, panes[role], mode)] = now
         seen = self.observe(login, harness)
         if seen.moveto is True:
@@ -905,10 +1148,15 @@ class Deck:
         for key, since in list(self.waiting.items()):
             login, pane, mode = key
             try:
+                if mode == VIEW:
+                    self._start_view(key, since, now)
+                    continue
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
-                    del self.waiting[key]
+                    # Dropped once typed: a run that fails stays waiting, and
+                    # its retry looks at the pane again first.
                     self._arm(login, pane, mode)
+                    del self.waiting[key]
                 elif seen.moveto is True:
                     del self.waiting[key]  # a person started it meanwhile
                 elif now - since >= RESTORE_WAIT_S:
@@ -1104,6 +1352,28 @@ class Deck:
         command = " ".join(filter(None, ("moveto", login, mode)))
         self.herdr.call("pane", "run", pane, command)
         self.log(f"{login}: started `{command}` in {pane}")
+
+    def _start_view(self, key: tuple[str, str, str], since: float, now: float) -> None:
+        """The agent's screen in its pane, typed only at the operator's bare
+        prompt: herdr restores a pane as a shell, never its program."""
+        login, pane, _ = key
+        info = self.herdr.process_info(pane)
+        if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
+            del self.waiting[key]
+        elif at_bare_shell(info):
+            with view_lock(self.lock_dir):
+                # Looked at again under the lock: a toggle may have started it.
+                if not at_bare_shell(self.herdr.process_info(pane)):
+                    return
+                # FleetDeck's session restore can bring this pane back focused.
+                focused = any(p.get("pane_id") == pane and p.get("focused") is True
+                              for p in self.herdr.call("pane", "list").get("panes", []))
+                start_view(self.herdr, pane, login, focused, self.sleep)
+            del self.waiting[key]
+            self.log(f"{login}: started its agent screen in {pane}")
+        elif now - since >= RESTORE_WAIT_S:
+            self._say(f"{pane}:busy", f"{login}: pane {pane} is still busy; "
+                      "its agent screen is started when it reaches its prompt")
 
     def _bare(self, pane: str) -> bool:
         info = self.herdr.process_info(pane)

@@ -3,14 +3,15 @@
 The operator's console over the agent fleet, built into Agent Fabric FleetDeck.
 It runs on Linux only, where agent-fabric's hosts run: it reads `/proc`,
 asks a socket's peer with `SO_PEERCRED`, and drives accounts through `moveto`.
-Each agent account gets one tab, labelled with its login, holding three
+Each agent account gets one tab, labelled with its login, holding four
 panes:
 
 | pane | runs | for |
 |---|---|---|
 | **harness** (left, 65 %, focused) | `moveto <account> --wait` | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session |
 | **shell** (top right) | `moveto <account>` | a shell as the account |
-| **status** (bottom right) | `moveto <account> --watch` | the account's status, read-only |
+| **status** (right) | `moveto <account> --watch` | the account's status, read-only |
+| **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it zoomed in the harness's place, and `prefix+a` again shows the harness (see Views) |
 
 This directory exists only in gzapi-org's fork; upstream merges never
 touch it. The contract is agent-fabric's `docs/fleet-deck/tab-states.md`
@@ -165,7 +166,7 @@ something is selected or on the clipboard. FleetDeck keeps only these:
 
 | key | FleetDeck's action |
 |---|---|
-| **ctrl+6** | the prefix: FleetDeck's commands are ctrl+6 then a key (`ctrl+6 q` detaches; the `prefix+f/a/p` keys below); ctrl+6 twice sends ctrl+6 to the pane. A legacy terminal sends it as ctrl+^ (0x1e), which works too. |
+| **ctrl+6** | the prefix: FleetDeck's commands are ctrl+6 then a key (`ctrl+6 q` detaches; the `prefix+f/a/p` keys in Views: `ctrl+6 a` turns an agent's tab between its harness and its agent screen); ctrl+6 twice sends ctrl+6 to the pane. A legacy terminal sends it as ctrl+^ (0x1e), which works too. |
 | **ctrl+alt+c** | copies the selection |
 | **ctrl+alt+p** | pastes the clipboard's text into the pane |
 | **cmd+c / cmd+v** | copy (any system) and paste (macOS), where the terminal forwards cmd |
@@ -244,7 +245,8 @@ again whole within 10 s, and is followed in nothing until then.
   tab a person put in any other workspace stays. A FleetDeck without tab
   move leaves it in `New`, said once in the deck's log.
 - **A milestone-1 tab** (one unlabelled pane) keeps that pane as the
-  harness and gains the shell and status panes.
+  harness and gains the shell, status and agent panes. A tab from before
+  the agent pane gains one below its status pane.
 - **A tab split by hand** with no `harness` pane is left alone, and the
   deck says so once.
 - **The shell and status panes** are started once their shell is at its
@@ -252,6 +254,10 @@ again whole within 10 s, and is followed in nothing until then.
   rc file. One still busy after 120 s is said once, and started whenever
   it reaches its prompt. One already running this account's moveto is
   left as it is.
+- **The agent pane** is started the same way, with the agent's screen
+  typed at the operator's prompt there; FleetDeck restores the pane as a
+  shell, never its program. One already showing this account's screen is
+  left as it is, and nothing is typed into one running anything else.
 - **A harness pane running this account's moveto** is classified and
   never touched.
 - **Any other harness pane** waits until it is at the operator's prompt,
@@ -440,7 +446,7 @@ account tabs as before.
 | **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, open jobs; largest first, scaled to the largest, labelled "operational, not a score" |
 | **plan** | `p` in the fleet tab | each plan the coordinator keeps (agent-fabric ADR-047): its steps on a board by state (to do, queued, doing, delivered, done, and any other state), and a Gantt below |
 | **PRs** | a popup (`fabric.fleet.prs`), or `P` in the fleet tab | in-flight pull requests by owner, each with its repository, title, work and fix commits, checks, review, armed, and the gate's verdict |
-| **agent** | an overlay over the tab it was opened from, or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing, whether its inbox watch runs; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
+| **agent** | the account tab's agent pane, shown by `prefix+a` (`fabric.fleet.agent`); an overlay over a tab without that pane; or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing, whether its inbox watch runs; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
 
 - **Keys.** ↑/↓ (or j/k), PgUp/PgDn, Home/End move. Enter on the board opens
   that agent, and Esc goes back to the board. In the fleet tab, `b`, `c`,
@@ -453,6 +459,17 @@ account tabs as before.
   needs-you order and the registry's, and `v` between the full board and a
   compact one (agent, needs you, current job); the footer says what each
   switches to.
+- **The agent pane.** In an agent's tab, `prefix+a` (`ctrl+6 a`) shows
+  the agent's screen zoomed in the harness's place, and `prefix+a` again
+  shows the harness, with the tab's other panes. Only the zoom and the
+  focus change: the harness's session runs on in its pane, and no second
+  screen is ever opened. The screen fetches nothing until it is first
+  focused, then refreshes only while focused, as every view: a deck start
+  does not read the fleet once per tab. A pane cannot call FleetDeck's
+  socket (`outside_panes`), so the screen cannot leave itself: `q` and Esc
+  do nothing there, and its footer names the chord. If its view has ended,
+  `prefix+a` starts it again before showing it. In a tab with no agent
+  pane (the deck has not restored it yet), `prefix+a` opens the overlay.
 - **Needs you.** fleet.py's `attention` (agent-fabric `tools/fabric/fleet.py`),
   told in the view from the `states` and `jobs` records it already reads,
   with fleet.py's own reader: never fetched on its own. A session that waits
