@@ -33,9 +33,7 @@ herdr places outside the panes.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
-import fcntl
 import json
 import os
 import queue
@@ -44,7 +42,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -55,7 +52,8 @@ import view_render as vr
 from deck_tabs import AGENT, HARNESS
 # OPENED_FOCUSED: set by `open`, and by whoever types a view into a focused
 # pane: the pane was focused before the view could hear it.
-from fabric_deck import BIN, OPENED_FOCUSED, SAFE_LOGIN, Herdr, agent_view_command, at_bare_shell
+from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, Herdr, at_bare_shell, start_view, view_lock,
+                         view_title)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -545,7 +543,9 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     curses.curs_set(0)
     curses.raw()
     curses.noecho()
-    sys.stdout.write(FOCUS_ON)
+    # In the tab, the title after focus reporting: its sign, read from
+    # outside, that a focus change now reaches it (fabric_deck.start_view).
+    sys.stdout.write(FOCUS_ON + (f"\x1b]2;{view_title(login)}\x07" if in_tab and login else ""))
     sys.stdout.flush()
     painter = Painter(curses, screen)
     ascii_only = "utf" not in (sys.stdout.encoding or "").lower()
@@ -914,29 +914,22 @@ def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] |
 OVERLAY_TITLE = "this agent"
 
 
-@contextlib.contextmanager
-def toggle_lock(env: dict[str, str]):
-    """One toggle at a time for this login: FleetDeck runs plugin actions
-    concurrently, and two presses read in parallel would each act on the
-    tab as it was before the other."""
-    directory = env.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    with open(os.path.join(directory, f"fabric-view-toggle.{os.getuid()}.lock"), "a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
+# Where view_lock is taken, for a test only; never set on a host.
+LOCK_DIR_ENV = "FABRIC_DECK_LOCK_DIR"
 
 
-def toggle(env: dict[str, str], herdr) -> int:
+def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sleep) -> int:
     """A plugin action's command: one chord, the account tab between its
     harness and its agent screen. The harness's session runs on in its
     pane; only the zoom and the focus change. In a tab without an agent
     pane (one the deck has not restored yet), the agent's overlay, as
     before the pane existed, and the same chord closes it. Each press acts
-    under toggle_lock on the tab as it is then, its focus read from the pane
+    under view_lock on the tab as it is then, its focus read from the pane
     list, never from the context captured at the key, which a press still
     running may have made stale."""
     ctx = plugin_context(env)
     tab = ctx.get("tab_id")
-    with toggle_lock(env):
+    with view_lock(env.get(LOCK_DIR_ENV)):
         panes = herdr.call("pane", "list").get("panes", [])
         focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
                        ctx.get("focused_pane_id"))
@@ -948,32 +941,45 @@ def toggle(env: dict[str, str], herdr) -> int:
                 herdr.call("plugin", "pane", "close", overlay)
             # Opened before the lock is let go, so the next press finds it.
             return 0 if overlays else open_overlay(env)
-        return _turn(ctx, herdr, step)
+        return _turn(ctx, herdr, step, sleep)
 
 
-def _turn(ctx: dict, herdr, step: tuple[str, str]) -> int:
+def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
     pane, zoom = step
     login = ctx.get("tab_label")
     if zoom == "--on" and isinstance(login, str) and SAFE_LOGIN.match(login) \
             and at_bare_shell(herdr.process_info(pane)):
         # The view ended (or never started): started again where the person
-        # is about to look, in the operator's own shell there. The zoom below
-        # focuses the pane before the view turns focus reporting on, so no
-        # focus-in reaches it: it is told, as `open` tells an overlay.
-        herdr.call("pane", "run", pane, agent_view_command(login, focused=True))
+        # is about to look, in the operator's own shell there. Zoomed first,
+        # so it starts at the size it is seen at; the zoom focuses the pane
+        # before the view turns focus reporting on, so no focus-in reaches
+        # it: it is told, as `open` tells an overlay, and the lock is held
+        # until it can hear the next press move the focus away.
+        herdr.call("pane", "zoom", pane, zoom)
+        start_view(herdr, pane, login, True, sleep)
+        return 0
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 
 
 def open_overlay(env: dict[str, str]) -> int:
     """The agent's overlay, opened and waited for: the toggle holds its lock
-    until FleetDeck has the pane, where `open` hands its process over."""
+    until FleetDeck has the pane, where `open` hands its process over. Bound
+    as every other herdr call is (Herdr.text): a server that never answers
+    must not hold every later press at the lock."""
     herdr = env.get("HERDR_BIN_PATH") or shutil.which(BIN)
     if not herdr:
         print("fabric-view: no agent-fabric-fleetdeck to ask (HERDR_BIN_PATH is not set)", file=sys.stderr)
         return 2
-    return subprocess.run(open_argv(herdr, env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "agent"),
-                          stdout=subprocess.DEVNULL).returncode
+    try:
+        return subprocess.run(open_argv(herdr, env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "agent"),
+                              stdout=subprocess.DEVNULL, timeout=OPEN_TIMEOUT_S).returncode
+    except subprocess.TimeoutExpired:
+        print(f"fabric-view: FleetDeck did not open the overlay within {OPEN_TIMEOUT_S} s", file=sys.stderr)
+        return 1
+
+
+OPEN_TIMEOUT_S = 30
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:

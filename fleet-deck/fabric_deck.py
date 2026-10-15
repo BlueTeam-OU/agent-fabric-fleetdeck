@@ -20,7 +20,9 @@ server. The adapters at the bottom run the real commands.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import fcntl
 import ipaddress
 import json
 import os
@@ -29,6 +31,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
@@ -316,6 +320,51 @@ def agent_view_command(login: str, focused: bool = False) -> str:
     its argv is still is_agent_view's."""
     command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
     return f"env {OPENED_FOCUSED}=1 {command}" if focused else command
+
+
+def view_title(login: str) -> str:
+    """The terminal title an in-tab view sets once it hears focus changes
+    (fabric_view.run writes it after turning focus reporting on): from
+    outside the pane, the one sign that a focus change now reaches it."""
+    return f"fabric-view agent {login}"
+
+
+@contextlib.contextmanager
+def view_lock(directory: str | None = None):
+    """One start of an agent screen, or one toggle, at a time for this OS
+    user: the deck's restore and FleetDeck's concurrent plugin actions
+    would otherwise each find the same pane bare and type into it twice.
+    The directory is fixed by the uid, never by the caller's environment,
+    which the deck and a plugin action do not share."""
+    uid = os.getuid()
+    run_dir = f"/run/user/{uid}"
+    base = directory or (run_dir if os.path.isdir(run_dir) else tempfile.gettempdir())
+    with open(os.path.join(base, f"fabric-deck-views.{uid}.lock"), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+# How long a start waits for the view it typed, polled: Python's start and
+# fleet.py's import, with a margin. Past it the lock is let go regardless.
+VIEW_START_POLLS = 40
+VIEW_POLL_S = 0.125
+
+
+def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
+    """Type the agent's screen into a bare pane, under view_lock, and hold
+    on until the next one to look cannot misread the pane: until the shell
+    has handed its foreground on; and for a view told it starts focused,
+    until it sets its title, so a focus change made after this returns
+    reaches it rather than being dropped while it starts."""
+    herdr.call("pane", "run", pane, agent_view_command(login, focused))
+    for _ in range(VIEW_START_POLLS):
+        sleep(VIEW_POLL_S)
+        if focused:
+            if any(p.get("pane_id") == pane and p.get("terminal_title") == view_title(login)
+                   for p in herdr.call("pane", "list").get("panes", [])):
+                return
+        elif not at_bare_shell(herdr.process_info(pane)):
+            return
 
 
 def is_agent_view(argv: list[str], login: str) -> bool:
@@ -717,6 +766,10 @@ class Deck:
     # The fleet tab whose pane had not started its program when last looked
     # at: looked at again at a map read while it is still there as `fleet`.
     fleet_unsettled: str | None = None
+    # view_lock's directory (None: the uid's own) and the pause between looks
+    # while a started agent screen comes up: a test's, not the host's.
+    lock_dir: str | None = None
+    sleep: Callable[[float], None] = time.sleep
 
     # ------------------------------------------------------------ restore
 
@@ -1154,10 +1207,14 @@ class Deck:
         if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
             del self.waiting[key]
         elif at_bare_shell(info):
-            # FleetDeck's session restore can bring this pane back focused.
-            focused = any(p.get("pane_id") == pane and p.get("focused") is True
-                          for p in self.herdr.call("pane", "list").get("panes", []))
-            self.herdr.call("pane", "run", pane, agent_view_command(login, focused))
+            with view_lock(self.lock_dir):
+                # Looked at again under the lock: a toggle may have started it.
+                if not at_bare_shell(self.herdr.process_info(pane)):
+                    return
+                # FleetDeck's session restore can bring this pane back focused.
+                focused = any(p.get("pane_id") == pane and p.get("focused") is True
+                              for p in self.herdr.call("pane", "list").get("panes", []))
+                start_view(self.herdr, pane, login, focused, self.sleep)
             del self.waiting[key]
             self.log(f"{login}: started its agent screen in {pane}")
         elif now - since >= RESTORE_WAIT_S:

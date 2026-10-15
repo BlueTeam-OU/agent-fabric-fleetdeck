@@ -177,6 +177,14 @@ PANE_END = ("127.0.0.1", 40001)
 VIEW = agent_view_command("ui")
 
 
+# view_lock is taken here, never beside a running deck's.
+LOCK_DIR = tempfile.TemporaryDirectory()
+
+
+def tearDownModule():
+    LOCK_DIR.cleanup()
+
+
 BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
         "foreground_processes": [{"pid": 10, "argv": ["bash"]}]}
 # The fleet board, as fabric-view's launcher leaves it in its pane.
@@ -373,6 +381,8 @@ class Harness:
             # The account tabs' tests count herdr calls: the fleet tab is
             # tested on its own (FleetTab).
             fleet_tab=fleet_tab,
+            lock_dir=LOCK_DIR.name,
+            sleep=lambda s: None,
         )
 
     def at(self, deck_s):
@@ -899,6 +909,30 @@ class Restore(unittest.TestCase):
         h.deck.follow(1)
         self.assertEqual(herdr.runs("p3"), [agent_view_command("ui", focused=True)])
         self.assertTrue(herdr.runs("p3")[0].startswith("env FABRIC_VIEW_OPENED_FOCUSED=1 "))
+
+    def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
+        # The pane was bare at the deck's first look; under the lock, a toggle
+        # has already typed the view there.
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        looks = []
+        real = herdr.process_info
+
+        def process_info(pane):
+            if pane == "p3":
+                looks.append(1)
+                if len(looks) == 2:
+                    herdr.proc["p3"] = in_view("ui")
+            return real(pane)
+
+        herdr.process_info = process_info
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertEqual(herdr.runs("p3"), [])
+        h.deck.follow(3)
+        self.assertNotIn(("ui", "p3", "view"), h.deck.waiting, "found running at the next look")
 
     def test_a_run_that_fails_is_tried_again_at_the_pane_as_it_is_then(self):
         for pane, typed in (("p3", VIEW), ("p1", "moveto ui")):
