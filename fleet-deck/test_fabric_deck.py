@@ -907,8 +907,9 @@ class Restore(unittest.TestCase):
         h.records["ui"] = record("ui")
         h.deck.restore(0)
         h.deck.follow(1)
-        self.assertEqual(herdr.runs("p3"), [agent_view_command("ui", focused=True)])
-        self.assertTrue(herdr.runs("p3")[0].startswith("env FABRIC_VIEW_OPENED_FOCUSED=1 "))
+        (typed,) = herdr.runs("p3")
+        self.assertTrue(typed.startswith("env FABRIC_VIEW_OPENED_FOCUSED=1 FABRIC_VIEW_START="), typed)
+        self.assertTrue(typed.endswith(" " + agent_view_command("ui")))
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle
@@ -933,6 +934,51 @@ class Restore(unittest.TestCase):
         self.assertEqual(herdr.runs("p3"), [])
         h.deck.follow(3)
         self.assertNotIn(("ui", "p3", "view"), h.deck.waiting, "found running at the next look")
+
+    def test_the_deck_types_a_view_only_under_the_lock_a_toggle_takes(self):
+        import contextlib
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        held = []
+
+        @contextlib.contextmanager
+        def lock(directory=None):
+            held.append(directory)
+            yield
+            held.append("released")
+
+        real_lock, real_run = fabric_deck.view_lock, herdr.call
+
+        def call(*args):
+            if args[:2] == ("pane", "run") and args[2] == "p3":
+                self.assertEqual(held[-1:], [LOCK_DIR.name], "typed while the lock is held")
+            return real_run(*args)
+
+        fabric_deck.view_lock, herdr.call = lock, call
+        try:
+            h.deck.restore(0)
+            h.deck.follow(1)
+        finally:
+            fabric_deck.view_lock = real_lock
+        self.assertEqual(herdr.runs("p3"), [VIEW])
+        self.assertEqual(held, [LOCK_DIR.name, "released"])
+
+    def test_an_unfocused_start_holds_on_until_the_shell_hands_on(self):
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", BARE)])
+        looks = []
+
+        def sleep(_):
+            looks.append(1)
+            if len(looks) == 3:
+                herdr.proc["p3"] = in_view("ui")
+
+        fabric_deck.start_view(herdr, "p3", "ui", False, sleep)
+        self.assertEqual(len(looks), 3, "until the view holds the foreground, and no longer")
 
     def test_a_run_that_fails_is_tried_again_at_the_pane_as_it_is_then(self):
         for pane, typed in (("p3", VIEW), ("p1", "moveto ui")):

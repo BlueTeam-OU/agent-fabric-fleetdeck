@@ -31,8 +31,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
@@ -307,9 +307,12 @@ VIEW = "view"
 # changes only, and a pane focused before the view turns reporting on never
 # sends it one.
 OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
+# This start's own mark, which the view puts in its title (view_title): a
+# title an earlier view left in the pane must not read as this one ready.
+VIEW_START = "FABRIC_VIEW_START"
 
 
-def agent_view_command(login: str, focused: bool = False) -> str:
+def agent_view_command(login: str, focused: bool = False, start: str | None = None) -> str:
     """What the deck, or the toggle, types into an agent pane at the
     operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
     fetches at its first focus, and q and Esc do not end it). Not `exec`: a
@@ -319,14 +322,18 @@ def agent_view_command(login: str, focused: bool = False) -> str:
     is among SHELLS) has no NAME=value prefix, and env execs the view, so
     its argv is still is_agent_view's."""
     command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
-    return f"env {OPENED_FOCUSED}=1 {command}" if focused else command
+    if not focused:
+        return command
+    return f"env {OPENED_FOCUSED}=1 {VIEW_START}={start} {command}" if start else f"env {OPENED_FOCUSED}=1 {command}"
 
 
-def view_title(login: str) -> str:
+def view_title(login: str, start: str | None = None) -> str:
     """The terminal title an in-tab view sets once it hears focus changes
     (fabric_view.run writes it after turning focus reporting on): from
-    outside the pane, the one sign that a focus change now reaches it."""
-    return f"fabric-view agent {login}"
+    outside the pane, the one sign that a focus change now reaches it. With
+    the start's mark, so it is this start's sign; the view clears the
+    title as it ends."""
+    return f"fabric-view agent {login} {start}" if start else f"fabric-view agent {login}"
 
 
 @contextlib.contextmanager
@@ -335,10 +342,11 @@ def view_lock(directory: str | None = None):
     user: the deck's restore and FleetDeck's concurrent plugin actions
     would otherwise each find the same pane bare and type into it twice.
     The directory is fixed by the uid, never by the caller's environment,
-    which the deck and a plugin action do not share."""
+    which the deck and a plugin action do not share: /tmp where the uid
+    has no /run/user directory, never tempfile's TMPDIR."""
     uid = os.getuid()
     run_dir = f"/run/user/{uid}"
-    base = directory or (run_dir if os.path.isdir(run_dir) else tempfile.gettempdir())
+    base = directory or (run_dir if os.path.isdir(run_dir) else "/tmp")
     with open(os.path.join(base, f"fabric-deck-views.{uid}.lock"), "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield
@@ -350,20 +358,45 @@ VIEW_START_POLLS = 40
 VIEW_POLL_S = 0.125
 
 
+def view_ready(panes: list[dict], pane: str, login: str, start: str | None = None) -> bool:
+    """Whether the view in `pane` has turned focus reporting on, by its
+    title: this start's own, or, for a view whose start is not known (one
+    the deck started unfocused), any agent screen's for this login."""
+    title = next((p.get("terminal_title") for p in panes if p.get("pane_id") == pane), None)
+    if not isinstance(title, str):
+        return False
+    if start:
+        return title == view_title(login, start)
+    return title == view_title(login) or title.startswith(view_title(login) + " ")
+
+
+def wait_ready(herdr, pane: str, login: str, sleep: Callable[[float], None], start: str | None = None) -> bool:
+    for _ in range(VIEW_START_POLLS):
+        if view_ready(herdr.call("pane", "list").get("panes", []), pane, login, start):
+            return True
+        sleep(VIEW_POLL_S)
+    return False
+
+
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
     """Type the agent's screen into a bare pane, under view_lock, and hold
     on until the next one to look cannot misread the pane: until the shell
     has handed its foreground on; and for a view told it starts focused,
     until it sets its title, so a focus change made after this returns
     reaches it rather than being dropped while it starts."""
-    herdr.call("pane", "run", pane, agent_view_command(login, focused))
+    start = uuid.uuid4().hex[:12] if focused else None
+    herdr.call("pane", "run", pane, agent_view_command(login, focused, start))
+    if focused:
+        sleep(VIEW_POLL_S)
+        wait_ready(herdr, pane, login, sleep, start)
+        return
+    # Unfocused (the deck's restore): the shell's foreground handed on is
+    # enough here; the toggle waits for the view to hear focus before it
+    # moves the focus there (fabric_view._turn), so a restore of every tab
+    # does not wait for each view's Python to start.
     for _ in range(VIEW_START_POLLS):
         sleep(VIEW_POLL_S)
-        if focused:
-            if any(p.get("pane_id") == pane and p.get("terminal_title") == view_title(login)
-                   for p in herdr.call("pane", "list").get("panes", [])):
-                return
-        elif not at_bare_shell(herdr.process_info(pane)):
+        if not at_bare_shell(herdr.process_info(pane)):
             return
 
 

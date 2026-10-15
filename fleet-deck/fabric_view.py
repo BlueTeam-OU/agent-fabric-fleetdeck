@@ -52,8 +52,8 @@ import view_render as vr
 from deck_tabs import AGENT, HARNESS
 # OPENED_FOCUSED: set by `open`, and by whoever types a view into a focused
 # pane: the pane was focused before the view could hear it.
-from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, Herdr, at_bare_shell, start_view, view_lock,
-                         view_title)
+from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, start_view,
+                         view_lock, view_title, wait_ready)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -545,7 +545,8 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     curses.noecho()
     # In the tab, the title after focus reporting: its sign, read from
     # outside, that a focus change now reaches it (fabric_deck.start_view).
-    sys.stdout.write(FOCUS_ON + (f"\x1b]2;{view_title(login)}\x07" if in_tab and login else ""))
+    title = view_title(login, os.environ.get(VIEW_START)) if in_tab and login else None
+    sys.stdout.write(FOCUS_ON + (f"\x1b]2;{title}\x07" if title else ""))
     sys.stdout.flush()
     painter = Painter(curses, screen)
     ascii_only = "utf" not in (sys.stdout.encoding or "").lower()
@@ -958,6 +959,11 @@ def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None
         herdr.call("pane", "zoom", pane, zoom)
         start_view(herdr, pane, login, True, sleep)
         return 0
+    if zoom == "--on" and isinstance(login, str):
+        # A view the deck started may still be starting: focus moved onto it
+        # before it turns focus reporting on is dropped, and it would wait
+        # for a key before its first fetch. Bounded; past it, zoomed anyway.
+        wait_ready(herdr, pane, login, sleep)
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 
@@ -1066,5 +1072,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
-        sys.stdout.write(FOCUS_OFF)
+        sys.stdout.write(closing(in_tab))
         sys.stdout.flush()
+
+
+def closing(in_tab: bool) -> str:
+    """What a view writes as it ends: focus reporting off, and in the tab its
+    title cleared. Left set, the title would read as the next view in the
+    pane ready before that view can hear focus (fabric_deck.view_ready)."""
+    return FOCUS_OFF + ("\x1b]2;\x07" if in_tab else "")

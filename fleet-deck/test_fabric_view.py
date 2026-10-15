@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 import unittest
 
@@ -81,9 +82,21 @@ TAB_PANES = [
     {"pane_id": "h", "tab_id": "t1", "label": "harness"},
     {"pane_id": "s", "tab_id": "t1", "label": "shell"},
     {"pane_id": "st", "tab_id": "t1", "label": "status"},
-    {"pane_id": "a", "tab_id": "t1", "label": "agent"},
+    # A running view's title: it hears focus changes (fabric_deck.view_ready).
+    {"pane_id": "a", "tab_id": "t1", "label": "agent", "terminal_title": "fabric-view agent ui"},
     {"pane_id": "a2", "tab_id": "t2", "label": "agent"},
 ]
+
+
+def acts(herdr):
+    """What a toggle did to the tab, without its looks at it."""
+    return [c for c in herdr.calls if c[:2] in (("pane", "zoom"), ("pane", "run"), ("plugin", "pane"))]
+
+
+def mark_of(herdr):
+    """The start mark a toggle typed with the view it restarted."""
+    run = next(c[3] for c in herdr.calls if c[:2] == ("pane", "run"))
+    return re.search(r"FABRIC_VIEW_START=(\w+) ", run).group(1)
 BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
         "foreground_processes": [{"pid": 10, "argv": ["bash"]}]}
 VIEWING = {"shell_pid": 10, "foreground_process_group_id": 40,
@@ -153,10 +166,31 @@ class Toggle(unittest.TestCase):
     def test_only_the_zoom_changes_while_the_view_runs(self):
         herdr = FakeHerdr(TAB_PANES, {"a": VIEWING})
         self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
-        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "a", "--on")])
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
         herdr.calls.clear()
         fv.toggle(context(focused="a"), herdr)
-        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "h", "--off")], "the harness pane, never typed into")
+        self.assertEqual(acts(herdr), [("pane", "zoom", "h", "--off")], "the harness pane, never typed into")
+
+    def test_a_view_in_the_tab_clears_its_title_as_it_ends(self):
+        self.assertEqual(fv.closing(True), fv.FOCUS_OFF + "\x1b]2;\x07")
+        self.assertEqual(fv.closing(False), fv.FOCUS_OFF, "an overlay's title is FleetDeck's")
+
+    def test_focus_waits_for_a_view_still_starting(self):
+        # The deck started it unfocused a moment ago: focus moved there before
+        # it reports focus would be dropped, and it would wait for a key.
+        starting = [dict(p, terminal_title="bash") if p["pane_id"] == "a" else p for p in TAB_PANES]
+        herdr = FakeHerdr(starting, {"a": VIEWING})
+        looks = []
+
+        def sleep(_):
+            looks.append(1)
+            if len(looks) == 2:
+                herdr.panes = list(TAB_PANES)
+                self.assertEqual(acts(herdr), [], "nothing zoomed yet")
+
+        fv.toggle(context(focused="h"), herdr, sleep=sleep)
+        self.assertEqual(len(looks), 2)
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
 
     def test_a_view_that_ended_is_started_again_where_it_is_shown(self):
         herdr = FakeHerdr(TAB_PANES, {"a": BARE})
@@ -164,8 +198,9 @@ class Toggle(unittest.TestCase):
         # Zoomed first, so it starts at the size it is seen at; the zoom
         # focuses the pane before the view reports focus: it is told, or it
         # would wait for a key before its first fetch.
-        self.assertEqual(herdr.calls[1:3], [("pane", "zoom", "a", "--on"),
-                                            ("pane", "run", "a", f"env {fv.OPENED_FOCUSED}=1 {agent_view_command('ui')}")])
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on"),
+                                       ("pane", "run", "a", agent_view_command("ui", True, mark_of(herdr)))])
+        self.assertTrue(acts(herdr)[1][3].startswith(f"env {fv.OPENED_FOCUSED}=1 FABRIC_VIEW_START="))
 
     def test_the_press_holds_on_until_the_view_can_hear_the_next_one(self):
         # Let go before the view turns focus reporting on, a second press
@@ -176,20 +211,20 @@ class Toggle(unittest.TestCase):
         def sleep(_):
             looks.append(1)
             if len(looks) == 3:
-                herdr.panes = [dict(p, terminal_title=view_title("ui")) if p["pane_id"] == "a" else p
+                herdr.panes = [dict(p, terminal_title=view_title("ui", mark_of(herdr))) if p["pane_id"] == "a" else p
                                for p in herdr.panes]
 
         fv.toggle(context(focused="h"), herdr, sleep=sleep)
-        self.assertEqual(len(looks), 3, "it waits for the title, and no longer")
-        herdr.panes = list(TAB_PANES)
+        self.assertEqual(len(looks), 3, "it waits for this start's title, and no longer")
         looks.clear()
-        fv.toggle(context(focused="h"), FakeHerdr(TAB_PANES, {"a": BARE}), sleep=sleep)
-        self.assertEqual(len(looks), fv_polls(), "a view that never comes up lets go at the bound")
+        # TAB_PANES still carries the title an earlier view left: not this one.
+        fv.toggle(context(focused="h"), FakeHerdr(TAB_PANES, {"a": BARE}), sleep=lambda _: looks.append(1))
+        self.assertEqual(len(looks), fv_polls() + 1, "an earlier view's title is no sign; let go at the bound")
 
     def test_a_label_that_is_no_plain_login_is_never_typed(self):
         herdr = FakeHerdr(TAB_PANES, {"a": BARE})
         fv.toggle(context(focused="h", label="ui; rm -rf ~"), herdr, sleep=lambda s: None)
-        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "a", "--on")])
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
 
     def test_a_tab_the_deck_does_not_keep_opens_the_overlay(self):
         opened = []
