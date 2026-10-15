@@ -10,6 +10,7 @@ use super::*;
 
 use super::render::{display_width, put_text};
 use crate::api::schema::{Method, PaneZoomMode, PaneZoomParams};
+use crate::config::IndexedKeybind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PaneTab<'a> {
@@ -76,13 +77,38 @@ fn on_yellow(palette: &Palette) -> ratatui::style::Color {
     }
 }
 
-/// One cell per pane, numbered as its key picks it. The picked one is drawn
-/// inverted, bold and in brackets, so the mark does not rest on colour alone;
-/// brackets and padding are the same width, so picking moves nothing.
+/// The key after the prefix that picks each cell (`keys.select_pane_tab`), the
+/// first binding of each index, as the row names it: "F1", not "prefix+f1".
+/// A cell no binding picks names no key, so the row never teaches a key that
+/// does something else (the digits after the prefix switch tabs).
+pub(super) fn pane_tab_keys(bindings: &[IndexedKeybind], cells: usize) -> Vec<Option<String>> {
+    let mut keys = vec![None; cells];
+    for binding in bindings {
+        let Some(slot) = binding.index().and_then(|index| keys.get_mut(index)) else {
+            continue;
+        };
+        if slot.is_none() {
+            let key = binding
+                .label
+                .strip_prefix("prefix+")
+                .unwrap_or(&binding.label);
+            *slot = Some(match key.strip_prefix('f') {
+                Some(number) if number.chars().all(|c| c.is_ascii_digit()) => format!("F{number}"),
+                _ => key.to_string(),
+            });
+        }
+    }
+    keys
+}
+
+/// One cell per pane, named with the key that picks it. The picked one is
+/// drawn inverted, bold and in brackets, so the mark does not rest on colour
+/// alone; brackets and padding are the same width, so picking moves nothing.
 pub(super) fn render_pane_tab_row(
     buffer: &mut Buffer,
     area: Rect,
     row: &[PaneTab<'_>],
+    keys: &[Option<String>],
     palette: &Palette,
     hits: &mut ShellHitMap,
 ) {
@@ -95,11 +121,14 @@ pub(super) fn render_pane_tab_row(
     buffer.set_style(area, plain);
     let mut x = area.x;
     for (index, tab) in row.iter().enumerate() {
-        let number = index + 1;
+        let name = match keys.get(index).and_then(Option::as_deref) {
+            Some(key) => format!("{key} {}", tab.label),
+            None => tab.label.to_string(),
+        };
         let (text, style) = if tab.selected {
-            (format!("[{number} {}]", tab.label), picked)
+            (format!("[{name}]"), picked)
         } else {
-            (format!(" {number} {} ", tab.label), plain)
+            (format!(" {name} "), plain)
         };
         let width = display_width(&text).min(area.right().saturating_sub(x));
         if width == 0 {
@@ -246,6 +275,76 @@ mod tests {
             pane_tab_row(&snapshot, &[]),
             None,
             "an empty list turns the row off"
+        );
+    }
+
+    fn account_tab(focused: &str) -> ClientShellSnapshot {
+        snapshot(
+            true,
+            focused,
+            &[
+                Some("harness"),
+                Some("shell"),
+                Some("status"),
+                Some("agent"),
+            ],
+        )
+    }
+
+    #[test]
+    fn each_cell_names_the_key_that_picks_it() {
+        let config = crate::config::Config::default();
+        let keys = pane_tab_keys(&config.keybinds().select_pane_tab, 4);
+        assert_eq!(
+            keys,
+            ["F1", "F2", "F3", "F4"].map(|key| Some(key.to_string()))
+        );
+        assert_eq!(
+            pane_tab_keys(&[], 4),
+            vec![None; 4],
+            "no binding, no key named"
+        );
+    }
+
+    #[test]
+    fn the_rendered_row_marks_the_shown_pane_and_a_click_finds_its_pane() {
+        let config = crate::config::Config::default();
+        let palette = crate::app::client_palette_from_config(&config);
+        let snapshot = account_tab("p2");
+        let labels = labels();
+        let row = pane_tab_row(&snapshot, &labels).expect("an account tab shows the row");
+        let keys = pane_tab_keys(&config.keybinds().select_pane_tab, row.len());
+        let area = Rect::new(0, 0, 60, 1);
+        let mut buffer = Buffer::empty(area);
+        let mut hits = ShellHitMap::default();
+        render_pane_tab_row(&mut buffer, area, &row, &keys, &palette, &mut hits);
+
+        let text: String = (0..area.width)
+            .map(|x| buffer[(x, 0)].symbol().to_string())
+            .collect();
+        assert_eq!(
+            text.trim_end(),
+            " F1 harness   F2 shell  [F3 status]  F4 agent"
+        );
+        let status = text.find("[F3").expect("the mark") as u16;
+        assert!(buffer[(status, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(status, 0)].bg, on_yellow(&palette), "inverted");
+        assert_eq!(buffer[(1, 0)].bg, palette.yellow);
+
+        let clicked = hits
+            .pane_tabs
+            .iter()
+            .find(|(rect, _)| {
+                crate::client::shell::contains(*rect, (text.find("agent").unwrap() as u16, 0))
+            })
+            .map(|(_, pane)| pane.as_str());
+        assert_eq!(clicked, Some("p3"), "a click on agent picks the agent pane");
+        assert_eq!(
+            pick_pane_tab("p3"),
+            Method::PaneZoom(PaneZoomParams {
+                pane_id: Some("p3".into()),
+                mode: PaneZoomMode::On,
+            })
         );
     }
 }

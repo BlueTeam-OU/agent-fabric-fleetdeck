@@ -323,10 +323,15 @@ pub(super) fn render_shell(
     }
     if layout.pane_tabs.height > 0 {
         if let Some(row) = super::pane_tabs::pane_tab_row(snapshot, &config.pane_tabs) {
+            let keys = super::pane_tabs::pane_tab_keys(
+                &config.keybinds.keybinds.select_pane_tab,
+                row.len(),
+            );
             super::pane_tabs::render_pane_tab_row(
                 buffer,
                 layout.pane_tabs,
                 &row,
+                &keys,
                 &config.palette,
                 &mut hits,
             );

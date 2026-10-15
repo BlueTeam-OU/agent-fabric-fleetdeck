@@ -4515,7 +4515,9 @@ mod tests {
 
         assert!(state.workspaces[0].tabs[0].zoomed);
         assert_eq!(
-            state.current_pane_focus_target().map(|target| target.pane_id),
+            state
+                .current_pane_focus_target()
+                .map(|target| target.pane_id),
             Some(root),
             "the person's focus moves with the zoom they see"
         );

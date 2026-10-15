@@ -1422,12 +1422,7 @@ impl App {
         self.zoom_pane(id, params, true)
     }
 
-    fn zoom_pane(
-        &mut self,
-        id: String,
-        params: PaneZoomParams,
-        in_tab: bool,
-    ) -> String {
+    fn zoom_pane(&mut self, id: String, params: PaneZoomParams, in_tab: bool) -> String {
         let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
             return encode_error(id, "pane_not_found", "pane not found");
         };

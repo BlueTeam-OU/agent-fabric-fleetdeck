@@ -315,6 +315,11 @@ pub struct IndexedKeybind {
 }
 
 impl IndexedKeybind {
+    /// The 0-based index this binding gives its action.
+    pub fn index(&self) -> Option<usize> {
+        index_key(self.trigger.combo().0)
+    }
+
     pub fn matched_index(&self, key: &TerminalKey) -> Option<usize> {
         let combo = self.trigger.combo();
         let (expected_code, _) = normalize_key_combo(combo);
