@@ -87,7 +87,9 @@ Endpoint = tuple["ipaddress.IPv4Address | ipaddress.IPv6Address", int]
 def endpoint(addr, port) -> Endpoint | None:
     """An address and a port as the deck compares them, or None when either
     is not one. An IPv4-mapped IPv6 address is its IPv4 form: a socket
-    opened as v6 that carried v4 shows the mapped form, sshd the plain one."""
+    opened as v6 that carried v4 shows the mapped form, sshd the plain one.
+    A zone (`fe80::1%eth0`) is dropped: sshd may write one for a link-local
+    peer, and /proc/net/tcp6 has none to compare it with."""
     if not isinstance(addr, str) or isinstance(port, bool) or not isinstance(port, int):
         return None
     if not 0 < port < 65536:
@@ -96,8 +98,8 @@ def endpoint(addr, port) -> Endpoint | None:
         ip = ipaddress.ip_address(addr)
     except ValueError:
         return None
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        ip = ip.ipv4_mapped or ipaddress.IPv6Address(ip.packed)
     return ip, port
 
 

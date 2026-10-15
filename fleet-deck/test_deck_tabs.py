@@ -70,6 +70,7 @@ class Live_(unittest.TestCase):
     def test_an_endpoint_is_an_address_and_a_port_v4_mapped_read_as_v4(self):
         self.assertEqual(endpoint("::ffff:10.1.2.3", 22), endpoint("10.1.2.3", 22))
         self.assertNotEqual(endpoint("::1", 22), endpoint("127.0.0.1", 22))
+        self.assertEqual(endpoint("fe80::1%eth0", 22), endpoint("fe80::1", 22), "the zone is dropped")
         for addr, port in (("10.1.2.3", True), ("10.1.2.3", 0), ("10.1.2.3", 65536), ("host", 22), (None, 22), ("10.1.2.3", 2.0)):
             self.assertIsNone(endpoint(addr, port), (addr, port))
 

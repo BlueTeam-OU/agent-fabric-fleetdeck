@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, WAIT, WATCH, Before, Shown, endpoint
+from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, WAIT, WATCH, Before, Shown, State, endpoint
 from fabric_deck import (
     live_of,
     BOARD_DIR,
@@ -909,15 +909,24 @@ class Restore(unittest.TestCase):
         self.assertIn("idle=shell", h.herdr.reports("p0")[-1])
 
     def test_an_ssh_pane_with_a_stale_record_is_left_as_it_was(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell")),
-                             ("p2", "status", in_ssh("ui", WATCH))])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui", "working", age_s=10_000)
-        h.deck.restore(0)
-        h.deck.follow(RESTORE_SETTLE_S)
-        self.assertEqual(h.herdr.runs(), [])
-        self.assertNotIn("working", [r[-1] for r in h.herdr.reports("p0")])
+        # With and without the pane's own end read, the record carrying it or not.
+        for sockets, stale in ((None, record("ui", "working", age_s=10_000)),
+                               (frozenset({endpoint(*PANE_END)}), ssh_record("ui", ("working", PANE_END), age_s=10_000)),
+                               (frozenset({endpoint(*PANE_END)}), None)):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell")),
+                                 ("p2", "status", in_ssh("ui", WATCH))])
+            h = Harness(herdr)
+            if sockets is not None:
+                h.sockets[20] = sockets
+            if stale is not None:
+                h.records["ui"] = stale
+            h.deck.restore(0)
+            h.deck.follow(RESTORE_SETTLE_S)
+            self.assertEqual(h.herdr.runs(), [], stale)
+            self.assertFalse(any("working" in r[-1] or "elsewhere" in r[-1] for r in h.herdr.reports("p0")), stale)
+            # The panel shows a stale record as stale whatever the state: the state itself is unclassified.
+            self.assertNotIn(getattr(h.deck.tracks.get("ui"), "state", None), (State.RUNNING, State.ELSEWHERE), stale)
 
     def test_an_account_with_an_unsafe_login_is_never_typed(self):
         h = Harness(logins=("ui; rm -rf ~",))
