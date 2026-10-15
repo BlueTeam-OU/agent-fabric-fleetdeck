@@ -320,6 +320,7 @@ class DeckFleet:
         self.exclude = {getpass.getuser(), *exclude}
         self.harness: dict[str, str] = {}
         self.workspace: dict[str, str | None] = {}
+        self.role: dict[str, str] = {}
         self.logins: list[str] = []
         self.live: dict[str, int | None] = {}
         self.read_at: float | None = None
@@ -327,7 +328,9 @@ class DeckFleet:
         self.unknown_said: set[str] = set()
 
     def read_map(self) -> None:
-        self.logins = [a.login for a in parse_moveto_list(moveto_list(), self.exclude)]
+        accounts = parse_moveto_list(moveto_list(), self.exclude)
+        self.logins = [a.login for a in accounts]
+        self.role = {a.login: a.role for a in accounts}
         labels = {w["workspace_id"]: w.get("label") for w in self.herdr.workspaces()}
         tabs = self.herdr.account_tabs(set(self.logins))
         self.harness = {login: tab.panes[HARNESS] for login, tab in tabs.items() if HARNESS in tab.panes}
@@ -460,7 +463,7 @@ def boot_fleet(say: Callable[[str], None], exclude: Iterable[str]) -> int:
     if not fleet.mapped:
         say(f"the deck's tabs could not be read within {TABS_READY_S}s: nothing was activated")
         return 1
-    tiers = boot.plan_tiers(fleet.workspace)
+    tiers = boot.plan_tiers(fleet.workspace, fleet.role)
     say("tiers: " + "; ".join(f"{tier} ({len(logins)})" for tier, logins in tiers))
     outcome = boot.activate(fleet.fleet(), tiers)
     say(f"up: {len(outcome.up)}; skipped: {', '.join(outcome.skipped) or 'none'}; "
@@ -477,7 +480,7 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
     except Exception as error:  # no map: herdr's stop below ends the panes anyway
         say(f"cannot read the deck's panes ({error}); herdr's stop ends them")
         return set()
-    for tier, logins in reversed(boot.plan_tiers(fleet.workspace)):
+    for tier, logins in reversed(boot.plan_tiers(fleet.workspace, fleet.role)):
         hung = []
         for login in logins:
             try:

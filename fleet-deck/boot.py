@@ -35,14 +35,27 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
-# The tiers, in boot order, as the deck's workspaces are labelled (agent-fabric
-# identities/roles/catalog.json groups). Every "<language> Developer"
-# workspace is one tier; any other workspace (New, one the operator made) is
-# activated last.
+# The tiers, in boot order. The deck's workspaces are labelled with the
+# groups of agent-fabric identities/roles/catalog.json: C-Level, the
+# "<language> Developer" groups, Experts, Marketing, Legal, Accountants and
+# Infrastructure. Every "<language> Developer" workspace is one tier;
+# Marketing, Legal and Accountants boot with Experts, after Infrastructure
+# and before the developers (the owner's rule: infrastructure before
+# developers). Any other workspace (New, one the operator made) is activated
+# last. "Coordinator" is no catalogue group any more; a deck seeded before
+# still has the workspace, and it keeps its tier.
 COORDINATOR = "Coordinator"
+EXPERTS = "Experts"
 DEVELOPERS = "Developers"
 OTHER = "Other"
-TIERS = (COORDINATOR, "C-Level", "Infrastructure", "Experts", DEVELOPERS, OTHER)
+TIERS = (COORDINATOR, "C-Level", "Infrastructure", EXPERTS, DEVELOPERS, OTHER)
+EXPERT_GROUPS = frozenset({EXPERTS, "Marketing", "Legal", "Accountants"})
+# An account holding this role is in the Coordinator tier wherever its tab
+# is: the catalogue moved fabric-coordinator into C-Level, and the
+# coordinator is up before the boot, so it is never pressed. Ordering it
+# first within C-Level instead would press its Enter when it is dormant,
+# which is the operator's own call (activate).
+COORDINATOR_ROLE = "fabric-coordinator"
 
 # Within a tier one login at a time, this far apart: each activation pulls
 # the account's checkout and starts a harness, and the host's sshd penalises
@@ -61,21 +74,28 @@ POLL_S = 2.0
 DECK_KEY = "~/.ssh/fabric_deck"
 
 
-def tier_of(workspace: str | None) -> str:
-    if workspace in TIERS[:4]:
+def tier_of(workspace: str | None, role: str | None = None) -> str:
+    if role == COORDINATOR_ROLE:
+        return COORDINATOR
+    if workspace in (COORDINATOR, "C-Level", "Infrastructure"):
         return workspace
+    if workspace in EXPERT_GROUPS:
+        return EXPERTS
     if workspace and (workspace == DEVELOPERS or workspace.endswith(" Developer")):
         return DEVELOPERS
     return OTHER
 
 
-def plan_tiers(workspaces: dict[str, str | None]) -> list[tuple[str, list[str]]]:
+def plan_tiers(workspaces: dict[str, str | None],
+               roles: dict[str, str] | None = None) -> list[tuple[str, list[str]]]:
     """Logins grouped by tier in boot order, each tier's logins sorted; a
     tier with no login is left out. `workspaces` maps a login to the label
-    of the workspace its tab is in."""
+    of the workspace its tab is in, `roles` a login to its bound role
+    (moveto --list)."""
+    roles = roles or {}
     grouped: dict[str, list[str]] = {}
     for login, label in workspaces.items():
-        grouped.setdefault(tier_of(label), []).append(login)
+        grouped.setdefault(tier_of(label, roles.get(login)), []).append(login)
     return [(tier, sorted(grouped[tier])) for tier in TIERS if tier in grouped]
 
 

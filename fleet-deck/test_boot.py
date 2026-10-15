@@ -33,6 +33,38 @@ class TiersTest(unittest.TestCase):
             (OTHER, ["lost", "nowhere"]),
         ])
 
+    def test_marketing_legal_and_accountants_boot_with_experts(self):
+        workspaces = {
+            "dev": "Rust Developer", "brand": "Marketing", "legal": "Legal", "books": "Accountants",
+            "lang": "Experts", "ops": "Infrastructure", "cto": "C-Level",
+        }
+        self.assertEqual(boot.plan_tiers(workspaces), [
+            ("C-Level", ["cto"]),
+            ("Infrastructure", ["ops"]),
+            ("Experts", ["books", "brand", "lang", "legal"]),
+            (DEVELOPERS, ["dev"]),
+        ])
+
+    def test_the_coordinator_role_is_the_coordinator_tier_wherever_its_tab_is(self):
+        workspaces = {"coord": "C-Level", "cto": "C-Level", "ops": "Infrastructure"}
+        roles = {"coord": boot.COORDINATOR_ROLE, "cto": "architect-cto", "ops": "devex-tooling"}
+        self.assertEqual(boot.plan_tiers(workspaces, roles), [
+            (COORDINATOR, ["coord"]),
+            ("C-Level", ["cto"]),
+            ("Infrastructure", ["ops"]),
+        ])
+
+    def test_a_coordinator_in_c_level_is_never_pressed(self):
+        tiers = boot.plan_tiers({"coord": "C-Level", "cto": "C-Level"},
+                                {"coord": boot.COORDINATOR_ROLE, "cto": "architect-cto"})
+        sim = Sim(prompt_at={"coord": 0.0, "cto": 0.0})
+        boot.activate(sim.fleet(), tiers)
+        pressed = [login for _, login in sim.presses]
+        self.assertEqual(pressed, ["cto"])
+
+    def test_an_unbound_role_keeps_its_workspace_tier(self):
+        self.assertEqual(boot.plan_tiers({"a": "Legal"}, {"a": "-"}), [("Experts", ["a"])])
+
     def test_an_empty_tier_is_left_out(self):
         self.assertEqual(boot.plan_tiers({"a": "Experts"}), [("Experts", ["a"])])
 

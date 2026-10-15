@@ -75,8 +75,11 @@ restart the server: `stop --all`, then `start --auto`.
    agents are started once `fabric-ctl` has `control-start`; until then
    this step says so and goes on.
 4. Activates the panes in the order of their workspaces: C-Level,
-   Infrastructure, Experts, every "… Developer" workspace, then any other.
-   - The Coordinator workspace is never activated: it is up already.
+   Infrastructure, Experts with Marketing, Legal and Accountants, every
+   "… Developer" workspace, then any other.
+   - The coordinator is never activated: it is up already. That is the
+     account holding fabric-coordinator, wherever its tab is, and a
+     Coordinator workspace on a deck seeded before the catalogue dropped it.
    - Within a tier, one agent every 4 s.
    - The next tier starts when the previous one is up, or after 60 s.
    - An agent counts as up when the fleet's state stream shows its
