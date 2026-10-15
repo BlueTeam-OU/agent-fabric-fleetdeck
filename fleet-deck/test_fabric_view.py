@@ -117,7 +117,7 @@ class FakeHerdr:
         return {"panes": self.panes} if args[:2] == ("pane", "list") else {}
 
     def process_info(self, pane):
-        return self.proc[pane]
+        return self.proc.get(pane, {})
 
 
 # The toggle's lock lives here, never beside a running deck's.
@@ -231,6 +231,18 @@ class Toggle(unittest.TestCase):
             fv.toggle(context(focused="h", label=label), herdr, sleep=lambda _: looks.append(1))
             self.assertEqual((looks, acts(herdr)), ([], [("pane", "zoom", "a", "--on")]), (label, held))
 
+    def test_a_marked_view_trusts_no_focus_hint(self):
+        self.assertTrue(fv.initial_focus({fv.OPENED_FOCUSED: "1"}), "an overlay `open` focused")
+        self.assertIsNone(fv.initial_focus({fv.OPENED_FOCUSED: "1", "FABRIC_VIEW_START": "m7"}))
+        self.assertIsNone(fv.initial_focus({}))
+
+    def test_a_renamed_overlay_is_still_closed_by_the_chord(self):
+        overlay_argv = VIEWING["foreground_processes"][0]["argv"][:5] + ["agent"]
+        renamed = {"pane_id": "o", "tab_id": "t1", "label": "notes"}
+        herdr = FakeHerdr([*TAB_PANES[:3], renamed], {"o": {"foreground_processes": [{"pid": 60, "argv": overlay_argv}]}})
+        self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
+        self.assertEqual(acts(herdr), [("plugin", "pane", "close", "o")])
+
     def test_a_view_titles_itself_with_its_start(self):
         self.assertEqual(fv.in_tab_title("ui", {"FABRIC_VIEW_START": "m7"}), view_title("ui", "m7"))
         self.assertEqual(fv.in_tab_title("ui", {}), view_title("ui"))
@@ -242,9 +254,9 @@ class Toggle(unittest.TestCase):
         # Zoomed first, so it starts at the size it is seen at; the zoom
         # focuses the pane before the view reports focus: it is told, or it
         # would wait for a key before its first fetch.
-        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on"),
-                                       ("pane", "run", "a", agent_view_command("ui", True, mark_of(herdr)))])
-        self.assertTrue(acts(herdr)[1][3].startswith(f"env {fv.OPENED_FOCUSED}=1 FABRIC_VIEW_START="))
+        self.assertEqual(acts(herdr)[:2], [("pane", "zoom", "a", "--on"),
+                                           ("pane", "run", "a", agent_view_command("ui", mark_of(herdr)))])
+        self.assertTrue(acts(herdr)[1][3].startswith("env FABRIC_VIEW_START="))
 
     def test_the_press_holds_on_until_the_view_can_hear_the_next_one(self):
         # Let go before the view turns focus reporting on, a second press

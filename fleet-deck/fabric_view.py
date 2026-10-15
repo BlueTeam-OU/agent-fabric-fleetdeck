@@ -50,10 +50,10 @@ from typing import Callable
 import report_render as rr
 import view_render as vr
 from deck_tabs import AGENT, HARNESS
-# OPENED_FOCUSED: set by `open`, and by whoever types a view into a focused
-# pane: the pane was focused before the view could hear it.
+# OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
+# before the view can hear it.
 from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
-                         start_view, view_lock, view_mark, view_title, wait_ready)
+                         is_overlay_view, start_view, view_lock, view_mark, view_title, wait_ready)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -586,8 +586,10 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     # Unknown until herdr reports a change or a key arrives, unless `open`
     # says the pane was opened focused. herdr reports focus changes only,
     # and a pane opened in the background never had focus to lose:
-    # assuming focus at open would fetch in the background.
-    focused: bool | None = True if env.get(OPENED_FOCUSED) == "1" else None
+    # assuming focus at open would fetch in the background. A marked view
+    # (in an agent pane) is told its focus once it can hear it
+    # (fabric_deck.start_view), and trusts no hint.
+    focused = initial_focus(env)
     pending = b""
     size = None
     while True:
@@ -945,8 +947,13 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
                        ctx.get("focused_pane_id"))
         step = toggle_step(tab_roles(panes, tab), focused)
         if step is None:
+            # Known by what runs in it, not by its label, which a person
+            # may change.
             overlays = [p.get("pane_id") for p in panes
-                        if tab is not None and p.get("tab_id") == tab and p.get("label") == OVERLAY_TITLE]
+                        if tab is not None and p.get("tab_id") == tab and (
+                            p.get("label") == OVERLAY_TITLE or any(
+                                is_overlay_view(fp.get("argv") or [])
+                                for fp in herdr.process_info(p.get("pane_id")).get("foreground_processes") or []))]
             for overlay in overlays:
                 herdr.call("plugin", "pane", "close", overlay)
             # Opened before the lock is let go, so the next press finds it.
@@ -1105,6 +1112,13 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         sys.stdout.write(closing(in_tab))
         sys.stdout.flush()
+
+
+def initial_focus(env) -> bool | None:
+    """A view's focus before any report: True for an overlay `open` focused,
+    unknown otherwise, and unknown for a marked view whatever it is told,
+    which its start reports once it can hear (fabric_deck.start_view)."""
+    return True if env.get(OPENED_FOCUSED) == "1" and not env.get(VIEW_START) else None
 
 
 def in_tab_title(login: str | None, env) -> str | None:

@@ -318,7 +318,7 @@ class FakeHerdr(Herdr):
             return {}
         if head == ("pane", "process-info"):
             return {"process_info": self.proc[args[3]]}
-        if head[0] == "pane" and head[1] in ("run", "report-agent", "report-metadata", "release-agent"):
+        if head[0] == "pane" and head[1] in ("run", "send-text", "report-agent", "report-metadata", "release-agent"):
             return {}
         if args[:3] == ("plugin", "pane", "open"):
             if not self.plugin_linked:
@@ -921,8 +921,7 @@ class Restore(unittest.TestCase):
         h.deck.restore(0)
         h.deck.follow(1)
         (typed,) = herdr.runs("p3")
-        self.assertTrue(typed.startswith("env FABRIC_VIEW_OPENED_FOCUSED=1 FABRIC_VIEW_START="), typed)
-        self.assertTrue(typed.endswith(" " + agent_view_command("ui")))
+        self.assertEqual(typed, VIEW, "marked, as every start")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle
@@ -978,6 +977,43 @@ class Restore(unittest.TestCase):
             fabric_deck.view_lock = real_lock
         self.assertEqual(herdr.runs("p3"), [VIEW])
         self.assertEqual(held, [LOCK_DIR.name, "released"])
+
+    def test_a_focused_start_left_while_starting_is_told_once_it_can_hear(self):
+        import fabric_deck
+        for still_there, told in ((True, [("pane", "send-text", "p3", "\x1b[I")]),
+                                  (False, [("pane", "send-text", "p3", "\x1b[O")])):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [("p3", "agent", BARE)])
+            herdr.panes["p3"]["focused"] = True
+            looks = []
+
+            def sleep(_):
+                looks.append(1)
+                if len(looks) == 2:   # the view sets its title; the person may have gone
+                    herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK),
+                                             focused=still_there)
+
+            fabric_deck.start_view(herdr, "p3", "ui", True, sleep)
+            sent = [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
+            self.assertEqual(sent, told, still_there)
+
+    def test_a_view_that_never_reports_ready_is_told_nothing(self):
+        # It holds its focus unknown: it fetches at a key or a real report,
+        # never on a snapshot that may be stale by the time it can hear.
+        import fabric_deck
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p3", "agent", BARE)])
+        herdr.panes["p3"]["focused"] = True
+        fabric_deck.start_view(herdr, "p3", "ui", True, lambda _: None)
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [])
+
+    def test_an_overlay_is_known_by_what_runs_in_it(self):
+        import fabric_deck
+        argv = BOARD["foreground_processes"][0]["argv"][:-1] + ["agent"]
+        self.assertTrue(fabric_deck.is_overlay_view(argv))
+        self.assertFalse(fabric_deck.is_overlay_view(argv[:-1] + ["board"]))
+        self.assertFalse(fabric_deck.is_overlay_view(in_view("ui")["foreground_processes"][0]["argv"]))
+        self.assertFalse(fabric_deck.is_overlay_view(["vim", "agent"]))
 
     def test_an_unfocused_start_holds_on_until_the_shell_hands_on(self):
         import fabric_deck

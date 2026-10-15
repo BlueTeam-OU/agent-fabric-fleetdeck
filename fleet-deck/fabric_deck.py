@@ -303,27 +303,29 @@ def is_board(argv: list[str]) -> bool:
 # The mode of a `waiting` entry for the agent pane: not a moveto, but the
 # agent's screen started in the operator's own shell there.
 VIEW = "view"
-# Tells a view it starts focused (fabric_view.run): herdr reports focus
+# Tells an overlay it opens focused (fabric_view.run): herdr reports focus
 # changes only, and a pane focused before the view turns reporting on never
-# sends it one.
+# sends it one. An agent pane's view is told its focus by its start instead.
 OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
+# The terminal's focus reports (DECSET 1004), as a view reads them.
+FOCUS_IN_REPORT, FOCUS_OUT_REPORT = "\x1b[I", "\x1b[O"
 # This start's own mark, which the view puts in its title (view_title): a
 # title an earlier view left in the pane must not read as this one ready.
+# A view started with one holds its focus unknown until a report arrives.
 VIEW_START = "FABRIC_VIEW_START"
 
 
-def agent_view_command(login: str, focused: bool = False, start: str | None = None) -> str:
+def agent_view_command(login: str, start: str | None = None) -> str:
     """What the deck, or the toggle, types into an agent pane at the
     operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
     fetches at its first focus, and q and Esc do not end it). Not `exec`: a
     view that cannot start leaves its reason on the screen and the pane in
-    place, and the toggle starts it again at the next press. Whether it
-    starts focused, and its start's mark, go through env(1): a csh-family
-    shell (tcsh is among SHELLS) has no NAME=value prefix, and env execs
-    the view, so its argv is still is_agent_view's."""
+    place, and the toggle starts it again at the next press. Its start's
+    mark goes through env(1): a csh-family shell (tcsh is among SHELLS)
+    has no NAME=value prefix, and env execs the view, so its argv is still
+    is_agent_view's."""
     command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
-    settings = [f"{OPENED_FOCUSED}=1"] * focused + [f"{VIEW_START}={start}"] * bool(start)
-    return " ".join(["env", *settings, command]) if settings else command
+    return f"env {VIEW_START}={start} {command}" if start else command
 
 
 def view_title(login: str, start: str | None = None) -> str:
@@ -384,16 +386,26 @@ def new_mark() -> str:
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
     """Type the agent's screen into a bare pane, under view_lock, and hold
     on until the next one to look cannot misread the pane: until the shell
-    has handed its foreground on; and for a view told it starts focused,
-    until it sets its title, so a focus change made after this returns
-    reaches it rather than being dropped while it starts."""
+    has handed its foreground on; and, for a pane focused at the start,
+    until the view sets its title (it hears focus changes from then on) and
+    is told its focus as it is then.
+
+    A marked view holds its focus unknown, fetching nothing, until a focus
+    report or a key: the focus at the start is a snapshot, and herdr drops
+    every change made before the view turns reporting on. So the report is
+    the real one, read once the view can hear, and a view that never gets
+    it (it took longer than the bound) waits for a key, never fetches while
+    hidden."""
     # Every start is marked: the toggle reads a running view's mark
     # (view_mark) to know its title from one a killed view left behind.
     start = new_mark()
-    herdr.call("pane", "run", pane, agent_view_command(login, focused, start))
+    herdr.call("pane", "run", pane, agent_view_command(login, start))
     if focused:
         sleep(VIEW_POLL_S)
-        wait_ready(herdr, pane, login, sleep, start)
+        if wait_ready(herdr, pane, login, sleep, start):
+            now = any(p.get("pane_id") == pane and p.get("focused") is True
+                      for p in herdr.call("pane", "list").get("panes", []))
+            herdr.call("pane", "send-text", pane, FOCUS_IN_REPORT if now else FOCUS_OUT_REPORT)
         return
     # Unfocused (the deck's restore): the shell's foreground handed on is
     # enough here; the toggle waits for the view to hear focus before it
@@ -416,6 +428,13 @@ def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
         return None
     prefix = f"{VIEW_START}=".encode()
     return next((e[len(prefix):].decode("ascii", "replace") for e in entries if e.startswith(prefix)), None)
+
+
+def is_overlay_view(argv: list[str]) -> bool:
+    """fabric-view's agent overlay (the plugin's `agent` pane), as its
+    launcher leaves it: the mode alone, last."""
+    return bool(argv) and argv[-1] == "agent" and any(
+        "from fabric_view import main" in arg for arg in argv[1:])
 
 
 def is_agent_view(argv: list[str], login: str) -> bool:
