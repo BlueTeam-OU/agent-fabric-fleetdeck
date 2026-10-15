@@ -1063,7 +1063,7 @@ class Restore(unittest.TestCase):
         failing["on"] = True
         h.deck.follow(2)  # raises nothing
         h.deck.follow(3)
-        self.assertEqual(sum("timed out" in line for line in h.logs), 1, "said once")
+        self.assertEqual(sum("waiting to hear their focus" in line for line in h.logs), 1, "said once")
         self.assertIn(("ui", "p3"), h.deck.unheard, "still waiting")
         failing["on"] = False
         import fabric_deck

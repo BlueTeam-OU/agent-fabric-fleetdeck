@@ -1467,7 +1467,6 @@ class Deck:
         except Exception as error:  # looked at again next pass, within the bound
             reason = printable(str(error))
             self._say(f"hear:{reason}", f"agent screens waiting to hear their focus: {reason}")
-            self.mapped_at = None  # the map is read again first, as after any failed look
             panes = []
         for (login, pane), (mark, since) in list(self.unheard.items()):
             if view_ready(panes, pane, login, mark):
