@@ -21,6 +21,7 @@ server. The adapters at the bottom run the real commands.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime
 import fcntl
 import ipaddress
@@ -164,6 +165,9 @@ class AccountTab:
     panes: dict[str, str]
     adopt: str | None = None
     undetermined: bool = False
+    # Further tabs carrying the same login, which the deck leaves to the
+    # operator: each may hold a harness pane of its own.
+    others: int = 0
 
 
 def read_tab(login: str, tab_id: str, workspace_id: str, panes: list[PaneInfo]) -> AccountTab:
@@ -537,7 +541,8 @@ def _interactive_shell(argv: list[str]) -> bool:
         and set(arg[1:]) <= _PROMPT_SHORT_OPTIONS) for arg in argv[1:])
 
 
-def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:
+def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None,
+                sole_pane: bool = False) -> bool | None:
     """Whether a harness runs in a pane entered over ssh, from the stream.
     sshd starts the account's session, so its harness is no descendant of
     the pane's `ssh` and the /proc walk cannot see it. What links the two is
@@ -552,11 +557,21 @@ def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> boo
     pane to a session, and the account's live session is taken as the
     pane's, as before ssh_client existed: a session started elsewhere then
     reads as running here, and an Enter there is still refused by
-    fabric-resume. A stale or missing record says nothing (None)."""
+    fabric-resume. A stale or missing record says nothing (None).
+
+    A session whose ssh connected before enter-ssh recorded ssh_client has
+    no link either, and the deck that kept it in memory may have restarted
+    since. When no session of the record carries an ssh_client, exactly one
+    is live, and this is the login's `sole_pane` in the deck, that session
+    is taken as this pane's, as before ssh_client existed. Any ssh_client
+    in the record, a second live session or a second tab of the login is
+    left to the link: two candidates are never guessed between."""
     if live is None or not live.fresh:
         return None
     if not endpoints:
         return live.count >= 1
+    if sole_pane and not live.linked and live.count == 1:
+        return True
     return not live.ssh_clients.isdisjoint(endpoints)
 
 
@@ -880,6 +895,8 @@ class Deck:
     )
     tracks: dict[str, Track] = field(default_factory=dict)
     harness_pane: dict[str, str] = field(default_factory=dict)
+    # Logins carried by more than one tab at the last map read.
+    shared: set[str] = field(default_factory=set)
     # login -> when its harness pane began waiting for the restore decision
     pending: dict[str, float] = field(default_factory=dict)
     # Accounts whose live = 0 dates from before their restore decision: no fall
@@ -1326,7 +1343,8 @@ class Deck:
             return Seen(present=True)
         if found.via == SSH:
             return Seen(present=True, moveto=True, mode=found.mode,
-                        harness=ssh_harness(self.live(login), self.ssh_endpoints(found.pid)))
+                        harness=ssh_harness(self.live(login), self.ssh_endpoints(found.pid),
+                                            sole_pane=login not in self.shared))
         tree = parents if parents is not None else self.parents()
         return Seen(present=True, moveto=True, harness=harness_under(found.pid, tree, self.argv),
                     mode=found.mode)
@@ -1457,11 +1475,13 @@ class Deck:
 
     def _tabs(self, logins: set[str], quiet: bool = False) -> dict[str, AccountTab] | None:
         try:
-            return self.herdr.account_tabs(logins)
+            tabs = self.herdr.account_tabs(logins)
         except Exception as error:
             if not quiet:
                 self.log(f"cannot read herdr's tabs: {printable(str(error))}")
             return None
+        self.shared = {login for login, tab in tabs.items() if tab.others}
+        return tabs
 
     def _say(self, key: str, line: str) -> None:
         if key not in self.said:
@@ -1564,7 +1584,9 @@ class Herdr:
             listing = self.call("tab", "list", "--workspace", workspace["workspace_id"])
             for tab in listing.get("tabs", []):
                 label = tab.get("label")
-                if label in logins and label not in tabs and tab["tab_id"] in by_tab:
+                if label in tabs:
+                    tabs[label] = dataclasses.replace(tabs[label], others=tabs[label].others + 1)
+                elif label in logins and tab["tab_id"] in by_tab:
                     tabs[label] = read_tab(label, tab["tab_id"], workspace["workspace_id"],
                                            by_tab[tab["tab_id"]])
         return tabs

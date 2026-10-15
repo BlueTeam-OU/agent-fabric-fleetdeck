@@ -118,6 +118,10 @@ class Live:
     # The ssh client endpoint (address, port) of each live session entered
     # over ssh: sshd's SSH_CLIENT, as the stream's `ssh_client` carries it.
     ssh_clients: frozenset[Endpoint] = frozenset()
+    # Whether any session of the record, live or over, carries an ssh_client:
+    # the account's sessions are linked to their panes by the record, and none
+    # is taken as a pane's without that link (fabric_deck.ssh_harness).
+    linked: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,8 +181,9 @@ def live_from_record(sessions, ts_age_s: float | None) -> Live | None:
     first_blocked = next((s for s in live if s[1] == "blocked"), None)
     reason = first_blocked[2] if first_blocked is not None and len(first_blocked) > 2 else None
     clients = frozenset(s[3] for s in live if len(s) > 3 and s[3] is not None)
+    linked = any(len(s) > 3 and s[3] is not None for s in sessions)
     return Live(count=len(live), state=top, fresh=ts_age_s <= STALE_AFTER_S,
-                reason=known_reason(reason), ssh_clients=clients)
+                reason=known_reason(reason), ssh_clients=clients, linked=linked)
 
 
 def step(track: Track, seen: Seen, live: Live | None, now: float) -> tuple[Track, Arm | None]:

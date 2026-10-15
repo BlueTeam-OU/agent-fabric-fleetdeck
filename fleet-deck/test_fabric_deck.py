@@ -1299,6 +1299,44 @@ class Restore(unittest.TestCase):
         self.assertEqual(h.herdr.runs(), [])
         self.assertIn("idle=shell", h.herdr.reports("p0")[-1])
 
+    def test_the_sole_ssh_pane_of_an_account_none_of_whose_sessions_is_linked_carries_its_one_session(self):
+        # Its ssh connected before enter-ssh recorded ssh_client, and the deck
+        # that kept the link in memory restarted since.
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell", pid=21)),
+                             ("p2", "status", in_ssh("ui", WATCH, pid=22)), ("p3", "agent", in_view("ui"))])
+        h = Harness(herdr)
+        h.sockets[20] = frozenset({endpoint(*PANE_END)})
+        h.records["ui"] = ssh_record("ui", ("working", None), ("gone", None))
+        h.deck.restore(0)
+        h.deck.follow(RESTORE_SETTLE_S)
+        self.assertEqual(h.herdr.runs(), [])
+        self.assertEqual(h.herdr.reports("p0")[1][-1], "working", "after the account")
+        self.assertEqual(h.deck.tracks["ui"].state, State.RUNNING)
+
+    def test_an_unlinked_session_is_not_guessed_for_a_pane_with_a_rival(self):
+        # Two live sessions, a second tab of the login, or a link anywhere in
+        # the record: the link decides, and none is found for this pane.
+        cases = (("two live", (("working", None), ("idle", None)), False),
+                 ("second tab", (("working", None),), True),
+                 ("linked elsewhere", (("working", None), ("idle", ("10.0.0.5", 40001))), False),
+                 ("linked and over", (("working", None), ("gone", ("10.0.0.5", 40001))), False))
+        for name, sessions, second_tab in cases:
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell", pid=21)),
+                                 ("p2", "status", in_ssh("ui", WATCH, pid=22)), ("p3", "agent", in_view("ui"))])
+            if second_tab:
+                herdr.add_tab("ui", [("q0", "harness", in_ssh("ui", WAIT, pid=30))])
+            h = Harness(herdr)
+            h.sockets[20] = frozenset({endpoint(*PANE_END)})
+            h.records["ui"] = ssh_record("ui", *sessions)
+            h.deck.restore(0)
+            h.deck.follow(RESTORE_SETTLE_S)
+            self.assertEqual(h.herdr.runs(), [], name)
+            self.assertEqual(h.herdr.reports("p0")[-1][-1], "unknown=running elsewhere", name)
+            self.assertEqual(h.deck.tracks["ui"].state, State.ELSEWHERE, name)
+            self.assertEqual(h.herdr.reports("q0"), [], name)
+
     def test_an_ssh_pane_with_a_stale_record_is_left_as_it_was(self):
         # With and without the pane's own end read, the record carrying it or not.
         for sockets, stale in ((None, record("ui", "working", age_s=10_000)),
