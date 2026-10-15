@@ -281,6 +281,19 @@ class Toggle(unittest.TestCase):
         self.assertEqual(len(opened), 1)
         self.assertFalse(any(c[1] == "zoom" for c in herdr.calls))
 
+    def test_a_press_left_behind_while_the_view_came_up_does_not_take_the_person_back(self):
+        starting = [dict(p, terminal_title="bash") if p["pane_id"] == "a" else p for p in TAB_PANES]
+        herdr = FakeHerdr([dict(p, focused=p["pane_id"] == "h") for p in starting], {"a": VIEWING})
+        looks = []
+
+        def sleep(_):
+            looks.append(1)
+            if len(looks) == 2:   # ready, and the person has gone to t2 meanwhile
+                herdr.panes = [dict(p, focused=p["pane_id"] == "a2") for p in TAB_PANES]
+
+        fv.toggle(context(focused="h"), herdr, sleep=sleep)
+        self.assertEqual(acts(herdr), [], "no zoom pulls them back")
+
     def test_a_press_from_a_tab_the_person_has_left_does_nothing(self):
         # Pressed in t1, run after the person went to t2: FleetDeck opens an
         # overlay in the tab shown, and zooms whatever it is told.

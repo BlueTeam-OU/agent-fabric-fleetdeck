@@ -936,8 +936,7 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
     tab = ctx.get("tab_id")
     with view_lock(env.get(LOCK_DIR_ENV)):
         panes = herdr.call("pane", "list").get("panes", [])
-        if any(p.get("focused") is True for p in panes) and \
-                not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes):
+        if left_tab(panes, tab):
             # The person has left the tab the press was made in (presses
             # queued, then another tab): FleetDeck would open an overlay in
             # the tab shown now, which no press here was about.
@@ -953,6 +952,13 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
             # Opened before the lock is let go, so the next press finds it.
             return 0 if overlays else open_overlay(env)
         return _turn(ctx, herdr, step, sleep)
+
+
+def left_tab(panes: list[dict], tab: str | None) -> bool:
+    """Whether the person is now in another tab than `tab`: FleetDeck marks
+    one pane focused, the active tab's."""
+    return any(p.get("focused") is True for p in panes) and \
+        not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes)
 
 
 def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
@@ -985,6 +991,10 @@ def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None
             # in the plugin's log; the screen fetches at its first key.
             print(f"fabric-view toggle: {login}'s agent screen in {pane} did not report ready "
                   "within the bound; shown, and it fetches at the first key", file=sys.stderr)
+        if left_tab(herdr.call("pane", "list").get("panes", []), ctx.get("tab_id")):
+            # The person went elsewhere while the view came up: the zoom
+            # would focus this pane and take them back to the tab they left.
+            return 0
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 
