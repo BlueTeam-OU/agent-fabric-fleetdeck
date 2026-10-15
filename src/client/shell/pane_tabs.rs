@@ -103,8 +103,9 @@ pub(super) fn pane_tab_keys(bindings: &[IndexedKeybind], cells: usize) -> Vec<Op
 
 /// What each cell says, the fullest form whose cells all fit `width` whole:
 /// key and name ("F1 harness"), the name alone, then the key alone (the
-/// name's first letter where no key picks it). Every cell keeps its place,
-/// its click and its mark at any width; a cell is never cut.
+/// name's first letter where no key picks it). Down to the key-only form's
+/// width (19 columns with the default keys) every cell stays whole, with its
+/// click and its mark; narrower, the last form is drawn anyway and cut.
 fn pane_tab_cells(row: &[PaneTab<'_>], keys: &[Option<String>], width: u16) -> Vec<String> {
     let name = |form: u8, index: usize, tab: &PaneTab<'_>| {
         let key = keys.get(index).and_then(Option::as_deref);
@@ -166,8 +167,8 @@ pub(super) fn render_pane_tab_row(
         } else {
             (format!(" {name} "), plain)
         };
-        // Past the shortest form (a window narrower than four key cells) a
-        // cell is cut at the edge rather than dropped.
+        // Narrower than the key-only form: the cell crossing the edge is cut,
+        // and those past it are not drawn, nor clickable.
         let width = display_width(&text).min(area.right().saturating_sub(x));
         if width == 0 {
             break;

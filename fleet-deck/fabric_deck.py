@@ -1483,7 +1483,8 @@ class Deck:
             # may have moved while this view's own viewer stays on it. Waiting
             # while it reads unfocused, a later focus-in still reaches it.
             focused = any(p.get("pane_id") == pane and p.get("focused") is True for p in panes)
-            if focused and view_ready(panes, pane, login, mark):
+            ready = view_ready(panes, pane, login, mark)
+            if focused and ready:
                 try:
                     with view_lock(self.lock_dir):
                         tell_focus(self.herdr, pane, login)
@@ -1495,10 +1496,13 @@ class Deck:
                     del self.unheard[(login, pane)]
                     continue
             if now - since >= VIEW_HEARD_WAIT_S:
-                # Left to wait for a key, never fetching while hidden.
+                # Left to wait for a focus report or a key, never fetching while
+                # hidden. A ready view nobody picked meanwhile is the usual case
+                # after a restore, and nothing to say.
                 del self.unheard[(login, pane)]
-                self._say(f"{pane}:unheard", f"{login}: its agent screen in {pane} did not report "
-                          "ready; it fetches at its first key")
+                if not ready:
+                    self._say(f"{pane}:unheard", f"{login}: its agent screen in {pane} did not report "
+                              "ready; it fetches at its first key")
 
     def _restart_ended_views(self, now: float) -> None:
         """An agent pane whose screen was seen running and is now back at the

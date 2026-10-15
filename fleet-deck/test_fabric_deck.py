@@ -1174,6 +1174,28 @@ class Restore(unittest.TestCase):
         h.deck.follow(3)
         self.assertEqual(sent(), [("pane", "send-text", "p3", "\x1b[I")])
 
+    def test_a_ready_view_nobody_picks_is_dropped_without_a_word(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=False)
+        h.deck.follow(2 + fabric_deck.VIEW_HEARD_WAIT_S)
+        self.assertNotIn(("ui", "p3"), h.deck.unheard)
+        self.assertFalse(any("did not report ready" in line for line in h.logs), "it did report ready")
+
     def test_a_view_that_never_takes_its_focus_is_given_up_in_time(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
