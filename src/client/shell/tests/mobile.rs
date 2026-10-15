@@ -83,7 +83,11 @@ fn a_narrow_window_keeps_the_pane_row_under_its_header() {
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();
-    assert!(row.starts_with("[F1 harness]  F2 shell"), "{row:?}");
+    // 44 columns: the key-and-name form needs 46, so every cell is its name.
+    assert!(
+        row.starts_with("[harness]  shell   status   agent"),
+        "{row:?}"
+    );
     assert_click_on_agent_cell_zooms_it(&mut state);
 }
 

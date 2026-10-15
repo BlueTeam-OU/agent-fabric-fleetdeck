@@ -101,9 +101,49 @@ pub(super) fn pane_tab_keys(bindings: &[IndexedKeybind], cells: usize) -> Vec<Op
     keys
 }
 
-/// One cell per pane, named with the key that picks it. The picked one is
-/// drawn inverted, bold and in brackets, so the mark does not rest on colour
-/// alone; brackets and padding are the same width, so picking moves nothing.
+/// What each cell says, the fullest form whose cells all fit `width` whole:
+/// key and name ("F1 harness"), the name alone, then the key alone (the
+/// name's first letter where no key picks it). Every cell keeps its place,
+/// its click and its mark at any width; a cell is never cut.
+fn pane_tab_cells(row: &[PaneTab<'_>], keys: &[Option<String>], width: u16) -> Vec<String> {
+    let name = |form: u8, index: usize, tab: &PaneTab<'_>| {
+        let key = keys.get(index).and_then(Option::as_deref);
+        match (form, key) {
+            (0, Some(key)) => format!("{key} {}", tab.label),
+            (0 | 1, _) => tab.label.to_string(),
+            (_, Some(key)) => key.to_string(),
+            (_, None) => tab
+                .label
+                .chars()
+                .next()
+                .map(String::from)
+                .unwrap_or_default(),
+        }
+    };
+    let mut names = Vec::new();
+    for form in 0..3 {
+        names = row
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| name(form, index, tab))
+            .collect();
+        // Each cell is its name padded or bracketed by one on each side, one
+        // column between cells.
+        let needed: usize = names
+            .iter()
+            .map(|name| usize::from(display_width(name)) + 2)
+            .sum::<usize>()
+            + names.len().saturating_sub(1);
+        if needed <= usize::from(width) {
+            break;
+        }
+    }
+    names
+}
+
+/// One cell per pane. The picked one is drawn inverted, bold and in
+/// brackets, so the mark does not rest on colour alone; brackets and padding
+/// are the same width, so picking moves nothing.
 pub(super) fn render_pane_tab_row(
     buffer: &mut Buffer,
     area: Rect,
@@ -120,16 +160,14 @@ pub(super) fn render_pane_tab_row(
         .add_modifier(Modifier::BOLD);
     buffer.set_style(area, plain);
     let mut x = area.x;
-    for (index, tab) in row.iter().enumerate() {
-        let name = match keys.get(index).and_then(Option::as_deref) {
-            Some(key) => format!("{key} {}", tab.label),
-            None => tab.label.to_string(),
-        };
+    for (tab, name) in row.iter().zip(pane_tab_cells(row, keys, area.width)) {
         let (text, style) = if tab.selected {
             (format!("[{name}]"), picked)
         } else {
             (format!(" {name} "), plain)
         };
+        // Past the shortest form (a window narrower than four key cells) a
+        // cell is cut at the edge rather than dropped.
         let width = display_width(&text).min(area.right().saturating_sub(x));
         if width == 0 {
             break;
@@ -346,5 +384,31 @@ mod tests {
                 mode: PaneZoomMode::On,
             })
         );
+    }
+
+    #[test]
+    fn a_narrow_row_keeps_every_cell_whole_and_the_mark() {
+        let config = crate::config::Config::default();
+        let palette = crate::app::client_palette_from_config(&config);
+        let snapshot = account_tab("p3");
+        let labels = labels();
+        let row = pane_tab_row(&snapshot, &labels).expect("an account tab shows the row");
+        let keys = pane_tab_keys(&config.keybinds().select_pane_tab, row.len());
+        for (width, expected) in [
+            (35, " harness   shell   status  [agent]"),
+            (20, " F1   F2   F3  [F4]"),
+        ] {
+            let area = Rect::new(0, 0, width, 1);
+            let mut buffer = Buffer::empty(area);
+            let mut hits = ShellHitMap::default();
+            render_pane_tab_row(&mut buffer, area, &row, &keys, &palette, &mut hits);
+            let text: String = (0..width)
+                .map(|x| buffer[(x, 0)].symbol().to_string())
+                .collect();
+            assert_eq!(text.trim_end(), expected, "{width} columns");
+            assert_eq!(hits.pane_tabs.len(), 4, "{width}: every cell is clickable");
+            assert!(hits.pane_tabs.iter().all(|(rect, _)| rect.right() <= width));
+            assert_eq!(hits.pane_tabs[3].1, "p3");
+        }
     }
 }
