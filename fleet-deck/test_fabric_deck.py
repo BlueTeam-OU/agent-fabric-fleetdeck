@@ -1082,10 +1082,94 @@ class Restore(unittest.TestCase):
         herdr.panes["p0"]["label"] = "mine"  # the person took the harness pane over
         h.deck.follow(2 * PANE_MAP_REFRESH_S + 2)
         self.assertNotIn("ui", h.deck.harness_pane, "forgotten")
+        self.assertNotIn("ui", h.deck.agent_pane)
         herdr.proc["p3"] = BARE
         for at in range(3, 7):
             h.deck.follow(at * PANE_MAP_REFRESH_S + at)
         self.assertEqual(herdr.runs("p3"), [], "nothing typed into a tab no longer followed")
+
+    def test_an_agent_pane_a_person_took_over_or_closed_is_the_decks_no_more(self):
+        for change in ("relabel", "close"):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", four_panes("ui", "p"))
+            h = Harness(herdr)
+            h.records["ui"] = record("ui")
+            h.deck.restore(0)
+            h.deck.follow(PANE_MAP_REFRESH_S + 1)
+            if change == "relabel":
+                herdr.panes["p3"]["label"] = "mine"
+                herdr.proc["p3"] = BARE
+            else:
+                del herdr.panes["p3"]
+            for at in range(2, 6):
+                h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+            self.assertEqual(herdr.runs("p3"), [], change)
+            self.assertNotIn("ui", h.deck.agent_pane, change)
+            self.assertIn("ui", h.deck.harness_pane, f"{change}: the account is still followed")
+            looks = [c for c in herdr.calls if c[:2] == ("pane", "process-info") and c[-1] == "p3"]
+            self.assertLessEqual(len(looks), 2, f"{change}: not looked at every map read")
+
+    def test_a_view_whose_pane_fails_to_take_its_focus_is_told_at_the_next_pass(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
+        herdr.fail_once.add(("process-info", "p3"))
+        h.deck.follow(2)  # raises nothing
+        self.assertIn(("ui", "p3"), h.deck.unheard, "kept for the next pass")
+        h.deck.follow(3)
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
+                         [("pane", "send-text", "p3", "\x1b[I")])
+
+    def test_a_forgotten_account_has_no_view_left_waiting_to_hear(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertIn(("ui", "p3"), h.deck.unheard)
+        herdr.panes["p0"]["label"] = "mine"
+        h.deck.follow(PANE_MAP_REFRESH_S + 2)
+        self.assertNotIn(("ui", "p3"), h.deck.unheard)
+
+    def test_a_view_that_never_takes_its_focus_is_given_up_in_time(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+
+        def call(*args):
+            if args[:2] == ("pane", "send-text"):
+                raise RuntimeError("herdr pane send-text: exit 1: refused")
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
+        h.deck.follow(2)
+        self.assertIn(("ui", "p3"), h.deck.unheard)
+        h.deck.follow(2 + fabric_deck.VIEW_HEARD_WAIT_S)
+        self.assertNotIn(("ui", "p3"), h.deck.unheard, "bounded")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle

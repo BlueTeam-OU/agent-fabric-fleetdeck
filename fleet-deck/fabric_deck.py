@@ -1345,6 +1345,12 @@ class Deck:
             tab = tabs.get(login)
             if tab is None or tab.panes.get(HARNESS) != self.harness_pane[login]:
                 self._forget(login)
+        # The agent pane is checked as the harness is: one a person closed or
+        # relabelled is the deck's no more, its screen never started there again.
+        for login, pane in list(self.agent_pane.items()):
+            tab = tabs.get(login)
+            if tab is None or tab.panes.get(AGENT) != pane:
+                self._drop_agent_pane(login)
         if self.fleet_tab and self.fleet_unsettled is not None:
             self._restore_fleet_tab(recheck=self.fleet_unsettled)
         return True
@@ -1370,6 +1376,9 @@ class Deck:
             del self.waiting[key]
         # Its agent screen is the deck's no more either: never started again
         # in a pane the deck no longer follows.
+        self._drop_agent_pane(login)
+
+    def _drop_agent_pane(self, login: str) -> None:
         agent = self.agent_pane.pop(login, None)
         if agent is not None:
             self.view_seen.discard(agent)
@@ -1498,7 +1507,7 @@ class Deck:
                 continue
             try:
                 info = self.herdr.process_info(pane)
-            except Exception as error:  # looked at again at the next map read; a pane gone is _forget's
+            except Exception as error:  # looked at again at the next map read; a pane gone, _refresh drops
                 self._say(f"{pane}:look:{printable(str(error))}",
                           f"{login}: its agent pane {pane} could not be looked at: {printable(str(error))}")
                 continue
