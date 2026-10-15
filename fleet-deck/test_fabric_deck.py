@@ -1086,6 +1086,12 @@ class Restore(unittest.TestCase):
         sent = [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
         self.assertEqual(len(sent), fabric_deck.FOCUS_READS, "nothing more into the shell")
 
+    def test_a_login_with_a_trailing_newline_is_no_login(self):
+        from fabric_deck import SAFE_LOGIN
+        self.assertTrue(SAFE_LOGIN.match("ui"))
+        for label in ("ui\n", "ui\nrm", "ui x", "Ui"):
+            self.assertIsNone(SAFE_LOGIN.match(label), repr(label))
+
     def test_a_shell_running_a_script_is_no_prompt_to_type_at(self):
         from fabric_deck import at_bare_shell
 
@@ -1098,7 +1104,8 @@ class Restore(unittest.TestCase):
         for argv in (["bash"], ["/bin/bash"], ["-bash"], ["bash", "-l"], ["zsh", "-i"], ["bash", "--norc"]):
             self.assertTrue(at_bare_shell(shell(*argv)), argv)
         for argv in (["bash", "-c", "read -r answer"], ["bash", "-lc", "read"], ["bash", "x.sh"], ["bash", "-c", "-x"],
-                     ["sh", "/usr/bin/script", "arg"], ["vim"]):
+                     ["sh", "/usr/bin/script", "arg"], ["vim"], ["fish", "--command=read"],
+                     ["fish", "-C", "read"], ["bash", "--rcfile", "x"], ["bash", "--", "-x"]):
             self.assertFalse(at_bare_shell(shell(*argv)), argv)
 
     def test_an_agent_pane_running_a_script_is_never_typed_into(self):

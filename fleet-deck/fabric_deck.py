@@ -108,7 +108,9 @@ BOARD_DIR = os.path.dirname(os.path.realpath(__file__))
 
 # A login is typed into the operator's shell as part of a moveto command, so
 # only a plain Linux login is ever used; anything else is skipped, said.
-SAFE_LOGIN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+# \Z, never $: `$` also matches before a trailing newline, and a login
+# typed into a shell with one would end the line there.
+SAFE_LOGIN = re.compile(r"\A[a-z_][a-z0-9_-]{0,31}\Z")
 
 
 @dataclass(frozen=True)
@@ -327,7 +329,8 @@ def agent_view_command(login: str, start: str | None = None) -> str:
     mark goes through env(1): a csh-family shell (tcsh is among SHELLS)
     has no NAME=value prefix, and env execs the view, so its argv is still
     is_agent_view's."""
-    command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
+    command = (f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent "
+               f"--agent {shlex.quote(login)} --in-tab")
     return f"env {VIEW_START}={start} {command}" if start else command
 
 
@@ -518,12 +521,20 @@ def at_bare_shell(info: dict) -> bool:
     return bool(fg) and all(_interactive_shell(p.get("argv") or []) for p in fg)
 
 
+# The options a shell may have and still be at its prompt, by allowlist: any
+# other (-c, fish's --command=, a script, --rcfile's value) may run a command
+# that reads what is typed. Short ones may cluster (-il).
+_PROMPT_SHORT_OPTIONS = frozenset("ilsp")
+_PROMPT_LONG_OPTIONS = frozenset({"--login", "--interactive", "--norc", "--noprofile", "--noediting",
+                                  "--no-config", "--no-rcs", "--posix", "--private"})
+
+
 def _interactive_shell(argv: list[str]) -> bool:
     if not argv or os.path.basename(argv[0]).lstrip("-") not in SHELLS:
         return False
-    # A short-option cluster holding c (-c, -lc) takes a command; a long
-    # option (--norc, --rcfile) is just an option.
-    return all(arg.startswith("-") and (arg.startswith("--") or "c" not in arg[1:]) for arg in argv[1:])
+    return all(arg in _PROMPT_LONG_OPTIONS or (
+        arg.startswith("-") and not arg.startswith("--") and len(arg) > 1
+        and set(arg[1:]) <= _PROMPT_SHORT_OPTIONS) for arg in argv[1:])
 
 
 def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:

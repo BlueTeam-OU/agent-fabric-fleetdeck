@@ -668,13 +668,14 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
         # report queued while the view started (a second press moving the
         # focus away) is applied first, so nothing is fetched for a pane
         # already hidden. The first fetch waits one tick for it.
-        (agent_view or view_of(nav.screen)).tick(focused)
-        # The same for `r`: run once the focus that came with it is known, and
-        # only while focused. Pressed and left at once, it waits for the
-        # focus to come back rather than fetching for a hidden pane.
+        # `r` too: run once the focus that came with it is known, and only
+        # while focused (pressed and left at once, it waits for the focus to
+        # come back). Before the tick: a section the tick would start unforced
+        # is then already running, forced, as `r` asks.
         if refetch_asked is not None and focused is True:
             refetch_asked.refetch()
             refetch_asked = None
+        (agent_view or view_of(nav.screen)).tick(focused)
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,

@@ -281,6 +281,11 @@ class Toggle(unittest.TestCase):
             fv.open_overlay = real
         self.assertEqual(opened, [], "said, and nothing opened beside it")
 
+    def test_a_tab_label_ending_in_a_newline_is_never_typed(self):
+        herdr = FakeHerdr(TAB_PANES, {"a": BARE})
+        fv.toggle(context(focused="h", label="ui\n"), herdr, sleep=lambda _: None)
+        self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")], "shown, nothing typed")
+
     def test_a_script_in_the_agent_pane_is_never_typed_into(self):
         script = {"shell_pid": 10, "foreground_process_group_id": 10,
                   "foreground_processes": [{"pid": 10, "argv": ["bash", "-c", "read -r answer"]}]}
