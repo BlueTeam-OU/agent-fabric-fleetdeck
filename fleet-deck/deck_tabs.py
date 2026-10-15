@@ -3,14 +3,16 @@
 The contract is agent-fabric's docs/fleet-deck/tab-states.md (#115,
 27452bd6). Two observations decide a pane's state: whether moveto runs in
 its foreground, and whether a harness runs under that moveto. The account's
-stream record only tells a pane with no harness whether its session runs
-somewhere else. Everything here is pure: the run loop observes, calls
+stream record tells a pane with no harness whether its session runs
+somewhere else, and a pane entered over ssh whether its harness runs
+(fabric_deck.ssh_harness). Everything here is pure: the run loop observes, calls
 `step`, and carries out the one re-arm it may return.
 """
 
 from __future__ import annotations
 
 import enum
+import ipaddress
 import os
 import re
 from dataclasses import dataclass, replace
@@ -79,6 +81,26 @@ class Seen:
     mode: str | None = None
 
 
+Endpoint = tuple["ipaddress.IPv4Address | ipaddress.IPv6Address", int]
+
+
+def endpoint(addr, port) -> Endpoint | None:
+    """An address and a port as the deck compares them, or None when either
+    is not one. An IPv4-mapped IPv6 address is its IPv4 form: a socket
+    opened as v6 that carried v4 shows the mapped form, sshd the plain one."""
+    if not isinstance(addr, str) or isinstance(port, bool) or not isinstance(port, int):
+        return None
+    if not 0 < port < 65536:
+        return None
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip, port
+
+
 @dataclass(frozen=True)
 class Live:
     """The account's newest stream record, reduced to what the machine uses."""
@@ -89,6 +111,9 @@ class Live:
     # Why that session waits on a person, while it is blocked and the stream
     # says; None otherwise.
     reason: str | None = None
+    # The ssh client endpoint (address, port) of each live session entered
+    # over ssh: sshd's SSH_CLIENT, as the stream's `ssh_client` carries it.
+    ssh_clients: frozenset[Endpoint] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -136,18 +161,20 @@ SAME_SESSION_S = 5
 
 
 def live_from_record(sessions, ts_age_s: float | None) -> Live | None:
-    """`sessions` are (session, state) or (session, state, reason) tuples of
-    the newest record; None when the account has no record. The reason is
-    the first blocked session's, as fleet.py takes the first listed among
-    equals for the attention it derives, so the tab and the board agree."""
+    """`sessions` are (session, state[, reason[, ssh_client]]) tuples of the
+    newest record, ssh_client an Endpoint or None; None when the account
+    has no record. The reason is the first blocked session's, as fleet.py
+    takes the first listed among equals for the attention it derives, so
+    the tab and the board agree."""
     if ts_age_s is None:
         return None
     live = [s for s in sessions if s[1] in LIVE_STATES]
     top = next((state for state in LIVE_ORDER if any(s[1] == state for s in live)), "none")
     first_blocked = next((s for s in live if s[1] == "blocked"), None)
     reason = first_blocked[2] if first_blocked is not None and len(first_blocked) > 2 else None
+    clients = frozenset(s[3] for s in live if len(s) > 3 and s[3] is not None)
     return Live(count=len(live), state=top, fresh=ts_age_s <= STALE_AFTER_S,
-                reason=known_reason(reason))
+                reason=known_reason(reason), ssh_clients=clients)
 
 
 def step(track: Track, seen: Seen, live: Live | None, now: float) -> tuple[Track, Arm | None]:

@@ -20,11 +20,13 @@ server. The adapters at the bottom run the real commands.
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
@@ -43,6 +45,7 @@ from deck_tabs import (
     WATCH,
     Arm,
     Before,
+    Endpoint,
     Live,
     Seen,
     Shown,
@@ -52,6 +55,7 @@ from deck_tabs import (
     before_live,
     classify,
     display,
+    endpoint,
     is_harness,
     known_reason,
     live_from_record,
@@ -173,6 +177,9 @@ class Session:
     # Why a blocked session waits on a person (deck_tabs.REASONS), when the
     # stream says; any other value is read as not said.
     reason: str | None = None
+    # sshd's client endpoint, for a session entered over ssh (enter-ssh);
+    # None for any other, and for a value that is not an address and port.
+    ssh_client: Endpoint | None = None
 
 
 @dataclass(frozen=True)
@@ -207,7 +214,7 @@ def parse_state_line(line: str) -> StateRecord | None:
     rows = row.get("sessions")
     sessions = tuple(
         Session(s["session"], text_or(s.get("state"), "unknown"), text_or(s.get("since"), ""),
-                known_reason(s.get("reason")))
+                known_reason(s.get("reason")), ssh_client_of(s.get("ssh_client")))
         for s in (rows if isinstance(rows, list) else [])
         if isinstance(s, dict) and isinstance(s.get("session"), str) and s["session"]
     )
@@ -224,6 +231,10 @@ def parse_state_line(line: str) -> StateRecord | None:
         last_session=text_or(row.get("last_session"), None),
         resumable=resumable if isinstance(resumable, bool) else None,
     )
+
+
+def ssh_client_of(value) -> Endpoint | None:
+    return endpoint(value.get("addr"), value.get("port")) if isinstance(value, dict) else None
 
 
 def text_or(value, default):
@@ -260,7 +271,7 @@ def live_of(record: StateRecord | None, now_utc: datetime.datetime) -> Live | No
     if posted is None:
         return None
     age = (now_utc - posted).total_seconds()
-    return live_from_record([(s.session, s.state, s.reason) for s in record.sessions], age)
+    return live_from_record([(s.session, s.state, s.reason, s.ssh_client) for s in record.sessions], age)
 
 
 def printable(text: str) -> str:
@@ -297,18 +308,83 @@ def at_bare_shell(info: dict) -> bool:
     return bool(fg) and all(os.path.basename((p.get("argv") or ["?"])[0]).lstrip("-") in SHELLS for p in fg)
 
 
-def ssh_harness(live: Live | None) -> bool | None:
+def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:
     """Whether a harness runs in a pane entered over ssh, from the stream.
     sshd starts the account's session, so its harness is no descendant of
-    the pane's `ssh` and the /proc walk cannot see it; nothing the deck may
-    read links an ssh client to the sshd session it opened. The account's
-    live session is taken as this pane's: the deck armed it, and an Enter
-    in a second pane is refused by fabric-resume. A session started
-    elsewhere therefore reads as running here, never as `running
-    elsewhere`. A stale or missing record says nothing (None)."""
+    the pane's `ssh` and the /proc walk cannot see it. What links the two is
+    the connection: `endpoints` are the client ends of the pane's own ssh
+    (proc_ssh_endpoints), and a session enter-ssh started carries sshd's
+    view of the same end (`ssh_client`). A live session with one of them is
+    this pane's; none is a session started elsewhere.
+
+    With no endpoint read (a ProxyJump or ProxyCommand ssh talks through a
+    pipe, a ControlMaster client through a unix socket, and a pane read
+    while ssh connects has no established socket yet), nothing links the
+    pane to a session, and the account's live session is taken as the
+    pane's, as before ssh_client existed: a session started elsewhere then
+    reads as running here, and an Enter there is still refused by
+    fabric-resume. A stale or missing record says nothing (None)."""
     if live is None or not live.fresh:
         return None
-    return live.count >= 1
+    if not endpoints:
+        return live.count >= 1
+    return not live.ssh_clients.isdisjoint(endpoints)
+
+
+# /proc/net/tcp's state column for an established connection (include/net/tcp_states.h).
+TCP_ESTABLISHED = "01"
+
+
+def proc_ssh_endpoints(pid: int, proc_root: str = "/proc") -> frozenset[Endpoint] | None:
+    """The local ends of the established TCP connections of `pid`, the
+    pane's ssh: the operator's own process, so its fds are readable. The
+    inode behind each `socket:[<inode>]` fd is looked up in the process's
+    own net/tcp and net/tcp6. None when none is found."""
+    fd_dir = os.path.join(proc_root, str(pid), "fd")
+    inodes = set()
+    try:
+        names = os.listdir(fd_dir)
+    except OSError:
+        return None
+    for name in names:
+        try:
+            target = os.readlink(os.path.join(fd_dir, name))
+        except OSError:
+            continue
+        if target.startswith("socket:[") and target.endswith("]"):
+            inodes.add(target[len("socket:["):-1])
+    found = set()
+    for table in ("tcp", "tcp6"):
+        try:
+            with open(os.path.join(proc_root, str(pid), "net", table), encoding="ascii", errors="replace") as f:
+                rows = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            # sl local rem st tx:rx tr:when retrnsmt uid timeout inode ...
+            if len(fields) < 10 or fields[3] != TCP_ESTABLISHED or fields[9] not in inodes:
+                continue
+            end = proc_net_endpoint(fields[1])
+            if end is not None:
+                found.add(end)
+    return frozenset(found) or None
+
+
+def proc_net_endpoint(field: str) -> Endpoint | None:
+    """`0100007F:A2B4` as /proc/net/tcp{,6} writes it: the address as 32-bit
+    words, each in the host's byte order, and the port in hex."""
+    addr, _, port = field.partition(":")
+    try:
+        raw = bytes.fromhex(addr)
+        number = int(port, 16)
+    except ValueError:
+        return None
+    if len(raw) not in (4, 16):
+        return None
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    return endpoint(str(ipaddress.ip_address(raw)), number)
 
 
 def proc_parents(proc_root: str = "/proc") -> dict[int, int]:
@@ -565,6 +641,7 @@ class Deck:
     catalog: dict | None
     parents: Callable[[], dict[int, int]]
     argv: Callable[[int], list[str]]
+    ssh_endpoints: Callable[[int], frozenset[Endpoint] | None]
     load: Callable[[], dict[str, Before] | None]
     save: Callable[[dict[str, Before]], None]
     server: Callable[[], tuple[int, int] | None]
@@ -1000,7 +1077,8 @@ class Deck:
             # account's moveto, and not the deck's to judge.
             return Seen(present=True)
         if found.via == SSH:
-            return Seen(present=True, moveto=True, harness=ssh_harness(self.live(login)), mode=found.mode)
+            return Seen(present=True, moveto=True, mode=found.mode,
+                        harness=ssh_harness(self.live(login), self.ssh_endpoints(found.pid)))
         tree = parents if parents is not None else self.parents()
         return Seen(present=True, moveto=True, harness=harness_under(found.pid, tree, self.argv),
                     mode=found.mode)
@@ -1503,6 +1581,7 @@ def main(argv: list[str] | None = None) -> int:
         catalog=load_catalog(args.catalog),
         parents=proc_parents,
         argv=proc_argv,
+        ssh_endpoints=proc_ssh_endpoints,
         load=lambda: load_befores(path),
         save=lambda befores: save_befores(path, befores),
         server=lambda: server_instance(socket_path),

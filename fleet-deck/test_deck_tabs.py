@@ -30,6 +30,7 @@ from deck_tabs import (
     classify,
     display,
     is_harness,
+    endpoint,
     live_from_record,
     moveto_in,
     SSH,
@@ -59,6 +60,18 @@ class Live_(unittest.TestCase):
         self.assertIsNone(live_from_record([("b", "blocked", ["question"])], 10).reason)
         # A reason left on a session that is no longer blocked is not one.
         self.assertIsNone(live_from_record([("b", "idle", "question")], 10).reason)
+
+    def test_the_ssh_clients_are_the_live_sessions_only(self):
+        here, there = endpoint("127.0.0.1", 40001), endpoint("127.0.0.1", 40002)
+        live = live_from_record([("a", "working", None, here), ("b", "gone", None, there), ("c", "idle", None, None)], 10)
+        self.assertEqual(live.ssh_clients, frozenset({here}))
+        self.assertEqual(live_from_record([("a", "idle")], 10).ssh_clients, frozenset())
+
+    def test_an_endpoint_is_an_address_and_a_port_v4_mapped_read_as_v4(self):
+        self.assertEqual(endpoint("::ffff:10.1.2.3", 22), endpoint("10.1.2.3", 22))
+        self.assertNotEqual(endpoint("::1", 22), endpoint("127.0.0.1", 22))
+        for addr, port in (("10.1.2.3", True), ("10.1.2.3", 0), ("10.1.2.3", 65536), ("host", 22), (None, 22), ("10.1.2.3", 2.0)):
+            self.assertIsNone(endpoint(addr, port), (addr, port))
 
     def test_older_than_two_heartbeats_is_not_fresh_and_no_record_is_none(self):
         self.assertFalse(live_from_record([], STALE_AFTER_S + 1).fresh)

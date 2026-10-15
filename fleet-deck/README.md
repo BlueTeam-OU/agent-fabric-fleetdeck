@@ -321,11 +321,23 @@ blocked`) sounds as any agent that needs attention does.
   starts with `-` must follow `--` (`ssh <login>@<host> -- --wait`). It is classified, followed and never typed into, like a
   sudo pane.
   - sshd starts the account's session, so its harness is no descendant of
-    the pane's `ssh`, and nothing the deck may read links the two. The
-    account's live session, from the stream, is taken as the pane's.
-  - So a session started elsewhere shows as running in an ssh pane, never
-    as `running elsewhere`; an Enter there is still refused by
-    `fabric-resume`. A stale record changes nothing.
+    the pane's `ssh`. The connection links them: the deck reads the local
+    end (address and port) of each established TCP socket of the pane's
+    own `ssh` (`/proc/<pid>/fd` and that process's `net/tcp`, `net/tcp6`;
+    the process is the operator's), and enter-ssh records sshd's view of
+    the same end, `SSH_CLIENT`, which the stream carries as a session's
+    `ssh_client`. An IPv4-mapped IPv6 address compares as its IPv4 form.
+  - A harness runs in the pane when a live session of the account carries
+    one of those ends. Otherwise the pane is a sudo pane with no harness:
+    `running elsewhere` while the account has a live session, idle when
+    it has none.
+  - When the deck reads no end (a ProxyJump or ProxyCommand ssh talks
+    through a pipe, a ControlMaster client through a unix socket, and an
+    ssh still connecting has no established socket), nothing links the
+    pane to a session, and the account's live session is taken as the
+    pane's: a session started elsewhere then shows as running there, and
+    an Enter there is still refused by `fabric-resume`. A stale record
+    changes nothing.
 - **The account's sessions** come from `fabric-ctl all states --follow
   --json`, this host's records only. The stream is restarted after 1, 2,
   5, 10, 30, then 60 s.

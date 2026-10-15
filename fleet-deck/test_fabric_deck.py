@@ -2,10 +2,11 @@ import datetime
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 
-from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, WAIT, WATCH, Before, Shown
+from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, WAIT, WATCH, Before, Shown, endpoint
 from fabric_deck import (
     live_of,
     BOARD_DIR,
@@ -32,6 +33,7 @@ from fabric_deck import (
     parse_state_line,
     proc_argv,
     proc_parents,
+    proc_ssh_endpoints,
     release_commands,
     report_command,
     save_befores,
@@ -116,6 +118,23 @@ class Records(unittest.TestCase):
         # An unhashable value tested against the set would raise and drop the account's record.
         self.assertEqual([x.reason for x in parsed.sessions], ["permission", None, None, None, None])
 
+    def test_a_sessions_ssh_client_is_kept_only_as_an_address_and_a_port(self):
+        ts = '"ts":"2026-10-08T05:00:00Z"'
+        clients = ('{"addr":"127.0.0.1","port":40001}', '{"addr":"::ffff:127.0.0.1","port":40001}',
+                   '{"addr":"::1","port":22}', '{"addr":"127.0.0.1","port":"40001"}',
+                   '{"addr":"127.0.0.1","port":true}', '{"addr":"127.0.0.1","port":0}',
+                   '{"addr":"127.0.0.1","port":65536}', '{"addr":"localhost","port":22}',
+                   '{"addr":7,"port":22}', '["127.0.0.1",22]', '"127.0.0.1 40001"', 'null')
+        parsed = parse_state_line('{"address":"h/ui",%s,"sessions":[%s]}' % (ts, ",".join(
+            '{"session":"s%d","state":"working","ssh_client":%s}' % (i, c) for i, c in enumerate(clients))))
+        got = [x.ssh_client for x in parsed.sessions]
+        self.assertEqual(got[0], endpoint("127.0.0.1", 40001))
+        self.assertEqual(got[1], got[0], "an IPv4-mapped address is its IPv4 form")
+        self.assertEqual(got[2], endpoint("::1", 22))
+        self.assertEqual(got[3:], [None] * (len(clients) - 3))
+        self.assertIsNone(parse_state_line('{"address":"h/ui",%s,"sessions":[{"session":"s"}]}' % ts)
+                          .sessions[0].ssh_client, "absent on a session not entered over ssh")
+
     def test_the_streams_no_record_row_is_no_record(self):
         # ctl.mjs stateRow for an account with nothing on the channel: no ts.
         row = ('{"address":"develop-qzapp/ui","role":"rust-ui-dev","state":"unknown",'
@@ -137,6 +156,18 @@ def record(login, *states, age_s=10):
     ts = (NOW - datetime.timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
     sessions = tuple(Session(f"s{i}", s, ts) for i, s in enumerate(states))
     return StateRecord(login, states[0] if states else "none", sessions, ts, host="h")
+
+
+def ssh_record(login, *sessions, age_s=10):
+    """A record of (state, (addr, port) or None) sessions: the endpoint is the
+    `ssh_client` a session enter-ssh started carries."""
+    ts = (NOW - datetime.timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = tuple(Session(f"s{i}", state, ts, ssh_client=None if client is None else endpoint(*client))
+                 for i, (state, client) in enumerate(sessions))
+    return StateRecord(login, sessions[0][0], rows, ts, host="h")
+
+
+PANE_END = ("127.0.0.1", 40001)
 
 
 BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
@@ -291,6 +322,8 @@ class Harness:
         self.herdr = herdr or FakeHerdr()
         self.records = {}
         self.tree, self.argvs = {}, {}
+        # pid -> the client ends of that ssh's connections, as /proc gives them
+        self.sockets = {}
         self.store = None if befores is None else dict(befores)
         self.logs = []
         self.logins = list(logins)
@@ -311,6 +344,7 @@ class Harness:
             catalog=catalog,
             parents=lambda: dict(self.tree),
             argv=lambda pid: self.argvs.get(pid, []),
+            ssh_endpoints=lambda pid: self.sockets.get(pid),
             load=lambda: None if self.store is None else dict(self.store),
             save=save,
             server=lambda: None if self.herdr.down else self.instance,
@@ -814,7 +848,52 @@ class Restore(unittest.TestCase):
         self.assertEqual(h.herdr.runs(), [], "nothing is typed while moveto runs")
         self.assertEqual(h.herdr.reports("p0")[1][-1], "working", "after the account")
 
-    def test_a_tab_entered_over_ssh_is_classified_like_a_sudo_one_from_the_stream(self):
+    def test_an_ssh_pane_whose_own_connection_carries_the_live_session_is_running(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell", pid=21)),
+                             ("p2", "status", in_ssh("ui", WATCH, pid=22))])
+        h = Harness(herdr)
+        h.sockets[20] = frozenset({endpoint(*PANE_END)})
+        # sshd's view through a dual-stack socket: the mapped form.
+        h.records["ui"] = ssh_record("ui", ("working", ("::ffff:127.0.0.1", 40001)))
+        h.deck.restore(0)
+        h.deck.follow(RESTORE_SETTLE_S)
+        self.assertEqual(h.herdr.runs(), [])
+        self.assertEqual(h.herdr.reports("p0")[1][-1], "working")
+
+    def test_an_ssh_pane_whose_connection_carries_no_live_session_reads_running_elsewhere(self):
+        for other in (("idle", ("127.0.0.1", 40002)), ("idle", ("10.0.0.5", 40001)), ("working", None)):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell", pid=21)),
+                                 ("p2", "status", in_ssh("ui", WATCH, pid=22))])
+            h = Harness(herdr)
+            h.sockets[20] = frozenset({endpoint(*PANE_END)})
+            # The pane's own end on a session that is over is not a live one.
+            h.records["ui"] = ssh_record("ui", other, ("gone", PANE_END))
+            h.deck.restore(0)
+            h.deck.follow(RESTORE_SETTLE_S)
+            self.assertEqual(h.herdr.runs(), [], other)
+            self.assertEqual(h.herdr.reports("p0")[-1][-1], "unknown=running elsewhere", other)
+
+    def test_a_session_started_elsewhere_while_an_ssh_pane_waits_reads_running_elsewhere(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell", pid=21)),
+                             ("p2", "status", in_ssh("ui", WATCH, pid=22))])
+        h = Harness(herdr)
+        h.sockets[20] = frozenset({endpoint(*PANE_END)})
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(RESTORE_SETTLE_S)
+        self.assertIn("idle=dormant", h.herdr.reports("p0")[-1])
+        h.records["ui"] = ssh_record("ui", ("working", ("127.0.0.1", 50123)))
+        h.deck.follow(RESTORE_SETTLE_S + 1)
+        h.deck.follow(RESTORE_SETTLE_S + 1 + SAME_SESSION_S)
+        self.assertEqual(h.herdr.reports("p0")[-1][-1], "unknown=running elsewhere")
+        self.assertEqual(h.herdr.runs(), [], "nothing is typed while ssh runs the account")
+
+    def test_an_ssh_pane_with_no_endpoint_read_takes_the_accounts_session_as_its_own(self):
+        # A ProxyJump ssh, a ControlMaster client, or one read mid-connect: no
+        # socket of its own links the pane to a session, so the old rule holds.
         herdr = FakeHerdr()
         herdr.add_tab("ui", [("p0", "harness", in_ssh("ui", WAIT)), ("p1", "shell", in_ssh("ui", "shell")),
                              ("p2", "status", in_ssh("ui", WATCH))])
@@ -1136,6 +1215,36 @@ class Proc(unittest.TestCase):
         self.assertTrue(harness_under(20, parents, argv))
         self.assertFalse(harness_under(21, {21: 20, 22: 21}, lambda pid: ["bash"]))
         self.assertFalse(harness_under(99, parents, argv), "a pid with no children")
+
+    def test_an_ssh_s_endpoints_are_its_own_established_sockets_local_ends(self):
+        root = self.fake_proc({20: (10, "ssh", ["ssh"])})
+        fd = os.path.join(root, "20", "fd")
+        os.makedirs(fd)
+        for n, target in enumerate(("/dev/pts/3", "socket:[111]", "socket:[222]", "socket:[333]", "pipe:[9]")):
+            os.symlink(target, os.path.join(fd, str(n)))
+        self.assertIsNone(proc_ssh_endpoints(20, root), "no net table read: nothing found")
+
+        def word(ip):  # as the kernel prints an address: 32-bit words in host order
+            import ipaddress
+            raw = ipaddress.ip_address(ip).packed
+            return "".join("%08X" % int.from_bytes(raw[i:i + 4], sys.byteorder) for i in range(0, len(raw), 4))
+
+        def row(local, port, state, inode):
+            return f"   0: {word(local)}:{port:04X} {word(local)}:0016 {state} 00000000:00000000 00:00000000 00000000  1000 0 {inode} 1 0"
+
+        os.makedirs(os.path.join(root, "20", "net"))
+        header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+        with open(os.path.join(root, "20", "net", "tcp"), "w") as f:
+            f.write(header + "\n".join([
+                row("127.0.0.1", 40001, "01", 111),
+                row("127.0.0.1", 40009, "0A", 222),  # a -L listener: not a connection
+                row("127.0.0.1", 40010, "01", 999),  # another process's socket
+            ]) + "\n")
+        with open(os.path.join(root, "20", "net", "tcp6"), "w") as f:
+            f.write(header + row("::ffff:192.0.2.7", 50000, "01", 333) + "\n")
+        self.assertEqual(proc_ssh_endpoints(20, root),
+                         frozenset({endpoint("127.0.0.1", 40001), endpoint("192.0.2.7", 50000)}))
+        self.assertIsNone(proc_ssh_endpoints(21, root), "a process gone")
 
     def test_a_cycle_in_a_racing_tree_does_not_hang(self):
         self.assertFalse(harness_under(1, {2: 3, 3: 2, 4: 1}, lambda pid: []))
