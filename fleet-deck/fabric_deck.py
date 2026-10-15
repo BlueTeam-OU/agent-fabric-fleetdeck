@@ -299,15 +299,23 @@ def is_board(argv: list[str]) -> bool:
 # The mode of a `waiting` entry for the agent pane: not a moveto, but the
 # agent's screen started in the operator's own shell there.
 VIEW = "view"
+# Tells a view it starts focused (fabric_view.run): herdr reports focus
+# changes only, and a pane focused before the view turns reporting on never
+# sends it one.
+OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 
 
-def agent_view_command(login: str) -> str:
+def agent_view_command(login: str, focused: bool = False) -> str:
     """What the deck, or the toggle, types into an agent pane at the
     operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
     fetches at its first focus, and q and Esc do not end it). Not `exec`: a
     view that cannot start leaves its reason on the screen and the pane in
-    place, and the toggle starts it again at the next press."""
-    return f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
+    place, and the toggle starts it again at the next press. A view started
+    in a focused pane is told so through env(1): a csh-family shell (tcsh
+    is among SHELLS) has no NAME=value prefix, and env execs the view, so
+    its argv is still is_agent_view's."""
+    command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
+    return f"env {OPENED_FOCUSED}=1 {command}" if focused else command
 
 
 def is_agent_view(argv: list[str], login: str) -> bool:
@@ -938,8 +946,10 @@ class Deck:
                     continue
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
-                    del self.waiting[key]
+                    # Dropped once typed: a run that fails stays waiting, and
+                    # its retry looks at the pane again first.
                     self._arm(login, pane, mode)
+                    del self.waiting[key]
                 elif seen.moveto is True:
                     del self.waiting[key]  # a person started it meanwhile
                 elif now - since >= RESTORE_WAIT_S:
@@ -1144,9 +1154,11 @@ class Deck:
         if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
             del self.waiting[key]
         elif at_bare_shell(info):
+            # FleetDeck's session restore can bring this pane back focused.
+            focused = any(p.get("pane_id") == pane and p.get("focused") is True
+                          for p in self.herdr.call("pane", "list").get("panes", []))
+            self.herdr.call("pane", "run", pane, agent_view_command(login, focused))
             del self.waiting[key]
-            command = agent_view_command(login)
-            self.herdr.call("pane", "run", pane, command)
             self.log(f"{login}: started its agent screen in {pane}")
         elif now - since >= RESTORE_WAIT_S:
             self._say(f"{pane}:busy", f"{login}: pane {pane} is still busy; "

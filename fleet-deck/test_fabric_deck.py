@@ -889,6 +889,32 @@ class Restore(unittest.TestCase):
             h.deck.follow(RESTORE_WAIT_S + 12)
             self.assertEqual(herdr.runs("p3"), [VIEW])
 
+    def test_an_agent_pane_restored_focused_is_told_so(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        herdr.panes["p3"]["focused"] = True
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertEqual(herdr.runs("p3"), [agent_view_command("ui", focused=True)])
+        self.assertTrue(herdr.runs("p3")[0].startswith("env FABRIC_VIEW_OPENED_FOCUSED=1 "))
+
+    def test_a_run_that_fails_is_tried_again_at_the_pane_as_it_is_then(self):
+        for pane, typed in (("p3", VIEW), ("p1", "moveto ui")):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [("p0", "harness", in_moveto("ui", WAIT)), ("p1", "shell", BARE),
+                                 ("p2", "status", in_moveto("ui", WATCH)), ("p3", "agent", BARE)])
+            h = Harness(herdr)
+            h.records["ui"] = record("ui")
+            herdr.fail_once = {("run", pane)}
+            h.deck.restore(0)
+            for at in range(1, PANE_MAP_REFRESH_S + 4, 2):
+                h.deck.follow(at)
+            self.assertFalse(herdr.fail_once, f"{pane}'s run failed once")
+            # The fake records the failed call too: one refused, one retry.
+            self.assertEqual(herdr.runs(pane), [typed, typed], f"{pane}: typed again, once")
+
     def test_the_view_is_typed_as_one_safe_word_per_argument(self):
         import fabric_deck
         real = fabric_deck.BOARD_DIR

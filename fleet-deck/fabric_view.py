@@ -33,14 +33,18 @@ herdr places outside the panes.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import fcntl
 import json
 import os
 import queue
 import select
 import shutil
 import signal
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -49,15 +53,15 @@ from typing import Callable
 import report_render as rr
 import view_render as vr
 from deck_tabs import AGENT, HARNESS
-from fabric_deck import BIN, SAFE_LOGIN, Herdr, agent_view_command, at_bare_shell
+# OPENED_FOCUSED: set by `open`, and by whoever types a view into a focused
+# pane: the pane was focused before the view could hear it.
+from fabric_deck import BIN, OPENED_FOCUSED, SAFE_LOGIN, Herdr, agent_view_command, at_bare_shell
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
 TICK_S = 0.25
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
-# Set by `open`: the pane was opened focused, at the person's key.
-OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 
 
 # ── where agent-fabric is ───────────────────────────────────────────
@@ -910,22 +914,44 @@ def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] |
 OVERLAY_TITLE = "this agent"
 
 
+@contextlib.contextmanager
+def toggle_lock(env: dict[str, str]):
+    """One toggle at a time for this login: FleetDeck runs plugin actions
+    concurrently, and two presses read in parallel would each act on the
+    tab as it was before the other."""
+    directory = env.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    with open(os.path.join(directory, f"fabric-view-toggle.{os.getuid()}.lock"), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def toggle(env: dict[str, str], herdr) -> int:
     """A plugin action's command: one chord, the account tab between its
     harness and its agent screen. The harness's session runs on in its
-    pane; only the zoom and the focus change. Both moves are absolute (on,
-    off), so two presses read at once land where one would. In a tab
-    without an agent pane (one the deck has not restored yet), the agent's
-    overlay, as before the pane existed, and the same chord closes it."""
+    pane; only the zoom and the focus change. In a tab without an agent
+    pane (one the deck has not restored yet), the agent's overlay, as
+    before the pane existed, and the same chord closes it. Each press acts
+    under toggle_lock on the tab as it is then, its focus read from the pane
+    list, never from the context captured at the key, which a press still
+    running may have made stale."""
     ctx = plugin_context(env)
-    panes = herdr.call("pane", "list").get("panes", [])
-    focused = ctx.get("focused_pane_id")
-    step = toggle_step(tab_roles(panes, ctx.get("tab_id")), focused)
-    if step is None:
-        if focused and any(p.get("pane_id") == focused and p.get("label") == OVERLAY_TITLE for p in panes):
-            herdr.call("plugin", "pane", "close", focused)
-            return 0
-        return open_pane("agent", env)
+    tab = ctx.get("tab_id")
+    with toggle_lock(env):
+        panes = herdr.call("pane", "list").get("panes", [])
+        focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
+                       ctx.get("focused_pane_id"))
+        step = toggle_step(tab_roles(panes, tab), focused)
+        if step is None:
+            overlays = [p.get("pane_id") for p in panes
+                        if tab is not None and p.get("tab_id") == tab and p.get("label") == OVERLAY_TITLE]
+            for overlay in overlays:
+                herdr.call("plugin", "pane", "close", overlay)
+            # Opened before the lock is let go, so the next press finds it.
+            return 0 if overlays else open_overlay(env)
+        return _turn(ctx, herdr, step)
+
+
+def _turn(ctx: dict, herdr, step: tuple[str, str]) -> int:
     pane, zoom = step
     login = ctx.get("tab_label")
     if zoom == "--on" and isinstance(login, str) and SAFE_LOGIN.match(login) \
@@ -933,12 +959,21 @@ def toggle(env: dict[str, str], herdr) -> int:
         # The view ended (or never started): started again where the person
         # is about to look, in the operator's own shell there. The zoom below
         # focuses the pane before the view turns focus reporting on, so no
-        # focus-in reaches it: it is told, as `open` tells an overlay. Through
-        # env(1): a csh-family shell (tcsh is among SHELLS) has no NAME=value
-        # prefix, and env execs the view, so its argv is the deck's to find.
-        herdr.call("pane", "run", pane, f"env {OPENED_FOCUSED}=1 {agent_view_command(login)}")
+        # focus-in reaches it: it is told, as `open` tells an overlay.
+        herdr.call("pane", "run", pane, agent_view_command(login, focused=True))
     herdr.call("pane", "zoom", pane, zoom)
     return 0
+
+
+def open_overlay(env: dict[str, str]) -> int:
+    """The agent's overlay, opened and waited for: the toggle holds its lock
+    until FleetDeck has the pane, where `open` hands its process over."""
+    herdr = env.get("HERDR_BIN_PATH") or shutil.which(BIN)
+    if not herdr:
+        print("fabric-view: no agent-fabric-fleetdeck to ask (HERDR_BIN_PATH is not set)", file=sys.stderr)
+        return 2
+    return subprocess.run(open_argv(herdr, env.get("HERDR_PLUGIN_ID") or PLUGIN_ID, "agent"),
+                          stdout=subprocess.DEVNULL).returncode
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:

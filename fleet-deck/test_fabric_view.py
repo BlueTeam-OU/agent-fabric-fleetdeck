@@ -149,14 +149,30 @@ class Toggle(unittest.TestCase):
 
     def test_a_tab_the_deck_does_not_keep_opens_the_overlay(self):
         opened = []
-        real, fv.open_pane = fv.open_pane, lambda entry, env: opened.append(entry) or 0
+        real, fv.open_overlay = fv.open_overlay, lambda env: opened.append(env) or 0
         try:
             herdr = FakeHerdr(TAB_PANES[:3], {})
             self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
         finally:
-            fv.open_pane = real
-        self.assertEqual(opened, ["agent"])
+            fv.open_overlay = real
+        self.assertEqual(len(opened), 1)
         self.assertFalse(any(c[1] == "zoom" for c in herdr.calls))
+
+    def test_a_press_that_finds_the_overlay_open_closes_it_whatever_it_was_told(self):
+        # Two presses read at once both carry the harness as focused; the
+        # second runs after the first opened the overlay, and closes it.
+        overlay = {"pane_id": "o", "tab_id": "t1", "label": fv.OVERLAY_TITLE}
+        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {})
+        self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
+        self.assertEqual(herdr.calls[1:], [("plugin", "pane", "close", "o")])
+
+    def test_the_focus_is_the_tabs_as_it_is_not_as_the_key_found_it(self):
+        # A press read while the previous one was still zooming: its context
+        # says the harness, the tab already shows the agent pane.
+        panes = [dict(p, focused=p["pane_id"] == "a") for p in TAB_PANES]
+        herdr = FakeHerdr(panes, {"a": VIEWING})
+        fv.toggle(context(focused="h"), herdr)
+        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "h", "--off")])
 
 
     def test_the_same_chord_closes_the_overlay_it_opened(self):
