@@ -4,6 +4,9 @@ docs/fleet-deck/tab-states.md (#115, 27452bd6)."""
 import unittest
 
 from deck_tabs import (
+    AGENT,
+    HARNESS,
+    PANE_ROLES,
     ENTRY_GRACE_S,
     QUICK_EXIT_S,
     SAME_SESSION_S,
@@ -43,6 +46,13 @@ ONE = Live(count=1, state="working", fresh=True)
 HARNESS_HERE = Seen(present=True, moveto=True, harness=True)
 NO_HARNESS = Seen(present=True, moveto=True, harness=False)
 BARE = Seen(present=True, moveto=False)
+
+
+class Roles(unittest.TestCase):
+    def test_the_agent_pane_is_a_role_of_its_own(self):
+        self.assertEqual(len(set(PANE_ROLES)), len(PANE_ROLES))
+        self.assertIn(AGENT, PANE_ROLES)
+        self.assertNotEqual(AGENT, HARNESS, "the toggle tells the two apart by label")
 
 
 class Live_(unittest.TestCase):

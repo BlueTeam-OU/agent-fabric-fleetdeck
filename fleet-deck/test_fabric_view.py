@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import fabric_view as fv
+from deck_tabs import PANE_ROLES
 
 
 class Input(unittest.TestCase):
@@ -55,10 +56,119 @@ class Refresh(unittest.TestCase):
         self.assertEqual(r.due(40, False), [])
         self.assertEqual(r.due(40, None), [])
 
+    def test_the_agent_pane_fetches_nothing_until_its_first_focus(self):
+        # Every account tab's agent pane starts with the deck: none of them
+        # reads the fleet until a person looks.
+        r = fv.Refresher({"proc": 5, "jobs": 30}, lazy=True)
+        self.assertEqual(r.due(0, None), [])
+        self.assertEqual(r.due(0, False), [])
+        self.assertEqual(r.due(0, True), ["proc", "jobs"])
+        for s in ("proc", "jobs"):
+            r.started(s)
+            r.ended(s, 1)
+        self.assertEqual(r.due(100, False), [], "and, as any view, nothing while unfocused")
+        self.assertEqual(r.due(100, True), ["proc", "jobs"])
+
     def test_r_refetches_what_is_not_already_running(self):
         r = fv.Refresher({"proc": 5, "jobs": 30})
         r.started("jobs")
         self.assertEqual(r.refetch(), ["proc"])
+
+
+# An account tab as `pane list` gives it, and another tab beside it.
+TAB_PANES = [
+    {"pane_id": "h", "tab_id": "t1", "label": "harness"},
+    {"pane_id": "s", "tab_id": "t1", "label": "shell"},
+    {"pane_id": "st", "tab_id": "t1", "label": "status"},
+    {"pane_id": "a", "tab_id": "t1", "label": "agent"},
+    {"pane_id": "a2", "tab_id": "t2", "label": "agent"},
+]
+BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
+        "foreground_processes": [{"pid": 10, "argv": ["bash"]}]}
+VIEWING = {"shell_pid": 10, "foreground_process_group_id": 40,
+           "foreground_processes": [{"pid": 40, "argv": ["fabric-python", "-B", "-c", "..."]}]}
+
+
+class FakeHerdr:
+    def __init__(self, panes, proc):
+        self.panes, self.proc, self.calls = panes, proc, []
+
+    def call(self, *args):
+        self.calls.append(args)
+        return {"panes": self.panes} if args[:2] == ("pane", "list") else {}
+
+    def process_info(self, pane):
+        return self.proc[pane]
+
+
+def context(tab_id="t1", focused="h", label="ui"):
+    return {"HERDR_PLUGIN_CONTEXT_JSON": json.dumps(
+        {"tab_id": tab_id, "tab_label": label, "focused_pane_id": focused})}
+
+
+class Toggle(unittest.TestCase):
+    def test_one_chord_turns_the_tab_over_and_back(self):
+        roles = fv.tab_roles(TAB_PANES, "t1")
+        self.assertEqual(roles, {"harness": "h", "shell": "s", "status": "st", "agent": "a"})
+        self.assertEqual(fv.toggle_step(roles, "h"), ("a", "--on"))
+        self.assertEqual(fv.toggle_step(roles, "a"), ("h", "--off"), "the same chord, back")
+        self.assertEqual(fv.toggle_step(roles, "s"), ("a", "--on"), "from anywhere else in the tab")
+
+    def test_a_tab_without_both_panes_is_none_of_the_toggles(self):
+        self.assertIsNone(fv.toggle_step(fv.tab_roles(TAB_PANES, "t2"), "a2"))
+        self.assertIsNone(fv.toggle_step(fv.tab_roles(TAB_PANES, None), "h"))
+
+    def test_only_the_zoom_changes_while_the_view_runs(self):
+        herdr = FakeHerdr(TAB_PANES, {"a": VIEWING})
+        self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
+        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "a", "--on")])
+        herdr.calls.clear()
+        fv.toggle(context(focused="a"), herdr)
+        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "h", "--off")], "the harness pane, never typed into")
+
+    def test_a_view_that_ended_is_started_again_before_it_is_shown(self):
+        herdr = FakeHerdr(TAB_PANES, {"a": BARE})
+        fv.toggle(context(focused="h"), herdr)
+        self.assertEqual(herdr.calls[1:], [("pane", "run", "a", fv.agent_view_command("ui")),
+                                           ("pane", "zoom", "a", "--on")])
+
+    def test_a_label_that_is_no_plain_login_is_never_typed(self):
+        herdr = FakeHerdr(TAB_PANES, {"a": BARE})
+        fv.toggle(context(focused="h", label="ui; rm -rf ~"), herdr)
+        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "a", "--on")])
+
+    def test_a_tab_the_deck_does_not_keep_opens_the_overlay(self):
+        opened = []
+        real, fv.open_pane = fv.open_pane, lambda entry, env: opened.append(entry) or 0
+        try:
+            herdr = FakeHerdr(TAB_PANES[:3], {})
+            self.assertEqual(fv.toggle(context(focused="h"), herdr), 0)
+        finally:
+            fv.open_pane = real
+        self.assertEqual(opened, ["agent"])
+        self.assertFalse(any(c[1] == "zoom" for c in herdr.calls))
+
+
+    def test_the_same_chord_closes_the_overlay_it_opened(self):
+        overlay = {"pane_id": "o", "tab_id": "t1", "label": fv.OVERLAY_TITLE}
+        herdr = FakeHerdr([*TAB_PANES[:3], overlay], {})
+        self.assertEqual(fv.toggle(context(focused="o"), herdr), 0)
+        self.assertEqual(herdr.calls[1:], [("plugin", "pane", "close", "o")])
+
+    def test_the_overlay_is_never_taken_for_the_decks_agent_pane(self):
+        # FleetDeck labels a plugin pane with its title.
+        import tomllib
+        with open(os.path.join(os.path.dirname(os.path.abspath(fv.__file__)), "herdr-plugin.toml"), "rb") as f:
+            panes = {p["id"]: p for p in tomllib.load(f)["panes"]}
+        self.assertEqual(panes["agent"]["title"], fv.OVERLAY_TITLE)
+        self.assertNotIn(fv.OVERLAY_TITLE, PANE_ROLES)
+
+    def test_in_tab_needs_its_login_and_toggle_takes_nothing(self):
+        import contextlib, io
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(fv.main(["agent", "--in-tab"]), 2)
+            self.assertEqual(fv.main(["agent", "--in-tab", "--agent", "ui"]), 2)
+            self.assertEqual(fv.main(["toggle", "ui"]), 2)
 
 
 class Sources(unittest.TestCase):

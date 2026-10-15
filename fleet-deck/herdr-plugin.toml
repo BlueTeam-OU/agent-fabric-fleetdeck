@@ -4,7 +4,7 @@ id = "fabric.fleet"
 name = "Fleet views"
 version = "0.1.0"
 min_herdr_version = "0.9.3"
-description = "The fleet tab (board, compare, plans), an agent's overlay and the PRs popup, from agent-fabric's fleet.py"
+description = "The fleet tab (board, compare, plans), an agent's screen (its tab's pane, or an overlay) and the PRs popup, from agent-fabric's fleet.py"
 platforms = ["linux"]
 
 [[actions]]
@@ -13,11 +13,13 @@ title = "Fleet board"
 contexts = ["global"]
 command = ["./fabric-view", "open", "board"]
 
+# The account tab between its harness and its agent pane (the agent's
+# screen, kept there by the deck); in a tab without one, the overlay.
 [[actions]]
 id = "agent"
 title = "This agent"
 contexts = ["tab", "pane"]
-command = ["./fabric-view", "open", "agent"]
+command = ["./fabric-view", "toggle"]
 
 [[actions]]
 id = "prs"
@@ -39,9 +41,11 @@ title = "fleet"
 placement = "tab"
 command = ["./fabric-view", "board"]
 
+# Not "agent": FleetDeck labels a plugin pane with its title, and "agent" is
+# the deck's own pane in an account tab (deck_tabs.AGENT).
 [[panes]]
 id = "agent"
-title = "agent"
+title = "this agent"
 placement = "overlay"
 command = ["./fabric-view", "agent"]
 

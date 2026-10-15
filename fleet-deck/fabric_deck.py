@@ -1,8 +1,9 @@
 """Fleet Deck: the operator's console over the fleet, on herdr.
 
-One herdr tab per agent account, labelled with its login, holding three
+One herdr tab per agent account, labelled with its login, holding four
 panes: the harness (moveto <account> --wait, activated by one Enter), the
-account's shell, and its status. The deck restores the tabs after a herdr or
+account's shell, its status, and the agent's screen (fabric-view, the
+operator's own view of the account). The deck restores the tabs after a herdr or
 host restart and then follows them, showing each harness pane's state in
 herdr's agent panel.
 
@@ -24,6 +25,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
 from deck_tabs import (
+    AGENT,
     HARNESS,
     HARNESS_RATIO,
     MODES,
@@ -290,6 +293,27 @@ def is_board(argv: list[str]) -> bool:
     """fabric-view's board: the launcher execs a Python whose `-c` code
     imports fabric_view, with the mode as the last argument."""
     return bool(argv) and argv[-1] == FLEET_ENTRYPOINT and any(
+        "from fabric_view import main" in arg for arg in argv[1:])
+
+
+# The mode of a `waiting` entry for the agent pane: not a moveto, but the
+# agent's screen started in the operator's own shell there.
+VIEW = "view"
+
+
+def agent_view_command(login: str) -> str:
+    """What the deck, or the toggle, types into an agent pane at the
+    operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
+    fetches at its first focus, and q and Esc do not end it). Not `exec`: a
+    view that cannot start leaves its reason on the screen and the pane in
+    place, and the toggle starts it again at the next press."""
+    return f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
+
+
+def is_agent_view(argv: list[str], login: str) -> bool:
+    """fabric-view's agent screen for this login, kept in its tab, as its
+    launcher leaves it: the mode and its arguments last."""
+    return argv[-4:] == ["agent", "--agent", login, "--in-tab"] and any(
         "from fabric_view import main" in arg for arg in argv[1:])
 
 
@@ -662,7 +686,8 @@ class Deck:
     # Accounts that waited for a role through the host's first setup: seeded
     # as on first setup once bound, whatever tabs the others have since.
     seed_on_bind: set[str] = field(default_factory=set)
-    # (login, pane, mode) -> since when a shell or status pane waits to be bare
+    # (login, pane, mode) -> since when a shell, status or agent pane waits to
+    # be bare; the agent pane's mode is VIEW
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
@@ -831,6 +856,9 @@ class Deck:
             panes[SHELL] = self._split(harness, "right", HARNESS_RATIO, SHELL)
         if STATUS not in panes:
             panes[STATUS] = self._split(panes[SHELL], "down", 0.5, STATUS)
+        if AGENT not in panes:
+            # A tab from before the agent pane gets one too.
+            panes[AGENT] = self._split(panes[STATUS], "down", 0.5, AGENT)
         # Everything the restore owes this account is recorded before the
         # first observation, so a herdr call failing below leaves it waiting
         # for its decision, never followed half-restored. The harness waits
@@ -841,7 +869,7 @@ class Deck:
         self.pending[login] = now
         self.unsettled.add(login)
         self.tracks[login] = Track(State.IDLE)
-        for role, mode in ((SHELL, PLAIN), (STATUS, WATCH)):
+        for role, mode in ((SHELL, PLAIN), (STATUS, WATCH), (AGENT, VIEW)):
             self.waiting[(login, panes[role], mode)] = now
         seen = self.observe(login, harness)
         if seen.moveto is True:
@@ -905,6 +933,9 @@ class Deck:
         for key, since in list(self.waiting.items()):
             login, pane, mode = key
             try:
+                if mode == VIEW:
+                    self._start_view(key, since, now)
+                    continue
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
                     del self.waiting[key]
@@ -1104,6 +1135,22 @@ class Deck:
         command = " ".join(filter(None, ("moveto", login, mode)))
         self.herdr.call("pane", "run", pane, command)
         self.log(f"{login}: started `{command}` in {pane}")
+
+    def _start_view(self, key: tuple[str, str, str], since: float, now: float) -> None:
+        """The agent's screen in its pane, typed only at the operator's bare
+        prompt: herdr restores a pane as a shell, never its program."""
+        login, pane, _ = key
+        info = self.herdr.process_info(pane)
+        if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
+            del self.waiting[key]
+        elif at_bare_shell(info):
+            del self.waiting[key]
+            command = agent_view_command(login)
+            self.herdr.call("pane", "run", pane, command)
+            self.log(f"{login}: started its agent screen in {pane}")
+        elif now - since >= RESTORE_WAIT_S:
+            self._say(f"{pane}:busy", f"{login}: pane {pane} is still busy; "
+                      "its agent screen is started when it reaches its prompt")
 
     def _bare(self, pane: str) -> bool:
         info = self.herdr.process_info(pane)

@@ -4,6 +4,11 @@
                                       row each; c compare, p plan, P PRs
     fabric-view agent [--agent L]     one agent; the login defaults to the
                                       herdr tab the pane was opened from
+    fabric-view agent --agent L --in-tab
+                                      the same, in the account tab's agent
+                                      pane: it fetches at the first focus
+    fabric-view toggle                for a plugin action: the account tab
+                                      between its harness and agent screen
     fabric-view prs                   in-flight pull requests by owner
     fabric-view snapshot VIEW …       a view printed as text, read once
                                       (also `fleet-deck snapshot`)
@@ -20,8 +25,10 @@ nothing after it.
 
 A view only reads. It calls no herdr socket: `server.socket_access =
 "outside_panes"` refuses a pane's process, and the agent view takes its
-login from HERDR_PLUGIN_CONTEXT_JSON instead. `open` is the one herdr call,
-and it runs as a plugin action, which herdr places outside the panes.
+login from HERDR_PLUGIN_CONTEXT_JSON instead. So the agent pane cannot
+leave itself: the way back to the harness is the toggle's chord. `open` and
+`toggle` are the only herdr calls, and they run as plugin actions, which
+herdr places outside the panes.
 """
 
 from __future__ import annotations
@@ -41,6 +48,8 @@ from typing import Callable
 
 import report_render as rr
 import view_render as vr
+from deck_tabs import AGENT, HARNESS
+from fabric_deck import BIN, SAFE_LOGIN, Herdr, agent_view_command, at_bare_shell
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -154,8 +163,14 @@ class Refresher:
     ttl: dict[str, float]
     finished: dict[str, float] = field(default_factory=dict)
     running: set[str] = field(default_factory=set)
+    # Even the first fetch waits for focus: the agent pane of every account
+    # tab starts with the deck, and one look per tab would be the fleet
+    # fetched N times at once, for screens nobody sees.
+    lazy: bool = False
 
     def due(self, now: float, focused: bool | None) -> list[str]:
+        if self.lazy and focused is not True:
+            return []
         return [s for s, ttl in self.ttl.items()
                 if s not in self.running
                 and (s not in self.finished or (focused is True and now - self.finished[s] >= ttl))]
@@ -275,7 +290,7 @@ class View:
     """One screen: its sections, its refresher, its fetcher."""
 
     def __init__(self, fleet, sections: tuple[str, ...], agent: str | None, store: Store,
-                 results: "queue.Queue[Result]") -> None:
+                 results: "queue.Queue[Result]", lazy: bool = False) -> None:
         self.sections = sections
         self.agent = agent
         self.store = store
@@ -283,7 +298,7 @@ class View:
         # fetches bring (derive), never fetched: fleet.py gives it no TTL
         # and no cache, so a refresher would ask for it on every tick.
         self.refresher = Refresher({s: fleet.SECTIONS[s].ttl for s in sections
-                                    if s in fleet.SECTIONS and not derived(fleet, s)})
+                                    if s in fleet.SECTIONS and not derived(fleet, s)}, lazy=lazy)
         self.fetcher = Fetcher(fleet, agent, results, self)
         # A section this agent-fabric's fleet.py does not serve yet is said,
         # never asked for: the view runs against whatever checkout is there.
@@ -522,7 +537,7 @@ class Nav:
         return None
 
 
-def run(curses, screen, fleet, mode: str, login: str | None) -> int:
+def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = False) -> int:
     curses.curs_set(0)
     curses.raw()
     curses.noecho()
@@ -560,7 +575,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         return views[name]
 
     nav = Nav(PRS if mode == "prs" else BOARD)
-    agent_view = View(fleet, vr.AGENT_SECTIONS, login, store, results) if mode == "agent" else None
+    agent_view = View(fleet, vr.AGENT_SECTIONS, login, store, results, lazy=in_tab) if mode == "agent" else None
     samples = vr.Samples()
     scroll = 0
     # Unknown until herdr reports a change or a key arrives, unless `open`
@@ -595,7 +610,7 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
         if agent_view is not None:
             a = agents_of({agent_view.agent: placements[agent_view.agent]}, store, agent_view.sections,
                           agent_view.whys, fleet)[0]
-            keys = vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
+            keys = vr.TAB_KEYS if in_tab else vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
             lines, scroll = vr.agent_lines(a, samples, status(agent_view, [a], focused, store), scroll,
                                            width, height, keys, ascii_only)
         else:
@@ -619,6 +634,10 @@ def run(curses, screen, fleet, mode: str, login: str | None) -> int:
             if agent_view is not None:
                 if ev == "r":
                     agent_view.refetch()
+                elif in_tab and ev in ("q", "Q", ESCAPE):
+                    # Nothing to close: ended, the pane would be a bare shell
+                    # where the agent's screen was. The chord leaves it.
+                    continue
                 elif ev in ("q", "Q") or (ev == ESCAPE and mode == "agent"):
                     return 0
                 elif ev in (ESCAPE, BACK, "h") and mode != "agent":
@@ -851,7 +870,70 @@ def snapshot_main(args: list[str], env: dict[str, str] | None = None) -> int:
 
 # ── the commands ────────────────────────────────────────────────────
 
-USAGE = "usage: fabric-view board | agent [--agent LOGIN] | prs | snapshot VIEW … | open board|agent|prs|stop"
+USAGE = ("usage: fabric-view board | agent [--agent LOGIN [--in-tab]] | prs | snapshot VIEW … "
+         "| open board|agent|prs|stop | toggle")
+
+
+def plugin_context(env: dict[str, str]) -> dict:
+    try:
+        ctx = json.loads(env.get("HERDR_PLUGIN_CONTEXT_JSON") or "{}")
+    except ValueError:
+        return {}
+    return ctx if isinstance(ctx, dict) else {}
+
+
+def tab_roles(panes: list[dict], tab_id: str | None) -> dict[str, str]:
+    """The tab's panes by the role the deck labelled them with, the first
+    of each label, as the deck reads a tab."""
+    roles: dict[str, str] = {}
+    for pane in panes:
+        label = pane.get("label")
+        if tab_id is not None and pane.get("tab_id") == tab_id and isinstance(label, str):
+            roles.setdefault(label, pane.get("pane_id"))
+    return roles
+
+
+def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] | None:
+    """The zoom that turns the tab over: from the agent screen to the harness
+    in its tab (zoom off, the harness focused), from anywhere else in the
+    tab to the agent screen (zoomed, focused). herdr's zoom focuses the pane
+    it names. None for a tab without both panes: not one the deck keeps."""
+    harness, agent = roles.get(HARNESS), roles.get(AGENT)
+    if not harness or not agent:
+        return None
+    return (harness, "--off") if focused == agent else (agent, "--on")
+
+
+# The overlay's title in herdr-plugin.toml, which FleetDeck makes its pane's
+# label: how the toggle knows the overlay it opened.
+OVERLAY_TITLE = "this agent"
+
+
+def toggle(env: dict[str, str], herdr) -> int:
+    """A plugin action's command: one chord, the account tab between its
+    harness and its agent screen. The harness's session runs on in its
+    pane; only the zoom and the focus change. Both moves are absolute (on,
+    off), so two presses read at once land where one would. In a tab
+    without an agent pane (one the deck has not restored yet), the agent's
+    overlay, as before the pane existed, and the same chord closes it."""
+    ctx = plugin_context(env)
+    panes = herdr.call("pane", "list").get("panes", [])
+    focused = ctx.get("focused_pane_id")
+    step = toggle_step(tab_roles(panes, ctx.get("tab_id")), focused)
+    if step is None:
+        if focused and any(p.get("pane_id") == focused and p.get("label") == OVERLAY_TITLE for p in panes):
+            herdr.call("plugin", "pane", "close", focused)
+            return 0
+        return open_pane("agent", env)
+    pane, zoom = step
+    login = ctx.get("tab_label")
+    if zoom == "--on" and isinstance(login, str) and SAFE_LOGIN.match(login) \
+            and at_bare_shell(herdr.process_info(pane)):
+        # The view ended (or never started): started again where the person
+        # is about to look, in the operator's own shell there.
+        herdr.call("pane", "run", pane, agent_view_command(login))
+    herdr.call("pane", "zoom", pane, zoom)
+    return 0
 
 
 def open_pane(entrypoint: str, env: dict[str, str]) -> int:
@@ -895,13 +977,23 @@ def main(argv: list[str] | None = None) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         return open_pane(rest[0], dict(os.environ))
+    if mode == "toggle" and not rest:
+        env = dict(os.environ)
+        try:
+            return toggle(env, Herdr(binary=env.get("HERDR_BIN_PATH") or shutil.which(BIN) or BIN))
+        except Exception as e:  # noqa: BLE001 — herdr's refusal, said in the plugin's log
+            print(f"fabric-view toggle: {e}", file=sys.stderr)
+            return 1
     if mode not in ("board", "agent", "prs"):
         print(USAGE, file=sys.stderr)
         return 2
     login = None
+    in_tab = False
     if mode == "agent":
         if rest[:1] == ["--agent"] and len(rest) == 2:
             login = rest[1]
+        elif rest[:1] == ["--agent"] and rest[2:] == ["--in-tab"]:
+            login, in_tab = rest[1], True
         elif rest:
             print(USAGE, file=sys.stderr)
             return 2
@@ -924,7 +1016,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("ESCDELAY", "25")
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
-        return curses.wrapper(lambda screen: run(curses, screen, fleet, mode, login))
+        return curses.wrapper(lambda screen: run(curses, screen, fleet, mode, login, in_tab))
     except KeyboardInterrupt:
         return 0
     finally:
