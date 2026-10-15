@@ -824,6 +824,44 @@ impl AppState {
             .get(ws_idx)?
             .find_tab_index_for_pane(pane_id)?;
         let focus_changed = self.focus_pane_in_workspace(ws_idx, pane_id);
+        self.set_tab_zoom(ws_idx, tab_idx, command, focus_changed)
+    }
+
+    /// `apply_pane_zoom` for a tab that may be out of sight: the pane becomes
+    /// its tab's focused pane, which is the one a zoomed tab shows, and the
+    /// tab is switched to only if it is the one shown already. A caller
+    /// arranging tabs in the background (the fleet deck at its restore) would
+    /// otherwise pull the person through every tab it touched.
+    pub(crate) fn apply_pane_zoom_in_tab(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        command: PaneZoomCommand,
+    ) -> Option<PaneZoomOutcome> {
+        let ws = self.workspaces.get(ws_idx)?;
+        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+        if self.active == Some(ws_idx) && ws.active_tab == tab_idx {
+            return self.apply_pane_zoom(ws_idx, pane_id, command);
+        }
+        let tab = self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))?;
+        let focus_changed = tab.layout.focused() != pane_id;
+        if focus_changed {
+            tab.layout.focus_pane(pane_id);
+            self.mark_session_dirty();
+        }
+        self.set_tab_zoom(ws_idx, tab_idx, command, focus_changed)
+    }
+
+    fn set_tab_zoom(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        command: PaneZoomCommand,
+        focus_changed: bool,
+    ) -> Option<PaneZoomOutcome> {
         let tab = self
             .workspaces
             .get_mut(ws_idx)
@@ -4437,6 +4475,50 @@ mod tests {
         assert!(state.workspaces[0].zoomed);
         state.toggle_zoom();
         assert!(!state.workspaces[0].zoomed);
+    }
+
+    #[test]
+    fn zoom_in_tab_leaves_the_shown_tab_shown() {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        let tab_idx = state.workspaces[0].test_add_tab(Some("acct"));
+        state.workspaces[0].switch_tab(tab_idx);
+        let harness = state.workspaces[0].tabs[tab_idx].root_pane;
+        let other = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[tab_idx].layout.focus_pane(other);
+        state.workspaces[0].switch_tab(0);
+        state.switch_workspace(1);
+        state.ensure_test_terminals();
+
+        let outcome = state
+            .apply_pane_zoom_in_tab(0, harness, PaneZoomCommand::On)
+            .expect("the pane is found");
+
+        assert!(outcome.changed && outcome.focus_changed && outcome.zoomed);
+        assert_eq!(state.active, Some(1), "no workspace switch");
+        assert_eq!(state.workspaces[0].active_tab, 0, "no tab switch");
+        let tab = &state.workspaces[0].tabs[tab_idx];
+        assert!(tab.zoomed);
+        assert_eq!(tab.layout.focused(), harness, "the pane a zoomed tab shows");
+        state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn zoom_in_tab_in_the_shown_tab_is_a_zoom() {
+        let mut state = app_with_workspaces(&["test"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let other = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.focus_pane(other);
+
+        state
+            .apply_pane_zoom_in_tab(0, root, PaneZoomCommand::On)
+            .expect("the pane is found");
+
+        assert!(state.workspaces[0].tabs[0].zoomed);
+        assert_eq!(
+            state.current_pane_focus_target().map(|target| target.pane_id),
+            Some(root),
+            "the person's focus moves with the zoom they see"
+        );
     }
 
     #[test]

@@ -99,8 +99,13 @@ pub(super) fn pane_resize(params: PaneResizeParams) -> std::io::Result<i32> {
     print_method_response("cli:pane:resize", Method::PaneResize(params))
 }
 
-pub(super) fn pane_zoom(params: PaneZoomParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:zoom", Method::PaneZoom(params))
+pub(super) fn pane_zoom(params: PaneZoomParams, in_tab: bool) -> std::io::Result<i32> {
+    let method = if in_tab {
+        Method::PaneZoomInTab(params)
+    } else {
+        Method::PaneZoom(params)
+    };
+    print_method_response("cli:pane:zoom", method)
 }
 
 pub(super) fn pane_rename(params: PaneRenameParams) -> std::io::Result<i32> {

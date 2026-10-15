@@ -1413,6 +1413,21 @@ impl App {
     }
 
     pub(super) fn handle_pane_zoom(&mut self, id: String, params: PaneZoomParams) -> String {
+        self.zoom_pane(id, params, false)
+    }
+
+    /// `pane.zoom_in_tab`: switches to the pane's tab only when it is the one
+    /// shown (`AppState::apply_pane_zoom_in_tab`).
+    pub(super) fn handle_pane_zoom_in_tab(&mut self, id: String, params: PaneZoomParams) -> String {
+        self.zoom_pane(id, params, true)
+    }
+
+    fn zoom_pane(
+        &mut self,
+        id: String,
+        params: PaneZoomParams,
+        in_tab: bool,
+    ) -> String {
         let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
             return encode_error(id, "pane_not_found", "pane not found");
         };
@@ -1430,7 +1445,12 @@ impl App {
             PaneZoomMode::On => PaneZoomCommand::On,
             PaneZoomMode::Off => PaneZoomCommand::Off,
         };
-        let Some(outcome) = self.state.apply_pane_zoom(ws_idx, pane_id, command) else {
+        let outcome = if in_tab {
+            self.state.apply_pane_zoom_in_tab(ws_idx, pane_id, command)
+        } else {
+            self.state.apply_pane_zoom(ws_idx, pane_id, command)
+        };
+        let Some(outcome) = outcome else {
             return pane_not_found(id, &pane_public_id);
         };
         if outcome.changed || outcome.focus_changed {
