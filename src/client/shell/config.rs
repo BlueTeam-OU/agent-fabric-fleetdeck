@@ -397,12 +397,16 @@ impl ClientShellConfig {
     ) -> ClientShellLayout {
         if cols <= self.mobile_width_threshold {
             let header_height = rows.min(2);
+            // A narrow window keeps the pane row too, under the header: it is
+            // what says which pane is shown. At least one row of panes stays.
+            let pane_tabs_height = u16::from(pane_tabs && rows > header_height.saturating_add(1));
+            let chrome = header_height + pane_tabs_height;
             return ClientShellLayout {
                 sidebar: Rect::default(),
                 tab_bar: Rect::default(),
-                pane_tabs: Rect::default(),
+                pane_tabs: Rect::new(0, header_height, cols, pane_tabs_height),
                 mobile_header: Rect::new(0, 0, cols, header_height),
-                pane_surface: Rect::new(0, header_height, cols, rows.saturating_sub(header_height)),
+                pane_surface: Rect::new(0, chrome, cols, rows.saturating_sub(chrome)),
             };
         }
 

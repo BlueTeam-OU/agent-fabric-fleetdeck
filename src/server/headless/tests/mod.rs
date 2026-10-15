@@ -2136,6 +2136,88 @@ async fn client_local_navigation_does_not_emit_global_focus_transitions() {
 }
 
 #[tokio::test]
+async fn zoom_in_tab_tells_a_client_showing_that_tab_its_focus_moved() {
+    let mut server = test_headless_server();
+    let mut workspace = crate::workspace::Workspace::test_new("zoom-in-tab-focus");
+    let account_tab = workspace.test_add_tab(Some("acct"));
+    workspace.switch_tab(account_tab);
+    let harness = workspace.tabs[account_tab].root_pane;
+    let agent = workspace.test_split(ratatui::layout::Direction::Horizontal);
+    workspace.tabs[account_tab].layout.focus_pane(agent);
+    workspace.tabs[account_tab].zoomed = true;
+    workspace.switch_tab(0);
+    let reporting = || {
+        crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            0,
+            b"\x1b[?1004h",
+            4,
+        )
+    };
+    let (harness_runtime, mut harness_input) = reporting();
+    let (agent_runtime, mut agent_input) = reporting();
+    workspace.insert_test_runtime(harness, harness_runtime);
+    workspace.insert_test_runtime(agent, agent_runtime);
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let account_tab_id = server.app.public_tab_id(0, account_tab).unwrap();
+    let harness_id = server.app.public_pane_id(0, harness).unwrap();
+
+    // Client 61 shows the account tab's agent; client 62 the first tab,
+    // which stays the server's default target.
+    let (first_control, _) = connect_matching_test_shell(&mut server, 61);
+    let (second_control, _) = connect_matching_test_shell(&mut server, 62);
+    let _ = first_control.recv().expect("first snapshot");
+    let _ = second_control.recv().expect("second snapshot");
+    assert!(server.focus_shell_client_on_tab(61, &account_tab_id));
+    server.clients.get_mut(&61).unwrap().outer_terminal_focus = Some(true);
+    server.clients.get_mut(&62).unwrap().outer_terminal_focus = Some(true);
+    server.app.sync_focus_events();
+    while agent_input.try_recv().is_ok() {}
+    while harness_input.try_recv().is_ok() {}
+
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+        request: crate::api::schema::Request {
+            id: "deck-restore".into(),
+            method: crate::api::schema::Method::PaneZoomInTab(crate::api::schema::PaneZoomParams {
+                pane_id: Some(harness_id),
+                mode: crate::api::schema::PaneZoomMode::On,
+            }),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    let response = response_rx.recv().expect("zoom response");
+    assert!(
+        serde_json::from_str::<crate::api::schema::SuccessResponse>(&response).is_ok(),
+        "{response}"
+    );
+    server.app.sync_focus_events();
+
+    assert_eq!(
+        agent_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O")),
+        "the agent view it hid hears it lost focus"
+    );
+    assert_eq!(
+        harness_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[I"))
+    );
+    assert!(agent_input.try_recv().is_err(), "told once");
+    assert_eq!(server.app.state.active, Some(0));
+    assert_eq!(
+        server.app.state.workspaces[0].active_tab, 0,
+        "no tab switch"
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
 async fn client_local_navigation_emits_pane_focused_only_when_that_client_moves() {
     use api::schema::{EventData, Method, PaneTarget, TabTarget};
 

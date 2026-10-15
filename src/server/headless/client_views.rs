@@ -910,6 +910,12 @@ impl HeadlessServer {
                 (original, proxy_rx)
             });
         let reconcile = Self::shell_locations_may_need_reconcile(&msg.request.method);
+        // pane.zoom_in_tab changes the focused pane of a tab that need not be
+        // the default target, so no default-target sync hears it: a client
+        // showing that tab hears it as its own focus moving.
+        let zoom_focus_before =
+            matches!(&msg.request.method, api::schema::Method::PaneZoomInTab(_))
+                .then(|| (self.shell_focus_targets(), self.focused_shell_tabs()));
         let changed = self.handle_api_request_with_shutdown_check_inner(msg, false, false);
         let create_focus_requested = create_request.is_some_and(|method| {
             let manifest_placement = match &method {
@@ -961,6 +967,9 @@ impl HeadlessServer {
             || self.app.state.popup_pane.is_some() != popup_before
         {
             self.reconcile_client_shell_locations();
+        }
+        if let Some((focus_before, focused_tabs_before)) = zoom_focus_before {
+            self.finish_shell_location_reconciliation(focus_before, &focused_tabs_before);
         }
         let geometry_changed =
             method_claims_geometry && self.reapply_controlled_shell_tab_geometry(false);

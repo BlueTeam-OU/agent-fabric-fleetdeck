@@ -1042,7 +1042,7 @@
           "key": "ui.pane_tabs",
           "type": "list of strings",
           "default": "[\"harness\", \"shell\", \"status\", \"agent\"]",
-          "description": "Pane labels for the second tab row. A tab whose panes carry exactly these labels, each once, shows one pane at a time and a yellow row under the tab row that picks it. An empty list turns the row off."
+          "description": "Pane labels for the second tab row. A tab whose panes carry exactly these labels, each once, gets a yellow row under the tab row that picks the one pane shown (the tab's zoom). An empty list hides the row only; the zoom key still shows the panes side by side."
         },
         {
           "key": "ui.tab_bar_right",

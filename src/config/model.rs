@@ -1008,7 +1008,8 @@ pub struct UiConfig {
     pub tab_bar_right_separator: String,
     /// Pane labels that make a tab show one pane at a time, picked from a second tab
     /// row, in this order. A tab qualifies when its panes carry exactly these labels.
-    /// Empty disables the row. Default: FleetDeck's account tab, "harness", "shell",
+    /// Empty hides the row, nothing else: the zoom that shows one pane is the
+    /// server's (the fleet deck sets it). Default: FleetDeck's account tab, "harness", "shell",
     /// "status" and "agent".
     pub pane_tabs: Vec<String>,
     /// Format for the outer terminal window title. Empty leaves the title alone.

@@ -88,6 +88,63 @@ fn worktree_list_result(open_workspace_id: Option<&str>) -> crate::api::schema::
     }
 }
 
+/// A tab whose four panes carry FleetDeck's pane labels, zoomed on the
+/// harness: the tab the second row is drawn for.
+fn account_tab_snapshot() -> ClientShellSnapshot {
+    let mut projected = snapshot();
+    projected.focused_tab_id = Some("t1".into());
+    projected.focused_pane_id = Some("p0".into());
+    let mut tab = projected.tabs[0].clone();
+    tab.tab_id = "t1".into();
+    tab.zoomed = true;
+    tab.focused = true;
+    projected.tabs = vec![tab];
+    let template = projected.panes[0].clone();
+    projected.panes = ["harness", "shell", "status", "agent"]
+        .iter()
+        .enumerate()
+        .map(|(index, label)| crate::protocol::ClientShellPane {
+            pane_id: format!("p{index}"),
+            tab_id: "t1".into(),
+            label: Some((*label).into()),
+            focused: index == 0,
+            ..template.clone()
+        })
+        .collect();
+    projected
+}
+
+/// A left click on the row's agent cell, as it is composed: one request,
+/// the agent pane zoomed.
+fn assert_click_on_agent_cell_zooms_it(state: &mut ClientShellState) {
+    assert_eq!(state.hits.pane_tabs.len(), 4, "every cell is clickable");
+    let (agent, pane) = state.hits.pane_tabs[3].clone();
+    assert_eq!(pane, "p3");
+    let mut actions = Vec::new();
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        let outcome =
+            state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column: agent.x + 1,
+                row: agent.y,
+                modifiers: KeyModifiers::empty(),
+            })]);
+        actions.extend(outcome.actions);
+    }
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("one endpoint request for the click, got {actions:?}");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneZoom(params)
+            if params.pane_id.as_deref() == Some("p3")
+                && params.mode == crate::api::schema::PaneZoomMode::On
+    ));
+}
+
 fn surface() -> PaneSurfaceFrame {
     let surface_buffer = Buffer::with_lines(["LIVE", "PANE"]);
     PaneSurfaceFrame {
