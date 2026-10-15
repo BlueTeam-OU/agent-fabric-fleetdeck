@@ -480,11 +480,13 @@ def _is_fabric_view(argv: list[str]) -> bool:
     program given the script (an editor, a pager) is not it."""
     if not argv:
         return False
+    # The launcher's code is no argument an editor or pager is given: it
+    # names the view whatever the interpreter is called (AGENT_FABRIC_PYTHON).
+    if any("from fabric_view import main" in arg for arg in argv[1:]):
+        return True
     program = os.path.basename(argv[0])
-    if program not in _VIEW_STARTERS and not program.startswith("python"):
-        return False
-    return any(os.path.basename(arg) == "fabric-view" or "from fabric_view import main" in arg
-               for arg in argv[1:])
+    return (program in _VIEW_STARTERS or program.startswith("python")) and any(
+        os.path.basename(arg) == "fabric-view" for arg in argv[1:])
 
 
 def is_overlay_view(argv: list[str]) -> bool:
@@ -519,7 +521,9 @@ def at_bare_shell(info: dict) -> bool:
 def _interactive_shell(argv: list[str]) -> bool:
     if not argv or os.path.basename(argv[0]).lstrip("-") not in SHELLS:
         return False
-    return all(arg.startswith("-") and "c" not in arg.lstrip("-") for arg in argv[1:])
+    # A short-option cluster holding c (-c, -lc) takes a command; a long
+    # option (--norc, --rcfile) is just an option.
+    return all(arg.startswith("-") and (arg.startswith("--") or "c" not in arg[1:]) for arg in argv[1:])
 
 
 def ssh_harness(live: Live | None, endpoints: frozenset[Endpoint] | None) -> bool | None:

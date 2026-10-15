@@ -1093,9 +1093,11 @@ class Restore(unittest.TestCase):
             return {"shell_pid": 10, "foreground_process_group_id": 10,
                     "foreground_processes": [{"pid": 10, "argv": list(argv)}]}
 
-        for argv in (["bash"], ["/bin/bash"], ["-bash"], ["bash", "-l"], ["zsh", "-i"]):
+        # (`--rcfile <file>` reads as busy: its value is not an option. Safe,
+        # and herdr starts a pane's shell with no arguments.)
+        for argv in (["bash"], ["/bin/bash"], ["-bash"], ["bash", "-l"], ["zsh", "-i"], ["bash", "--norc"]):
             self.assertTrue(at_bare_shell(shell(*argv)), argv)
-        for argv in (["bash", "-c", "read -r answer"], ["bash", "-lc", "read"], ["bash", "x.sh"],
+        for argv in (["bash", "-c", "read -r answer"], ["bash", "-lc", "read"], ["bash", "x.sh"], ["bash", "-c", "-x"],
                      ["sh", "/usr/bin/script", "arg"], ["vim"]):
             self.assertFalse(at_bare_shell(shell(*argv)), argv)
 
@@ -1119,6 +1121,9 @@ class Restore(unittest.TestCase):
             self.assertTrue(fabric_deck.is_overlay_view(argv), argv)
         for argv in (["vim", script, "agent"], ["less", script, "agent"]):
             self.assertFalse(fabric_deck.is_overlay_view(argv), argv)
+        # Whatever AGENT_FABRIC_PYTHON is called, the launcher's code names the view.
+        self.assertTrue(fabric_deck.is_overlay_view(["/opt/pypy3", "-B", "-c", "from fabric_view import main", "/x",
+                                                     "agent"]))
 
     def test_no_report_reaches_a_pane_the_view_has_left(self):
         import fabric_deck

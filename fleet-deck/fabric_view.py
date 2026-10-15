@@ -591,6 +591,8 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     # (in an agent pane) is told its focus once it can hear it
     # (fabric_deck.start_view), and trusts no hint.
     focused = initial_focus(env)
+    # A refetch asked for with `r`, run once the input it came with is read.
+    refetch_asked: View | None = None
     pending = b""
     size = None
     while True:
@@ -640,7 +642,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             focused = True    # a key reached this pane, so it has focus
             if agent_view is not None:
                 if ev == "r":
-                    agent_view.refetch()
+                    refetch_asked = agent_view
                 elif in_tab and ev in ("q", "Q", ESCAPE):
                     # Nothing to close: ended, the pane would be a bare shell
                     # where the agent's screen was. The chord leaves it.
@@ -656,7 +658,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             if action == QUIT:
                 return 0
             if action == REFETCH:
-                view_of(nav.screen).refetch()
+                refetch_asked = view_of(nav.screen)
             elif action == OPEN_AGENT:
                 target = nav.login if nav.login in placements else list(placements)[max(0, min(nav.selected, len(placements) - 1))]
                 agent_view = View(fleet, vr.AGENT_SECTIONS, target, store, results)
@@ -667,6 +669,12 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
         # focus away) is applied first, so nothing is fetched for a pane
         # already hidden. The first fetch waits one tick for it.
         (agent_view or view_of(nav.screen)).tick(focused)
+        # The same for `r`: run once the focus that came with it is known, and
+        # only while focused. Pressed and left at once, it waits for the
+        # focus to come back rather than fetching for a hidden pane.
+        if refetch_asked is not None and focused is True:
+            refetch_asked.refetch()
+            refetch_asked = None
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,
