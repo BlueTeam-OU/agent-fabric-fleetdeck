@@ -99,8 +99,13 @@ def mark_of(herdr):
     return re.search(r"FABRIC_VIEW_START=(\w+) ", run).group(1)
 BARE = {"shell_pid": 10, "foreground_process_group_id": 10,
         "foreground_processes": [{"pid": 10, "argv": ["bash"]}]}
-VIEWING = {"shell_pid": 10, "foreground_process_group_id": 40,
-           "foreground_processes": [{"pid": 40, "argv": ["fabric-python", "-B", "-c", "..."]}]}
+# ui's view, as fabric-view's launcher leaves it in the pane.
+VIEWING = {"shell_pid": 10, "foreground_process_group_id": 40, "foreground_processes": [{"pid": 40, "argv": [
+    "fabric-python", "-B", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from fabric_view import main",
+    "/x/fleet-deck", "agent", "--agent", "ui", "--in-tab"]}]}
+# Something else the operator runs in the agent pane.
+EDITING = {"shell_pid": 10, "foreground_process_group_id": 50,
+           "foreground_processes": [{"pid": 50, "argv": ["vim", "notes"]}]}
 
 
 class FakeHerdr:
@@ -176,21 +181,40 @@ class Toggle(unittest.TestCase):
         self.assertEqual(fv.closing(False), fv.FOCUS_OFF, "an overlay's title is FleetDeck's")
 
     def test_focus_waits_for_a_view_still_starting(self):
-        # The deck started it unfocused a moment ago: focus moved there before
-        # it reports focus would be dropped, and it would wait for a key.
-        starting = [dict(p, terminal_title="bash") if p["pane_id"] == "a" else p for p in TAB_PANES]
+        # The deck started it unfocused a moment ago, marked m7: focus moved
+        # there before it reports focus would be dropped, and it would wait
+        # for a key. The title a killed view left is not its sign.
+        starting = [dict(p, terminal_title="fabric-view agent ui m6") if p["pane_id"] == "a" else p
+                    for p in TAB_PANES]
         herdr = FakeHerdr(starting, {"a": VIEWING})
         looks = []
 
         def sleep(_):
             looks.append(1)
             if len(looks) == 2:
-                herdr.panes = list(TAB_PANES)
+                herdr.panes = [dict(p, terminal_title=view_title("ui", "m7")) if p["pane_id"] == "a" else p
+                               for p in herdr.panes]
                 self.assertEqual(acts(herdr), [], "nothing zoomed yet")
 
-        fv.toggle(context(focused="h"), herdr, sleep=sleep)
+        real, fv.view_mark = fv.view_mark, lambda pid: "m7" if pid == 40 else None
+        try:
+            fv.toggle(context(focused="h"), herdr, sleep=sleep)
+        finally:
+            fv.view_mark = real
         self.assertEqual(len(looks), 2)
         self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
+
+    def test_focus_moves_at_once_where_no_view_of_this_login_can_be_waited_for(self):
+        for label, held in (("ui", EDITING), ("ui; x", VIEWING), ("ui; x", BARE)):
+            herdr = FakeHerdr([dict(p, terminal_title=None) for p in TAB_PANES], {"a": held})
+            looks = []
+            fv.toggle(context(focused="h", label=label), herdr, sleep=lambda _: looks.append(1))
+            self.assertEqual((looks, acts(herdr)), ([], [("pane", "zoom", "a", "--on")]), (label, held))
+
+    def test_a_view_titles_itself_with_its_start(self):
+        self.assertEqual(fv.in_tab_title("ui", {"FABRIC_VIEW_START": "m7"}), view_title("ui", "m7"))
+        self.assertEqual(fv.in_tab_title("ui", {}), view_title("ui"))
+        self.assertIsNone(fv.in_tab_title(None, {"FABRIC_VIEW_START": "m7"}))
 
     def test_a_view_that_ended_is_started_again_where_it_is_shown(self):
         herdr = FakeHerdr(TAB_PANES, {"a": BARE})

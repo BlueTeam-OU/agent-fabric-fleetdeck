@@ -52,8 +52,8 @@ import view_render as vr
 from deck_tabs import AGENT, HARNESS
 # OPENED_FOCUSED: set by `open`, and by whoever types a view into a focused
 # pane: the pane was focused before the view could hear it.
-from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, start_view,
-                         view_lock, view_title, wait_ready)
+from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
+                         start_view, view_lock, view_mark, view_title, wait_ready)
 
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
@@ -545,7 +545,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     curses.noecho()
     # In the tab, the title after focus reporting: its sign, read from
     # outside, that a focus change now reaches it (fabric_deck.start_view).
-    title = view_title(login, os.environ.get(VIEW_START)) if in_tab and login else None
+    title = in_tab_title(login, os.environ) if in_tab else None
     sys.stdout.write(FOCUS_ON + (f"\x1b]2;{title}\x07" if title else ""))
     sys.stdout.flush()
     painter = Painter(curses, screen)
@@ -948,8 +948,11 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
 def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
     pane, zoom = step
     login = ctx.get("tab_label")
-    if zoom == "--on" and isinstance(login, str) and SAFE_LOGIN.match(login) \
-            and at_bare_shell(herdr.process_info(pane)):
+    if zoom != "--on" or not isinstance(login, str) or not SAFE_LOGIN.match(login):
+        herdr.call("pane", "zoom", pane, zoom)
+        return 0
+    info = herdr.process_info(pane)
+    if at_bare_shell(info):
         # The view ended (or never started): started again where the person
         # is about to look, in the operator's own shell there. Zoomed first,
         # so it starts at the size it is seen at; the zoom focuses the pane
@@ -959,11 +962,19 @@ def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None
         herdr.call("pane", "zoom", pane, zoom)
         start_view(herdr, pane, login, True, sleep)
         return 0
-    if zoom == "--on" and isinstance(login, str):
-        # A view the deck started may still be starting: focus moved onto it
-        # before it turns focus reporting on is dropped, and it would wait
-        # for a key before its first fetch. Bounded; past it, zoomed anyway.
-        wait_ready(herdr, pane, login, sleep)
+    view = next((p for p in info.get("foreground_processes") or []
+                 if is_agent_view(p.get("argv") or [], login) and isinstance(p.get("pid"), int)), None)
+    if view is not None:
+        # This login's view, which the deck may have started a moment ago:
+        # focus moved onto it before it turns focus reporting on is dropped,
+        # and it would wait for a key before its first fetch. Its own start's
+        # title is waited for, bounded; anything else in the pane is zoomed
+        # at once.
+        if not wait_ready(herdr, pane, login, sleep, view_mark(view["pid"])):
+            # Shown anyway: a chord that shows nothing reads as broken. Said
+            # in the plugin's log; the screen fetches at its first key.
+            print(f"fabric-view toggle: {login}'s agent screen in {pane} did not report ready "
+                  "within the bound; shown, and it fetches at the first key", file=sys.stderr)
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 
@@ -1074,6 +1085,12 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         sys.stdout.write(closing(in_tab))
         sys.stdout.flush()
+
+
+def in_tab_title(login: str | None, env) -> str | None:
+    """The title an in-tab view sets once it hears focus: its start's own
+    (fabric_deck.view_title), the sign the deck and the toggle wait for."""
+    return view_title(login, env.get(VIEW_START)) if login else None
 
 
 def closing(in_tab: bool) -> str:

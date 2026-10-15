@@ -173,12 +173,19 @@ def ssh_record(login, *sessions, age_s=10):
 
 
 PANE_END = ("127.0.0.1", 40001)
+# Every start's mark, fixed for the tests (setUpModule).
+MARK = "m1"
 # What the deck types into the agent pane of ui's tab.
-VIEW = agent_view_command("ui")
+VIEW = agent_view_command("ui", start=MARK)
 
 
 # view_lock is taken here, never beside a running deck's.
 LOCK_DIR = tempfile.TemporaryDirectory()
+
+
+def setUpModule():
+    import fabric_deck
+    fabric_deck.new_mark = lambda: MARK
 
 
 def tearDownModule():
@@ -994,6 +1001,19 @@ class Restore(unittest.TestCase):
             self.assertFalse(herdr.fail_once, f"{pane}'s run failed once")
             # The fake records the failed call too: one refused, one retry.
             self.assertEqual(herdr.runs(pane), [typed, typed], f"{pane}: typed again, once")
+
+    def test_a_views_mark_is_read_from_its_environment(self):
+        import fabric_deck
+        with tempfile.TemporaryDirectory() as proc:
+            os.makedirs(os.path.join(proc, "40"))
+            with open(os.path.join(proc, "40", "environ"), "wb") as f:
+                f.write(b"HOME=/h\0FABRIC_VIEW_START=m7\0TERM=x\0")
+            os.makedirs(os.path.join(proc, "41"))
+            with open(os.path.join(proc, "41", "environ"), "wb") as f:
+                f.write(b"HOME=/h\0")
+            self.assertEqual(fabric_deck.view_mark(40, proc), "m7")
+            self.assertIsNone(fabric_deck.view_mark(41, proc))
+            self.assertIsNone(fabric_deck.view_mark(42, proc), "gone")
 
     def test_the_view_is_typed_as_one_safe_word_per_argument(self):
         import fabric_deck

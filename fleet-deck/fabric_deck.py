@@ -317,14 +317,13 @@ def agent_view_command(login: str, focused: bool = False, start: str | None = No
     operator's prompt: the agent's screen, kept in the tab (`--in-tab`: it
     fetches at its first focus, and q and Esc do not end it). Not `exec`: a
     view that cannot start leaves its reason on the screen and the pane in
-    place, and the toggle starts it again at the next press. A view started
-    in a focused pane is told so through env(1): a csh-family shell (tcsh
-    is among SHELLS) has no NAME=value prefix, and env execs the view, so
-    its argv is still is_agent_view's."""
+    place, and the toggle starts it again at the next press. Whether it
+    starts focused, and its start's mark, go through env(1): a csh-family
+    shell (tcsh is among SHELLS) has no NAME=value prefix, and env execs
+    the view, so its argv is still is_agent_view's."""
     command = f"{shlex.quote(os.path.join(BOARD_DIR, 'fabric-view'))} agent --agent {login} --in-tab"
-    if not focused:
-        return command
-    return f"env {OPENED_FOCUSED}=1 {VIEW_START}={start} {command}" if start else f"env {OPENED_FOCUSED}=1 {command}"
+    settings = [f"{OPENED_FOCUSED}=1"] * focused + [f"{VIEW_START}={start}"] * bool(start)
+    return " ".join(["env", *settings, command]) if settings else command
 
 
 def view_title(login: str, start: str | None = None) -> str:
@@ -360,8 +359,8 @@ VIEW_POLL_S = 0.125
 
 def view_ready(panes: list[dict], pane: str, login: str, start: str | None = None) -> bool:
     """Whether the view in `pane` has turned focus reporting on, by its
-    title: this start's own, or, for a view whose start is not known (one
-    the deck started unfocused), any agent screen's for this login."""
+    title: this start's own, or, for a view whose mark could not be read
+    (view_mark), any agent screen's for this login."""
     title = next((p.get("terminal_title") for p in panes if p.get("pane_id") == pane), None)
     if not isinstance(title, str):
         return False
@@ -378,13 +377,19 @@ def wait_ready(herdr, pane: str, login: str, sleep: Callable[[float], None], sta
     return False
 
 
+def new_mark() -> str:
+    return uuid.uuid4().hex[:12]
+
+
 def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
     """Type the agent's screen into a bare pane, under view_lock, and hold
     on until the next one to look cannot misread the pane: until the shell
     has handed its foreground on; and for a view told it starts focused,
     until it sets its title, so a focus change made after this returns
     reaches it rather than being dropped while it starts."""
-    start = uuid.uuid4().hex[:12] if focused else None
+    # Every start is marked: the toggle reads a running view's mark
+    # (view_mark) to know its title from one a killed view left behind.
+    start = new_mark()
     herdr.call("pane", "run", pane, agent_view_command(login, focused, start))
     if focused:
         sleep(VIEW_POLL_S)
@@ -398,6 +403,19 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
         sleep(VIEW_POLL_S)
         if not at_bare_shell(herdr.process_info(pane)):
             return
+
+
+def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
+    """The start mark in a running view's environment (the deck and the
+    toggle run as the operator, as the view does), or None: unreadable, or
+    a view started without one."""
+    try:
+        with open(os.path.join(proc_root, str(pid), "environ"), "rb") as handle:
+            entries = handle.read().split(b"\0")
+    except OSError:
+        return None
+    prefix = f"{VIEW_START}=".encode()
+    return next((e[len(prefix):].decode("ascii", "replace") for e in entries if e.startswith(prefix)), None)
 
 
 def is_agent_view(argv: list[str], login: str) -> bool:
