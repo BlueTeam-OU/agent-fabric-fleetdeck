@@ -167,6 +167,14 @@ class Toggle(unittest.TestCase):
         self.assertEqual(fv.toggle_step(roles, "a"), ("h", "--on"), "the same chord, back: still one pane shown")
         self.assertEqual(fv.toggle_step(roles, "s"), ("a", "--on"), "from anywhere else in the tab")
 
+    def test_a_tab_with_more_than_the_four_panes_comes_back_side_by_side(self):
+        self.assertTrue(fv.only_roles(TAB_PANES, "t1"))
+        extra = [*TAB_PANES, {"pane_id": "x", "tab_id": "t1", "label": "this agent"}]
+        self.assertFalse(fv.only_roles(extra, "t1"), "no second row there")
+        roles = fv.tab_roles(extra, "t1")
+        self.assertEqual(fv.toggle_step(roles, "a", fv.only_roles(extra, "t1")), ("h", "--off"))
+        self.assertEqual(fv.toggle_step(roles, "h", False), ("a", "--on"))
+
     def test_a_repeated_label_names_the_pane_the_deck_follows(self):
         from fabric_deck import PaneInfo, read_tab
         panes = [{"pane_id": "h", "tab_id": "t1", "label": "harness"},

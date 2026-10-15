@@ -344,7 +344,7 @@ class FakeHerdr(Herdr):
                 self.proc[new] = self.proc.pop(old)
             return {"tab": {"tab_id": new_tab, "workspace_id": target}}
         if head == ("pane", "zoom"):
-            if "--no-focus" in args and not self.zoom_in_tab:
+            if "--in-tab" in args and not self.zoom_in_tab:
                 raise RuntimeError("herdr pane zoom: exit 1: unknown method pane.zoom_in_tab")
             return {}
         if head == ("tab", "rename"):
@@ -597,7 +597,23 @@ class ToRoleWorkspace(unittest.TestCase):
         zooms = [c for c in herdr.calls if c[:2] == ("pane", "zoom")]
         harness = h.deck.harness_pane["ui"]
         self.assertEqual(herdr.panes[harness]["label"], "harness")
-        self.assertEqual(zooms, [("pane", "zoom", harness, "--on", "--no-focus")])
+        self.assertEqual(zooms, [("pane", "zoom", harness, "--on", "--in-tab")])
+
+    def test_a_tab_with_a_pane_of_its_own_is_not_shown_one_pane_at_a_time(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", [*four_panes("ui", "q"), ("q9", None, BARE)])
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertFalse(any(c[:2] == ("pane", "zoom") for c in herdr.calls),
+                         "no second row there, so all its panes stay in sight")
+
+    def test_a_retried_restore_leaves_the_pane_the_person_picked(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        h.deck.restore(1, only={"ui"})
+        self.assertEqual(len([c for c in herdr.calls if c[:2] == ("pane", "zoom")]), 1)
 
     def test_a_fleetdeck_without_zoom_in_tab_still_restores_and_says_so_once(self):
         herdr = self.herdr()
@@ -607,7 +623,9 @@ class ToRoleWorkspace(unittest.TestCase):
         h.deck.restore(0)
         h.deck.restore(1)
         self.assertEqual(herdr.panes[h.deck.harness_pane["ui"]]["label"], "harness")
-        self.assertEqual(sum("shows every pane" in line for line in h.logs), 1)
+        said = [line for line in h.logs if "shows every pane" in line]
+        self.assertEqual(len(said), 1, "said once")
+        self.assertIn("pane.zoom_in_tab", said[0], "with the error itself")
 
 
 class Restore(unittest.TestCase):
@@ -978,6 +996,49 @@ class Restore(unittest.TestCase):
         self.assertEqual(typed, VIEW, "marked, as every start")
         self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
                          [("pane", "send-text", "p3", "\x1b[I")], "told it is focused, once it can hear")
+
+    def test_an_agent_screen_started_unfocused_is_told_its_focus_once_it_can_hear(self):
+        # The person picks the agent (the second row, F4) while its view is
+        # still starting: herdr drops that focus change, so the deck tells it.
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real_run = herdr.call
+
+        def call(*args):
+            out = real_run(*args)
+            if args[:3] == ("pane", "run", "p3"):   # it holds the pane, not yet hearing
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertEqual(herdr.runs("p3"), [VIEW])
+        sent = lambda: [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
+        self.assertEqual(sent(), [], "not told before it can hear")
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
+        h.deck.follow(2)
+        h.deck.follow(3)
+        self.assertEqual(sent(), [("pane", "send-text", "p3", "\x1b[I")], "told once, as it is")
+
+    def test_an_ended_agent_screen_is_started_again_once_per_end(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        self.assertEqual(herdr.runs("p3"), [], "its screen runs")
+        herdr.proc["p3"] = BARE  # it crashed; a start that fails leaves it bare
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 2)
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(herdr.runs("p3"), [VIEW])
+        h.deck.follow(3 * PANE_MAP_REFRESH_S + 4)
+        h.deck.follow(4 * PANE_MAP_REFRESH_S + 5)
+        self.assertEqual(herdr.runs("p3"), [VIEW], "not typed again until seen running again")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle
