@@ -933,8 +933,10 @@ def toggle(env: dict[str, str], herdr) -> int:
         # The view ended (or never started): started again where the person
         # is about to look, in the operator's own shell there. The zoom below
         # focuses the pane before the view turns focus reporting on, so no
-        # focus-in reaches it: it is told, as `open` tells an overlay.
-        herdr.call("pane", "run", pane, f"{OPENED_FOCUSED}=1 {agent_view_command(login)}")
+        # focus-in reaches it: it is told, as `open` tells an overlay. Through
+        # env(1): a csh-family shell (tcsh is among SHELLS) has no NAME=value
+        # prefix, and env execs the view, so its argv is the deck's to find.
+        herdr.call("pane", "run", pane, f"env {OPENED_FOCUSED}=1 {agent_view_command(login)}")
     herdr.call("pane", "zoom", pane, zoom)
     return 0
 

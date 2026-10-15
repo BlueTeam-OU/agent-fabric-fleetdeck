@@ -139,7 +139,7 @@ class Toggle(unittest.TestCase):
         fv.toggle(context(focused="h"), herdr)
         # The zoom focuses the pane before the view reports focus: it is told,
         # or it would wait for a key before its first fetch.
-        self.assertEqual(herdr.calls[1:], [("pane", "run", "a", f"{fv.OPENED_FOCUSED}=1 {fv.agent_view_command('ui')}"),
+        self.assertEqual(herdr.calls[1:], [("pane", "run", "a", f"env {fv.OPENED_FOCUSED}=1 {fv.agent_view_command('ui')}"),
                                            ("pane", "zoom", "a", "--on")])
 
     def test_a_label_that_is_no_plain_login_is_never_typed(self):
