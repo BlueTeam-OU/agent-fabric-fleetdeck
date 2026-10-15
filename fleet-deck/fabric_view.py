@@ -916,14 +916,15 @@ def tab_roles(panes: list[dict], tab_id: str | None) -> dict[str, str]:
 
 
 def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] | None:
-    """The zoom that turns the tab over: from the agent screen to the harness
-    in its tab (zoom off, the harness focused), from anywhere else in the
-    tab to the agent screen (zoomed, focused). herdr's zoom focuses the pane
-    it names. None for a tab without both panes: not one the deck keeps."""
+    """The zoom that turns the tab over: from the agent screen to the harness,
+    from anywhere else in the tab to the agent screen. Both stay zoomed: the
+    tab shows one pane at a time, the one its second row marks
+    (ui.pane_tabs), and herdr's zoom focuses the pane it names. None for a
+    tab without both panes: not one the deck keeps."""
     harness, agent = roles.get(HARNESS), roles.get(AGENT)
     if not harness or not agent:
         return None
-    return (harness, "--off") if focused == agent else (agent, "--on")
+    return (harness, "--on") if focused == agent else (agent, "--on")
 
 
 # Where view_lock is taken, for a test only; never set on a host.
@@ -950,7 +951,8 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
             return 0
         focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
                        ctx.get("focused_pane_id"))
-        step = toggle_step(tab_roles(panes, tab), focused)
+        roles = tab_roles(panes, tab)
+        step = toggle_step(roles, focused)
         if step is None:
             # Known by what runs in it, never by its label: a person may set
             # "this agent" on any pane, and the close ends what runs there.
@@ -973,7 +975,7 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
                     print(f"fabric-view toggle: {overlay} is no overlay to close: {error}", file=sys.stderr)
             # Opened before the lock is let go, so the next press finds it.
             return 0 if closed else open_overlay(env)
-        return _turn(ctx, herdr, step, sleep)
+        return _turn(ctx, herdr, step, roles.get(AGENT), sleep)
 
 
 def left_tab(panes: list[dict], tab: str | None) -> bool:
@@ -983,10 +985,11 @@ def left_tab(panes: list[dict], tab: str | None) -> bool:
         not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes)
 
 
-def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
+def _turn(ctx: dict, herdr, step: tuple[str, str], agent: str | None,
+          sleep: Callable[[float], None]) -> int:
     pane, zoom = step
     login = ctx.get("tab_label")
-    if zoom != "--on" or not isinstance(login, str) or not SAFE_LOGIN.match(login):
+    if pane != agent or not isinstance(login, str) or not SAFE_LOGIN.match(login):
         herdr.call("pane", "zoom", pane, zoom)
         return 0
     info = herdr.process_info(pane)

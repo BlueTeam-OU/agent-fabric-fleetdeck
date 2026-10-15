@@ -4,14 +4,19 @@ The operator's console over the agent fleet, built into Agent Fabric FleetDeck.
 It runs on Linux only, where agent-fabric's hosts run: it reads `/proc`,
 asks a socket's peer with `SO_PEERCRED`, and drives accounts through `moveto`.
 Each agent account gets one tab, labelled with its login, holding four
-panes:
+panes. The tab shows one of them at a time, full size: a yellow second row
+under the tab names, `harness · shell · status · agent`, marks the one
+shown, and a click or `ctrl+6` then F1-F4 shows another; the others keep
+running unseen. The harness is shown after every deck restore. The row is
+FleetDeck's (`ui.pane_tabs`, `keys.select_pane_tab`); a tab whose panes do
+not carry exactly those four labels shows no second row.
 
 | pane | runs | for |
 |---|---|---|
 | **harness** (left, 65 %, focused) | `moveto <account> --wait` | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session |
 | **shell** (top right) | `moveto <account>` | a shell as the account |
 | **status** (right) | `moveto <account> --watch` | the account's status, read-only |
-| **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it zoomed in the harness's place, and `prefix+a` again shows the harness (see Views) |
+| **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it, and `prefix+a` again shows the harness (see Views) |
 
 This directory exists only in gzapi-org's fork; upstream merges never
 touch it. The contract is agent-fabric's `docs/fleet-deck/tab-states.md`
@@ -252,6 +257,11 @@ again whole within 10 s, and is followed in nothing until then.
   the agent pane gains one below its status pane.
 - **A tab split by hand** with no `harness` pane is left alone, and the
   deck says so once.
+- **The harness is the pane shown** after each restore: zoomed in its tab
+  without switching to it (`pane zoom --no-focus`, FleetDeck's
+  `pane.zoom_in_tab`), so a restore never takes the person through the
+  tabs. A FleetDeck without that method shows every pane of the tab, said
+  once in the deck's log.
 - **The shell and status panes** are started once their shell is at its
   prompt, since a pane just created may still be running the operator's
   rc file. One still busy after 120 s is said once, and started whenever
@@ -471,9 +481,9 @@ account tabs as before.
   compact one (agent, needs you, current job); the footer says what each
   switches to.
 - **The agent pane.** In an agent's tab, `prefix+a` (`ctrl+6 a`) shows
-  the agent's screen zoomed in the harness's place, and `prefix+a` again
-  shows the harness, with the tab's other panes. Only the zoom and the
-  focus change: the harness's session runs on in its pane, and no second
+  the agent's screen, as `ctrl+6` F4 or a click on `agent` in the second
+  row does, and `prefix+a` again shows the harness. Only the shown pane and
+  the focus change: the harness's session runs on in its pane, and no second
   screen is ever opened. The screen fetches nothing until it is first
   focused, then refreshes only while focused, as every view: a deck start
   does not read the fleet once per tab. A pane cannot call FleetDeck's

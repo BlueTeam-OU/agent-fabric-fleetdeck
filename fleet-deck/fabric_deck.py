@@ -1091,6 +1091,7 @@ class Deck:
         if AGENT not in panes:
             # A tab from before the agent pane gets one too.
             panes[AGENT] = self._split(panes[STATUS], "down", 0.5, AGENT)
+        self._show_harness(login, harness)
         # Everything the restore owes this account is recorded before the
         # first observation, so a herdr call failing below leaves it waiting
         # for its decision, never followed half-restored. The harness waits
@@ -1153,6 +1154,16 @@ class Deck:
         if len(infos) == 1 and at_bare_shell(infos[0]) and same_dir(panes[0].get("cwd"), BOARD_DIR):
             return "remnant"
         return "other"
+
+    def _show_harness(self, login: str, harness: str) -> None:
+        """The harness as the tab's one shown pane: zoomed, the pane the tab's
+        second row (ui.pane_tabs) marks. --no-focus: a restore runs over every
+        tab, and a plain zoom would take the person to each in turn."""
+        try:
+            self.herdr.call("pane", "zoom", harness, "--on", "--no-focus")
+        except Exception as error:  # a FleetDeck without pane.zoom_in_tab: the tab shows all its panes
+            self._say(f"zoom:{login}", f"{login}: its tab shows every pane, not only the harness: "
+                      f"{printable(str(error))}")
 
     def _split(self, pane: str, direction: str, ratio: float, label: str) -> str:
         made = self.herdr.call("pane", "split", pane, "--direction", direction,

@@ -250,6 +250,7 @@ class FakeHerdr(Herdr):
         self.fail_once = set()  # (subcommand, pane) pairs whose next call fails
         self.plugin_linked = True
         self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
+        self.zoom_in_tab = True  # False: a FleetDeck from before pane.zoom_in_tab
 
     def _id(self, kind):
         # Never one a test named by hand (p0, p1, p2...): a split must not
@@ -342,6 +343,10 @@ class FakeHerdr(Herdr):
                 self.panes[new] = dict(self.panes.pop(old), pane_id=new, tab_id=new_tab)
                 self.proc[new] = self.proc.pop(old)
             return {"tab": {"tab_id": new_tab, "workspace_id": target}}
+        if head == ("pane", "zoom"):
+            if "--no-focus" in args and not self.zoom_in_tab:
+                raise RuntimeError("herdr pane zoom: exit 1: unknown method pane.zoom_in_tab")
+            return {}
         if head == ("tab", "rename"):
             for tabs in self.tabs.values():
                 for tab in tabs:
@@ -582,6 +587,27 @@ class ToRoleWorkspace(unittest.TestCase):
         self.assertEqual([t["label"] for t in herdr.tabs["w1"]], ["ui"])
         self.assertEqual(h.deck.harness_pane["ui"], "q0")
         self.assertEqual(sum("its tab stays in New" in line for line in h.logs), 1)
+
+
+    def test_a_restore_shows_the_harness_alone_without_switching_tabs(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        zooms = [c for c in herdr.calls if c[:2] == ("pane", "zoom")]
+        harness = h.deck.harness_pane["ui"]
+        self.assertEqual(herdr.panes[harness]["label"], "harness")
+        self.assertEqual(zooms, [("pane", "zoom", harness, "--on", "--no-focus")])
+
+    def test_a_fleetdeck_without_zoom_in_tab_still_restores_and_says_so_once(self):
+        herdr = self.herdr()
+        herdr.zoom_in_tab = False
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        h.deck.restore(1)
+        self.assertEqual(herdr.panes[h.deck.harness_pane["ui"]]["label"], "harness")
+        self.assertEqual(sum("shows every pane" in line for line in h.logs), 1)
 
 
 class Restore(unittest.TestCase):
