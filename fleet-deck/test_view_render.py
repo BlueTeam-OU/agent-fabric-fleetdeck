@@ -260,13 +260,61 @@ class Stale(unittest.TestCase):
         self.assertFalse(vr.stale({"status": "stale", "why": "x"}))
 
 
+class WorkingAndDelivered(unittest.TestCase):
+    """A delivered job is open (ADR-037) but waits on someone else's merge:
+    the deck counts it apart from the agent's work, and never counts done or
+    dropped, whatever a list holds."""
+
+    def agent(self):
+        jobs = [{"id": f"j{n}", "state": state, "title": state, "updated": "2026-10-09T10:00:00Z"}
+                for n, state in enumerate(("active", "queued", "paused", "blocked", "delivered", "delivered",
+                                           "done", "dropped"))]
+        return vr.Agent("devex", "h", "agent", {"jobs": ok("op:jobs", "2026-10-09T11:00:25Z",
+                                                           {"jobs": {"status": "ok", "jobs": jobs}}),
+                                                "closed_jobs": CLOSED})
+
+    def test_each_state_lands_in_one_count_or_none(self):
+        jobs = vr.open_jobs(vr.ok_data(self.agent().sections["jobs"]))
+        self.assertEqual([j["state"] for j in vr.working_jobs(jobs)], ["active", "queued", "paused", "blocked"])
+        self.assertEqual(len(vr.delivered_jobs(jobs)), 2)
+
+    def test_the_board_shows_working_and_delivered_apart(self):
+        cells = vr.board_cells(self.agent(), NOW)
+        self.assertEqual(cells["jobs"][0], "23/4")
+        self.assertEqual(cells["delivered"][0], "2")
+        header = texts([vr.board_header(vr.board_columns([self.agent()], 200))])[0]
+        self.assertIn("closed/working", header)
+        self.assertIn("delivered", header)
+
+    def test_a_narrow_board_gives_up_delivered_first_and_keeps_the_working_count(self):
+        wide = [c.key for c, _ in vr.board_columns([self.agent()], 200)]
+        self.assertIn("delivered", wide)
+        for width in range(200, 20, -1):
+            keys = [c.key for c, _ in vr.board_columns([self.agent()], width)]
+            if "delivered" not in keys:
+                self.assertIn("jobs", keys, f"{width}: the working count outlasts delivered")
+                break
+        else:
+            self.fail("no width drops delivered")
+
+    def test_the_agent_view_lists_them_under_their_own_headings(self):
+        body = texts(vr.agent_body(self.agent(), vr.Samples(), NOW, 100))
+        self.assertTrue(any(t.startswith("Working jobs (4)") for t in body))
+        self.assertTrue(any(t.startswith("Delivered, waiting on a merge (2)") for t in body))
+        work = body.index(next(t for t in body if t.startswith("Working jobs")))
+        delivered = body.index(next(t for t in body if t.startswith("Delivered")))
+        self.assertTrue(all("delivered" not in t for t in body[work + 1:delivered]))
+        self.assertFalse(any(t.startswith("  j6 ") or t.startswith("  j7 ") for t in body),
+                         "done and dropped are not listed as open")
+
+
 class AgentView(unittest.TestCase):
     def body(self, agent, samples=None, width=100):
         return texts(vr.agent_body(agent, samples or vr.Samples(), NOW, width))
 
     def test_every_section_with_its_source_and_age(self):
         body = self.body(fleet()[0])
-        for heading in ("Session  op:states, 4 min ago", "Resources  proc-local, 4 min ago", "Open jobs (3)  op:jobs",
+        for heading in ("Session  op:states, 4 min ago", "Resources  proc-local, 4 min ago", "Working jobs (3)  op:jobs",
                         "Closed jobs (23)  hostexec", "Pull requests  pr-gate", "Tokens, 7 days  op:tokens, 7 min ago",
                         "Usage windows  op:usage"):
             self.assertTrue(any(t.startswith(heading) for t in body), heading)
@@ -294,7 +342,7 @@ class AgentView(unittest.TestCase):
 
     def test_a_failed_section_says_why_in_place(self):
         body = self.body(fleet()[1])
-        i = next(i for i, t in enumerate(body) if t.startswith("Open jobs"))
+        i = next(i for i, t in enumerate(body) if t.startswith("Working jobs"))
         self.assertIn("is not a host operator", " ".join(" ".join(body[i + 1: i + 3]).split()))
         self.assertTrue(all(len(t) <= 60 for t in self.body(fleet()[1], width=60)))
         self.assertIn("  no-credentials", body)

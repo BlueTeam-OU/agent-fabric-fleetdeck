@@ -770,7 +770,7 @@ SNAPSHOT_WAIT_S = 120.0
 # The width when stdout is no terminal (an agent's shell): every column the
 # board has, so nothing is cut that the owner's wide pane would show.
 SNAPSHOT_WIDTH = 200
-SNAPSHOT_USAGE = ("usage: snapshot board | agent LOGIN | compare [--metric 1-6] | plan | prs  "
+SNAPSHOT_USAGE = (f"usage: snapshot board | agent LOGIN | compare [--metric 1-{len(rr.METRICS)}] | plan | prs  "
                   "[--width N]")
 
 
@@ -858,7 +858,7 @@ def snapshot_main(args: list[str], env: dict[str, str] | None = None) -> int:
     parser.add_argument("view", choices=["board", "agent", "compare", "plan", "prs"])
     parser.add_argument("login", nargs="?", help="agent only: the agent's login")
     parser.add_argument("--metric", type=int, choices=range(1, len(rr.METRICS) + 1), default=1,
-                        metavar="1-6", help="compare only: " + rr.metric_list(-1).strip())
+                        metavar=f"1-{len(rr.METRICS)}", help="compare only: " + rr.metric_list(-1).strip())
     parser.add_argument("--width", type=int, help=f"columns (default: the terminal's, else {SNAPSHOT_WIDTH})")
     a = parser.parse_args(args)
     if (a.view == "agent") != (a.login is not None):

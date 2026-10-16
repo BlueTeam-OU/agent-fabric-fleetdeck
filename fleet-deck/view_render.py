@@ -240,6 +240,21 @@ def open_jobs(data: dict | None) -> list[dict]:
     return [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
 
 
+# ADR-037 counts a delivered job as open: handed over, it waits on someone
+# else's merge. A person reads "open" as work the agent has to do, so the deck
+# counts the two apart. Blocked is work the agent still has; done and dropped
+# are never in the open list.
+WORKING = ("active", "queued", "paused", "blocked")
+
+
+def working_jobs(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("state") in WORKING]
+
+
+def delivered_jobs(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("state") == "delivered"]
+
+
 def current_job(jobs: list[dict]) -> dict | None:
     """The job the agent is on: an active one; else a blocked one, which is
     what it waits on. A queued or delivered job is not what it is doing."""
@@ -547,7 +562,10 @@ BOARD_COLUMNS = (
     # Another agent's wait is not the owner's: its own column, kept long.
     Column("waiting", "waiting on", 16, 1),
     Column("job", "current job", 12, 0, flex=True),
-    Column("jobs", "closed/open", 11, 4, right=True),
+    Column("jobs", "closed/working", 14, 4, right=True),
+    # Waiting on someone else's merge, not the agent's work: the first column
+    # a narrow board gives up, leaving the working count.
+    Column("delivered", "delivered", 9, 8, right=True),
     Column("rss", "RSS", 6, 3, right=True),
     Column("cpu", "CPU", 5, 5, right=True),
     Column("tokens", "tok 7d", 7, 7, right=True),
@@ -582,10 +600,11 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
     if jobs is None and closed is None:
         jobs_cell = (UNREAD, DIM)
     else:
-        open_n = len(open_jobs(ok_data(jobs))) if ok_data(jobs) is not None else None
+        listed = open_jobs(ok_data(jobs)) if ok_data(jobs) is not None else None
+        working_n = len(working_jobs(listed)) if listed is not None else None
         closed_n = (ok_data(closed) or {}).get("closed_total") if ok_data(closed) is not None else None
         left = str(closed_n) if closed_n is not None else (UNREAD if closed is None else NOT_READ)
-        right = str(open_n) if open_n is not None else (UNREAD if jobs is None else NOT_READ)
+        right = str(working_n) if working_n is not None else (UNREAD if jobs is None else NOT_READ)
         old = stale(jobs) or stale(closed)
         jobs_cell = (f"{left}/{right}", FAILED if NOT_READ in (left, right) else WARN if old else NORMAL)
     return {
@@ -595,6 +614,7 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
         "waiting": waiting_cell(a, now),
         "job": cell(jobs, lambda d: job_label(current_job(open_jobs(d)))),
         "jobs": jobs_cell,
+        "delivered": cell(jobs, lambda d: str(len(delivered_jobs(open_jobs(d))))),
         "rss": cell(s.get("proc"), lambda d: size_kb(d.get("rss_kb"))),
         "cpu": cell(s.get("proc"), lambda d: pct(d.get("cpu_pct"))),
         "tokens": cell(s.get("tokens"), lambda d: count(tokens_total(d))),
@@ -986,12 +1006,18 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
     out.append([("", NORMAL)])
 
     rec = s.get("jobs")
-    out.append(heading(f"Open jobs ({len(jobs)})" if ok_data(rec) is not None else "Open jobs", rec, now))
+    working = working_jobs(jobs)
+    out.append(heading(f"Working jobs ({len(working)})" if ok_data(rec) is not None else "Working jobs", rec, now))
     out += not_read(rec, width)
-    out += [job_line(j, now, width) for j in jobs]
-    if ok_data(rec) is not None and not jobs:
+    out += [job_line(j, now, width) for j in working]
+    if ok_data(rec) is not None and not working:
         out.append([("  none", DIM)])
     out.append([("", NORMAL)])
+    delivered = delivered_jobs(jobs)
+    if delivered:
+        out.append(heading(f"Delivered, waiting on a merge ({len(delivered)})", rec, now))
+        out += [job_line(j, now, width) for j in delivered]
+        out.append([("", NORMAL)])
     rec = s.get("closed_jobs")
     data = ok_data(rec)
     closed = data.get("closed") if data and isinstance(data.get("closed"), list) else []
