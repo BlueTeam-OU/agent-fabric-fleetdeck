@@ -1038,6 +1038,23 @@ class Restore(unittest.TestCase):
                 # Two harness labels: the account is forgotten (or the pane
                 # unlisted) before the agent-pane guard is reached.
                 self.assertNotIn(("ui", "p3", fabric_deck_mode_view()), h.deck.waiting)
+                # p3 listed after p0: the tab's harness is p3 now, so the
+                # account is forgotten (the guard against typing into a harness).
+                self.assertNotIn("ui", h.deck.harness_pane)
+
+    def test_a_busy_pane_given_another_role_loses_its_queued_start(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        herdr.panes["p3"]["label"] = "status"  # and it stays busy
+        for at in range(1, 5):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at + RESTORE_WAIT_S)
+        self.assertNotIn(("ui", "p3", fabric_deck_mode_view()), h.deck.waiting)
+        self.assertFalse(any("p3 is still busy" in line for line in h.logs), "not its agent pane any more")
+        self.assertEqual(sum("no longer its agent pane" in line for line in h.logs), 1)
 
     def test_a_pane_relabelled_since_the_last_map_read_is_not_typed_into(self):
         herdr = FakeHerdr()
