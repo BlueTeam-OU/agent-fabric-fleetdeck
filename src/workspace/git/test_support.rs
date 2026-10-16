@@ -98,7 +98,7 @@ pub(super) fn write_fake_tracked_repo(root: &Path) {
 }
 
 pub(super) fn run_git(cwd: &Path, args: &[&str]) {
-    let output = std::process::Command::new("git")
+    let output = crate::test_git::command()
         .arg("-C")
         .arg(cwd)
         .args(args)

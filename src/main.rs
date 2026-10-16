@@ -63,6 +63,8 @@ mod terminal_effects;
 mod terminal_modes;
 mod terminal_notify;
 mod terminal_theme;
+#[cfg(test)]
+mod test_git;
 mod thread_spawn;
 mod transition_sound;
 mod ui;

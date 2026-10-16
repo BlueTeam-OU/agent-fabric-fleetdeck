@@ -8,9 +8,13 @@ from pathlib import Path
 
 import scripts.conventional_commits as conventional_commits
 import scripts.preview as preview
+from scripts.neutral_git_env import isolate_git
 
 
 class PreviewNotesTests(unittest.TestCase):
+    def setUp(self):
+        isolate_git(self)
+
     def test_notes_contain_only_build_and_comparison_link(self):
         self.assertEqual(
             preview.build_notes("previous-sha", "current-sha", "2026-09-16-abcdef123456", "BlueTeam-OU/agent-fabric-fleetdeck"),
@@ -158,6 +162,9 @@ class PreviewNotesTests(unittest.TestCase):
                 os.chdir(original_cwd)
 
 class StableTagTests(unittest.TestCase):
+    def setUp(self):
+        isolate_git(self)
+
     def test_inherited_herdr_tags_are_not_fleetdeck_stable_releases(self):
         with tempfile.TemporaryDirectory(prefix="fleetdeck-preview-") as root:
             def git(*args):
@@ -188,6 +195,9 @@ class StableTagTests(unittest.TestCase):
 
 
 class ConventionalCommitTests(unittest.TestCase):
+    def setUp(self):
+        isolate_git(self)
+
     def test_valid_subjects_allow_scopes_and_bang(self):
         self.assertTrue(conventional_commits.valid_subject("fix(update): handle preview"))
         self.assertTrue(conventional_commits.valid_subject("feat!: change config"))

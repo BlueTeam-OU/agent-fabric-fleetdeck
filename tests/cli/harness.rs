@@ -35,8 +35,34 @@ pub(super) fn path_missing_or_empty(path: &Path) -> bool {
     }
 }
 
+/// Applies the neutral git configuration every test git child runs with: the
+/// account's own global and system git config (commit signing, identity) must
+/// not reach a test, or a signing account fails every commit made here.
+pub(super) fn neutral_git_env(command: &mut Command) -> &mut Command {
+    command
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "FleetDeck Test")
+        .env("GIT_AUTHOR_EMAIL", "herdr@example.invalid")
+        .env("GIT_COMMITTER_NAME", "FleetDeck Test")
+        .env("GIT_COMMITTER_EMAIL", "herdr@example.invalid")
+}
+
+/// Writes the git config a test hands the herdr child as GIT_CONFIG_GLOBAL; it
+/// turns signing off so the account's own config cannot leak in through it.
+pub(super) fn write_test_git_config(path: &Path, body: String) {
+    fs::write(
+        path,
+        format!("[commit]\n    gpgsign = false\n[tag]\n    gpgsign = false\n{body}"),
+    )
+    .unwrap();
+}
+
 pub(super) fn run_git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let mut command = Command::new("git");
+    neutral_git_env(&mut command);
+    let status = command
+        .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -231,6 +257,7 @@ pub(super) fn run_named_cli_with_env_and_socket_override(
         .args(args)
         .env("XDG_CONFIG_HOME", config_home)
         .env("XDG_RUNTIME_DIR", runtime_dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("HERDR_CLIENT_SOCKET_PATH")
         .env_remove("HERDR_ENV");
     for (key, value) in envs {
