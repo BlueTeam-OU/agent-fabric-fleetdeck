@@ -1502,7 +1502,7 @@ class Deck:
                 del self.unheard[(login, pane)]
                 if not ready:
                     self._say(f"{pane}:unheard", f"{login}: its agent screen in {pane} did not report "
-                              "ready; it fetches at its first key")
+                              "ready; it fetches at its next focus-in or key")
 
     def _restart_ended_views(self, now: float) -> None:
         """An agent pane whose screen was seen running and is now back at the
