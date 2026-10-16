@@ -997,18 +997,20 @@ class Restore(unittest.TestCase):
         self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
                          [("pane", "send-text", "p3", "\x1b[I")], "told it is focused, once it can hear")
 
-    def test_an_agent_screen_started_unfocused_is_told_its_focus_once_it_can_hear(self):
-        # The person picks the agent (the second row, F4) while its view is
-        # still starting: herdr drops that focus change, so the deck tells it.
+    def test_a_view_started_out_of_sight_is_never_told_an_inferred_focus(self):
+        # The person picks the agent while its screen starts, then may leave
+        # (the last client detaching): the pane list still reads it focused,
+        # as the server's default target. The deck tells it nothing; the
+        # screen fetches at its first key, never while nobody watches.
         herdr = FakeHerdr()
         herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
         h = Harness(herdr)
         h.records["ui"] = record("ui")
-        real_run = herdr.call
+        real = herdr.call
 
         def call(*args):
-            out = real_run(*args)
-            if args[:3] == ("pane", "run", "p3"):   # it holds the pane, not yet hearing
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
                 herdr.proc["p3"] = in_view("ui")
             return out
 
@@ -1016,13 +1018,11 @@ class Restore(unittest.TestCase):
         h.deck.restore(0)
         h.deck.follow(1)
         self.assertEqual(herdr.runs("p3"), [VIEW])
-        sent = lambda: [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
-        self.assertEqual(sent(), [], "not told before it can hear")
         import fabric_deck
         herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
-        h.deck.follow(2)
-        h.deck.follow(3)
-        self.assertEqual(sent(), [("pane", "send-text", "p3", "\x1b[I")], "told once, as it is")
+        for at in range(2, 8):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [])
 
     def test_an_ended_agent_screen_is_started_again_once_per_end(self):
         herdr = FakeHerdr()
@@ -1039,38 +1039,6 @@ class Restore(unittest.TestCase):
         h.deck.follow(3 * PANE_MAP_REFRESH_S + 4)
         h.deck.follow(4 * PANE_MAP_REFRESH_S + 5)
         self.assertEqual(herdr.runs("p3"), [VIEW], "not typed again until seen running again")
-
-    def test_a_failing_look_while_a_screen_waits_to_hear_leaves_the_deck_running(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-        failing = {"on": False}
-
-        def call(*args):
-            if failing["on"] and args[:2] == ("pane", "list"):
-                raise RuntimeError("herdr pane list: exit 1: timed out")
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        self.assertIn(("ui", "p3"), h.deck.unheard)
-        failing["on"] = True
-        h.deck.follow(2)  # raises nothing
-        h.deck.follow(3)
-        self.assertEqual(sum("waiting to hear their focus" in line for line in h.logs), 1, "said once")
-        self.assertIn(("ui", "p3"), h.deck.unheard, "still waiting")
-        failing["on"] = False
-        import fabric_deck
-        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
-        h.deck.follow(4)
-        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
-                         [("pane", "send-text", "p3", "\x1b[I")])
 
     def test_a_forgotten_account_gets_no_agent_screen_started_again(self):
         herdr = FakeHerdr()
@@ -1108,141 +1076,6 @@ class Restore(unittest.TestCase):
             self.assertIn("ui", h.deck.harness_pane, f"{change}: the account is still followed")
             looks = [c for c in herdr.calls if c[:2] == ("pane", "process-info") and c[-1] == "p3"]
             self.assertLessEqual(len(looks), 2, f"{change}: not looked at every map read")
-
-    def test_a_view_whose_pane_fails_to_take_its_focus_is_told_at_the_next_pass(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-
-        def call(*args):
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        import fabric_deck
-        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
-        herdr.fail_once.add(("process-info", "p3"))
-        h.deck.follow(2)  # raises nothing
-        self.assertIn(("ui", "p3"), h.deck.unheard, "kept for the next pass")
-        h.deck.follow(3)
-        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
-                         [("pane", "send-text", "p3", "\x1b[I")])
-
-    def test_a_forgotten_account_has_no_view_left_waiting_to_hear(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        h.deck.restore(0)
-        h.deck.follow(1)
-        self.assertIn(("ui", "p3"), h.deck.unheard)
-        herdr.panes["p0"]["label"] = "mine"
-        h.deck.follow(PANE_MAP_REFRESH_S + 2)
-        self.assertNotIn(("ui", "p3"), h.deck.unheard)
-
-    def test_a_ready_view_read_unfocused_is_told_nothing_and_still_waits(self):
-        # Another client moved the server's default target away while this
-        # view's own viewer stays on it: no focus-out is told from that.
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-
-        def call(*args):
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        import fabric_deck
-        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=False)
-        h.deck.follow(2)
-        sent = lambda: [c for c in herdr.calls if c[:2] == ("pane", "send-text")]
-        self.assertEqual(sent(), [], "no focus-out from the default target's focus")
-        self.assertIn(("ui", "p3"), h.deck.unheard)
-        herdr.panes["p3"]["focused"] = True
-        h.deck.follow(3)
-        self.assertEqual(sent(), [("pane", "send-text", "p3", "\x1b[I")])
-
-    def test_a_ready_view_nobody_picks_is_dropped_without_a_word(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-
-        def call(*args):
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        import fabric_deck
-        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=False)
-        h.deck.follow(2 + fabric_deck.VIEW_HEARD_WAIT_S)
-        self.assertNotIn(("ui", "p3"), h.deck.unheard)
-        self.assertFalse(any("did not report ready" in line for line in h.logs), "it did report ready")
-
-    def test_a_view_that_never_reports_ready_is_said_at_its_bound(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-
-        def call(*args):
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")  # it holds the pane, and never sets its title
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        import fabric_deck
-        herdr.panes["p3"]["focused"] = True
-        h.deck.follow(2 + fabric_deck.VIEW_HEARD_WAIT_S)
-        self.assertNotIn(("ui", "p3"), h.deck.unheard)
-        self.assertEqual(sum("did not report ready" in line for line in h.logs), 1)
-        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [], "never told")
-
-    def test_a_view_that_never_takes_its_focus_is_given_up_in_time(self):
-        herdr = FakeHerdr()
-        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
-        h = Harness(herdr)
-        h.records["ui"] = record("ui")
-        real = herdr.call
-
-        def call(*args):
-            if args[:2] == ("pane", "send-text"):
-                raise RuntimeError("herdr pane send-text: exit 1: refused")
-            out = real(*args)
-            if args[:3] == ("pane", "run", "p3"):
-                herdr.proc["p3"] = in_view("ui")
-            return out
-
-        herdr.call = call
-        h.deck.restore(0)
-        h.deck.follow(1)
-        import fabric_deck
-        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
-        h.deck.follow(2)
-        self.assertIn(("ui", "p3"), h.deck.unheard)
-        h.deck.follow(2 + fabric_deck.VIEW_HEARD_WAIT_S)
-        self.assertNotIn(("ui", "p3"), h.deck.unheard, "bounded")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle

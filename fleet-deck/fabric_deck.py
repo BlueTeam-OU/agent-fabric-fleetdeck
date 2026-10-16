@@ -370,9 +370,6 @@ def view_lock(directory: str | None = None):
 # How long a start waits for the view it typed, polled: Python's start and
 # fleet.py's import, with a margin. Past it the lock is let go regardless.
 VIEW_START_POLLS = 40
-# How long the deck looks for a view started unfocused to report ready, so
-# it can be told its focus (Deck._hear).
-VIEW_HEARD_WAIT_S = 60.0
 VIEW_POLL_S = 0.125
 
 
@@ -460,9 +457,12 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
         return start
     # Unfocused (the deck's restore): the shell's foreground handed on is
     # enough here, so a restore of every tab does not wait for each view's
-    # Python to start. The focus may move there before the view can hear it
-    # (the second row's pick, a click): the deck tells it once it can
-    # (Deck._hear), and the toggle waits for it (fabric_view._turn).
+    # Python to start. A focus moved there before the view can hear it (the
+    # second row's pick, a click) is dropped by herdr, and the view fetches
+    # at its first key: the deck never tells it a focus inferred from the
+    # pane list, which is the server's default target and no client's own,
+    # so a view nobody watches is never set fetching. The toggle waits for
+    # the view to hear before it moves the focus there (fabric_view._turn).
     for _ in range(VIEW_START_POLLS):
         sleep(VIEW_POLL_S)
         if not at_bare_shell(herdr.process_info(pane)):
@@ -928,9 +928,6 @@ class Deck:
     # screen, once gone, is started again, so a view that fails at its start
     # is not typed again every map read.
     view_seen: set[str] = field(default_factory=set)
-    # (login, agent pane) -> (start mark, when) of a view started unfocused:
-    # told its focus once it can hear, whoever moved the focus there meanwhile
-    unheard: dict[tuple[str, str], tuple[str, float]] = field(default_factory=dict)
     # Tabs whose harness this run of restores has shown alone: a restore
     # retried for an account does not take the person back to its harness.
     harness_shown: set[str] = field(default_factory=set)
@@ -1278,7 +1275,6 @@ class Deck:
                 self.restore(now, only=set(self.retry))
             self._restart_ended_views(now)
         self.decide_pending(now)
-        self._hear(now)
         self._note_befores(server)
         parents = self.parents()
         for login, pane in list(self.harness_pane.items()):
@@ -1327,7 +1323,7 @@ class Deck:
             self.lost = False
             self._say("restoring", "herdr's server answers: restoring")
             for kept in (self.tracks, self.harness_pane, self.pending, self.waiting, self.sent,
-                         self.agent_pane, self.view_seen, self.unheard, self.harness_shown):
+                         self.agent_pane, self.view_seen, self.harness_shown):
                 kept.clear()
             self.restore(now)
             return not self.lost
@@ -1382,8 +1378,6 @@ class Deck:
         agent = self.agent_pane.pop(login, None)
         if agent is not None:
             self.view_seen.discard(agent)
-        for key in [k for k in self.unheard if k[0] == login]:
-            del self.unheard[key]
 
     # ---------------------------------------------------------- observing
 
@@ -1449,60 +1443,12 @@ class Deck:
                 # FleetDeck's session restore can bring this pane back focused.
                 focused = any(p.get("pane_id") == pane and p.get("focused") is True
                               for p in self.herdr.call("pane", "list").get("panes", []))
-                mark = start_view(self.herdr, pane, login, focused, self.sleep)
-            if not focused:
-                self.unheard[(login, pane)] = (mark, now)
+                start_view(self.herdr, pane, login, focused, self.sleep)
             del self.waiting[key]
             self.log(f"{login}: started its agent screen in {pane}")
         elif now - since >= RESTORE_WAIT_S:
             self._say(f"{pane}:busy", f"{login}: pane {pane} is still busy; "
                       "its agent screen is started when it reaches its prompt")
-
-    def _hear(self, now: float) -> None:
-        """Tell each view started unfocused its focus once its title says it
-        can hear: a focus moved onto it before then is dropped by herdr, and
-        the view would wait for a key before its first fetch. One pane list a
-        pass, for every such view; given up after VIEW_HEARD_WAIT_S.
-
-        The focus told is the pane list's, the server's default target, as for
-        a view started focused (tell_focus): herdr answers no client's own
-        focus. So a last client that detaches while the view starts leaves it
-        told focus-in, fetching unseen until a client next leaves the pane; a
-        per-client answer would be a new server method."""
-        if not self.unheard:
-            return
-        try:
-            panes = self.herdr.call("pane", "list").get("panes", [])
-        except Exception as error:  # looked at again next pass, within the bound
-            reason = printable(str(error))
-            self._say(f"hear:{reason}", f"agent screens waiting to hear their focus: {reason}")
-            panes = []
-        for (login, pane), (mark, since) in list(self.unheard.items()):
-            # Only a focus-in is told: a view starts unfocused already, and the
-            # pane list's focus is the default target's, which another client
-            # may have moved while this view's own viewer stays on it. Waiting
-            # while it reads unfocused, a later focus-in still reaches it.
-            focused = any(p.get("pane_id") == pane and p.get("focused") is True for p in panes)
-            ready = view_ready(panes, pane, login, mark)
-            if focused and ready:
-                try:
-                    with view_lock(self.lock_dir):
-                        tell_focus(self.herdr, pane, login)
-                except Exception as error:  # the pane closed, or herdr failed: tried again next pass
-                    reason = printable(str(error))
-                    self._say(f"{pane}:hear:{reason}", f"{login}: its agent screen in {pane} was not "
-                              f"told its focus: {reason}")
-                else:
-                    del self.unheard[(login, pane)]
-                    continue
-            if now - since >= VIEW_HEARD_WAIT_S:
-                # Left to wait for a focus report or a key, never fetching while
-                # hidden. A ready view nobody picked meanwhile is the usual case
-                # after a restore, and nothing to say.
-                del self.unheard[(login, pane)]
-                if not ready:
-                    self._say(f"{pane}:unheard", f"{login}: its agent screen in {pane} did not report "
-                              "ready; it fetches at its next focus-in or key")
 
     def _restart_ended_views(self, now: float) -> None:
         """An agent pane whose screen was seen running and is now back at the

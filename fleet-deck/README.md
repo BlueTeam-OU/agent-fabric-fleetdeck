@@ -274,10 +274,12 @@ again whole within 10 s, and is followed in nothing until then.
   typed at the operator's prompt there; FleetDeck restores the pane as a
   shell, never its program. One already showing this account's screen is
   left as it is, and nothing is typed into one running anything else. A
-  screen started while its pane is out of sight is told its focus once it
-  can hear it, so a pick of `agent` made while it started is not lost. A
-  screen seen running that has ended is started again at the next map read
-  (10 s), once for each end.
+  pick of `agent` made while its screen is still starting is not heard by
+  the screen (herdr drops it), so the screen fetches at its first key; the
+  deck never tells it a focus it can only infer, so a screen nobody watches
+  never fetches. `prefix+a` waits for the screen instead. A screen seen
+  running that has ended is started again at the next map read (10 s),
+  once for each end.
 - **A harness pane running this account's moveto** is classified and
   never touched.
 - **Any other harness pane** waits until it is at the operator's prompt,
