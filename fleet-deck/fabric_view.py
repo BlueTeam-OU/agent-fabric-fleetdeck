@@ -584,10 +584,11 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     agent_view = View(fleet, vr.AGENT_SECTIONS, login, store, results, lazy=in_tab) if mode == "agent" else None
     samples = vr.Samples()
     scroll = 0
-    # Unknown until herdr reports a change or a key arrives, unless `open`
-    # says the pane was opened focused. herdr reports focus changes only,
-    # and a pane opened in the background never had focus to lose:
-    # assuming focus at open would fetch in the background. A marked view
+    # Unknown until herdr reports focus or a key arrives, unless `open`
+    # says the pane was opened focused. herdr answers FOCUS_ON with the
+    # pane's real focus; an older server reports changes only, and a pane
+    # opened in the background never had focus to lose there: assuming
+    # focus at open would fetch in the background. A marked view
     # (in an agent pane) started by the toggle on a person's key is told its
     # focus once it can hear it (fabric_deck.start_view); one the deck starts
     # is told nothing, and waits for a report or a key. It trusts no hint.

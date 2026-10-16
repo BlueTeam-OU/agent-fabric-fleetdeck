@@ -273,15 +273,17 @@ again whole within 10 s, and is followed in nothing until then.
 - **The agent pane** is started the same way, with the agent's screen
   typed at the operator's prompt there; FleetDeck restores the pane as a
   shell, never its program. One already showing this account's screen is
-  left as it is, and nothing is typed into one running anything else. A
-  pick of `agent` made while its screen is still starting is not heard by
-  the screen (herdr drops it): the screen says "press a key to go live" and
-  fetches at that key. The deck never tells a screen it starts a focus it
-  can only infer: the pane list's focus is the server's default target,
-  which may be no one's once the last client has detached. So a screen the
-  deck starts or restarts where a person is looking also says "press a key
-  to go live". `prefix+a` waits for the screen instead, and so it is live
-  at once. A screen seen
+  left as it is, and nothing is typed into one running anything else. As
+  a screen turns focus reporting on, herdr answers with the focus its
+  viewers really give the pane: in when some client whose terminal has
+  focus shows it, out otherwise. So a screen started where a person is
+  looking, or picked while it was starting, is live at once, and one
+  nobody watches fetches nothing. The deck never tells a screen it starts
+  a focus it can only infer: the pane list's focus is the server's default
+  target, which may be no one's once the last client has detached. Under
+  a herdr server older than that answer, such a screen says "press a key
+  to go live" and fetches at that key; `prefix+a` waits for the screen
+  instead, and so it is live at once there too. A screen seen
   running that has ended is started again at the next map read (10 s),
   once for each end.
 - **A harness pane running this account's moveto** is classified and
@@ -564,10 +566,13 @@ account tabs as before.
   then the title, then how to go live: a board 13 hours old once read
   as the fleet now. A fetch already running finishes,
   since fleet.py bounds every source.
-- **Focus starts unknown.** FleetDeck reports focus changes only. So a view
-  counts as focused from the first focus-in or key, and until then it
-  stays at its open-time fetch, saying `press a key to go live`. A view
-  opened by its action (the keys above) is opened focused and starts live.
+- **Focus starts unknown.** A view counts as focused from the first
+  focus-in or key, and until then it stays at its open-time fetch, saying
+  `press a key to go live`. FleetDeck answers the view's focus reporting
+  with its real focus at once, so the wait lasts only while nobody is
+  looking; a server older than that answer reports focus changes only,
+  and there the words stay until a key. A view opened by its action (the
+  keys above) is opened focused and starts live.
 - **What a cell says.** `…` means not read yet. `?` means its section failed,
   and the board's footer says why, once per section. `-` means there is
   none. A value ending in `~` is stale: fleet.py's last good value, kept
