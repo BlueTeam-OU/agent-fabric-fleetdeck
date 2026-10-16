@@ -52,8 +52,14 @@ impl FocusReportingSetTracker {
             self.state = ParseState::Escape;
             return;
         }
-        if !matches!(self.state, ParseState::Ground) && passes_through_sequence(byte) {
-            return;
+        if !matches!(self.state, ParseState::Ground) {
+            if passes_through_sequence(byte) {
+                return;
+            }
+            if byte == C1_CSI {
+                self.state = ParseState::CsiStart;
+                return;
+            }
         }
         match &mut self.state {
             ParseState::Ground => {}
@@ -107,13 +113,17 @@ impl FocusReportingSetTracker {
     }
 }
 
-/// A C0 control the terminal executes in the middle of an escape sequence,
-/// or DEL, which it ignores there: the sequence goes on around it (Ghostty's
-/// parse_table.zig, as in the VT500 parser it follows). CAN and SUB are not
-/// among them; they cancel the sequence.
+/// A byte the terminal's parser lets a sequence go on around (Ghostty's
+/// parse_table.zig, as in the VT500 parser it follows): a C0 control it
+/// executes there, DEL, or a byte from 0xA0 up, which it ignores. CAN, SUB
+/// and the other C1 bytes cancel the sequence instead, and C1_CSI starts a
+/// new one. Inside a sequence the parser sees raw bytes; only in ground are
+/// they decoded as UTF-8 first, so there a 0x9B is text, not a CSI.
 fn passes_through_sequence(byte: u8) -> bool {
-    matches!(byte, 0x00..=0x17 | 0x19 | 0x1c..=0x1f | 0x7f)
+    matches!(byte, 0x00..=0x17 | 0x19 | 0x1c..=0x1f | 0x7f | 0xa0..=0xff)
 }
+
+const C1_CSI: u8 = 0x9b;
 
 #[cfg(test)]
 mod tests {
@@ -164,6 +174,15 @@ mod tests {
         assert!(seen(&[b"\x1b[\x08?1004;\x00h"]));
         assert!(!seen(&[b"\x1b[?1004\x18h"]), "CAN cancels it");
         assert!(!seen(&[b"\x1b[?1004\x1ah"]), "so does SUB");
+    }
+
+    #[test]
+    fn a_high_byte_inside_a_sequence_leaves_it_going_or_starts_another() {
+        assert!(seen(&[b"\x1b[?10\xa004h"]));
+        assert!(seen(&[b"\x1b[?10\xc3\xa904h"]));
+        assert!(seen(&[b"\x1b[?1\x9b?1004h"]), "a C1 CSI starts a new one");
+        assert!(!seen(&[b"\x1b[?10\x8504h"]), "another C1 byte cancels it");
+        assert!(!seen(&[b"\x9b?1004h"]), "text outside a sequence");
     }
 
     #[test]

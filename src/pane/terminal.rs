@@ -4221,6 +4221,10 @@ mod tests {
             set(b"\x1b[?10\r04h"),
             "a control inside is executed, not an end"
         );
+        assert!(
+            set(b"\x1b[?10\xa004h"),
+            "a high byte inside is ignored, not an end"
+        );
         assert!(!set(b"\x1b[?1004l"));
         assert!(!set(b"\x1b[?1004l\x1b[?1004h\x1b[?1004l"), "off by the end");
     }
