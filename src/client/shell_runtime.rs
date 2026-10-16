@@ -390,9 +390,10 @@ pub(super) fn send_tab_order_move(
     else {
         return Ok(());
     };
-    // A tab move schedules no activation.
+    // A tab move schedules no activation. The dispatch sends it too, and
+    // repaints for whatever notice a refused or cancelled move leaves.
     let mut no_activation = None;
-    dispatch_client_shell_actions(
+    let (_, repaint) = dispatch_client_shell_actions(
         outcome.actions,
         endpoint_commands,
         endpoints,
@@ -400,11 +401,13 @@ pub(super) fn send_tab_order_move(
         &mut state.detached_process_children,
         &mut no_activation,
     )?;
-    let active_endpoint = endpoints.active_id().clone();
-    let cancelled = endpoint_commands.send_next(&active_endpoint, endpoints);
-    if let Some(shell) = state.shell.as_mut() {
-        for request_id in cancelled {
-            shell.cancel_endpoint_request(&request_id);
+    if repaint {
+        if let Some(frame) = state
+            .shell
+            .as_mut()
+            .and_then(|shell| shell.compose(state.reported_size.0, state.reported_size.1))
+        {
+            state.present_frame(frame);
         }
     }
     Ok(())
