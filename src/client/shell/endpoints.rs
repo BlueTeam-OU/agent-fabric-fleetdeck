@@ -498,6 +498,17 @@ impl ClientShellState {
             .is_none_or(|methods| methods.contains(crate::api::api_method_name(method)))
     }
 
+    /// Whether the active endpoint lists `method` among its methods. Unlike
+    /// `supports_endpoint_method`, an endpoint with no list says no: for an
+    /// action nobody asked for, silence is not consent.
+    pub(super) fn advertises_endpoint_method(&self, method: &crate::api::schema::Method) -> bool {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .and_then(|endpoint| endpoint.methods.as_ref())
+            .is_some_and(|methods| methods.contains(crate::api::api_method_name(method)))
+    }
+
     /// Whether the shown tab is one whose panes the second tab row picks from.
     pub(super) fn shows_pane_tabs(&self) -> bool {
         self.snapshot.as_deref().is_some_and(|snapshot| {

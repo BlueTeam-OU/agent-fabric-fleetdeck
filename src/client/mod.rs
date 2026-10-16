@@ -2167,6 +2167,7 @@ async fn run_client_loop(
                             &mut write_stream,
                             &mut prefix_input_source,
                         )?;
+                        send_tab_order_move(&mut state, &mut write_stream, &mut endpoint_commands)?;
                         if matches!(
                             activation_progress,
                             Some(endpoint::SurfaceActivationProgress::Ready)

@@ -90,7 +90,8 @@ class Compare(unittest.TestCase):
         self.assertEqual(shown["cpu"], "12.5%")
         self.assertEqual(shown["swap"], "4M")
         self.assertEqual(shown["done"], "17")
-        self.assertEqual(shown["open"], "3")
+        self.assertEqual(shown["working"], "3")
+        self.assertEqual(shown["delivered"], "0")
         self.assertNotEqual(shown["tokens"], vr.NOT_READ)
 
     def test_jobs_done_never_counts_dropped_or_guesses_from_a_partial_list(self):
@@ -104,7 +105,7 @@ class Compare(unittest.TestCase):
         wide, _ = rr.compare_lines(self.agents(), 3, status(), 0, 120, 14)
         self.assertTrue(any("[4 tokens, 7 days]" in r for r in text(wide)))
         narrow, _ = rr.compare_lines(self.agents(), 5, status(), 0, 30, 14)
-        self.assertTrue(any("[6 of 6: open jobs]" in r for r in text(narrow)))
+        self.assertTrue(any("[6 of 7: working jobs]" in r for r in text(narrow)))
         self.assertTrue(all(vr.cells(r) <= 30 for r in text(narrow)))
 
 

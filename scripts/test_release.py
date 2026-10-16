@@ -7,10 +7,12 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import release
+from scripts.neutral_git_env import isolate_git
 
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
+        isolate_git(self)
         self.temp = tempfile.TemporaryDirectory(prefix="fleetdeck-release-", dir="/var/tmp" if os.name != "nt" else None)
         self.addCleanup(self.temp.cleanup)
         self.previous_cwd = Path.cwd()

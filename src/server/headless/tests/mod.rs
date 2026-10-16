@@ -3667,10 +3667,7 @@ async fn deferred_worktree_open_disconnect_keeps_other_clients_focus() {
     let repo = std::env::temp_dir().join(format!("herdr-disconnected-open-{}", source.id));
     let checkout = repo.with_extension("checkout");
     let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .output()
-            .unwrap();
+        let output = crate::test_git::command().args(args).output().unwrap();
         assert!(
             output.status.success(),
             "{}",

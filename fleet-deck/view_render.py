@@ -240,6 +240,22 @@ def open_jobs(data: dict | None) -> list[dict]:
     return [j for j in jobs if isinstance(j, dict)] if isinstance(jobs, list) else []
 
 
+# ADR-037 counts a delivered job as open: handed over, it waits on someone
+# else's merge. A person reads "open" as work the agent has to do, so the deck
+# counts the two apart. Every other open job is work, blocked included, and so
+# is a state the deck does not know yet: a job is never left out of both
+# counts. Done and dropped are closed, never counted, whatever a list holds.
+NOT_WORKING = ("delivered", "done", "dropped")
+
+
+def working_jobs(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("state") not in NOT_WORKING]
+
+
+def delivered_jobs(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("state") == "delivered"]
+
+
 def current_job(jobs: list[dict]) -> dict | None:
     """The job the agent is on: an active one; else a blocked one, which is
     what it waits on. A queued or delivered job is not what it is doing."""
@@ -547,7 +563,10 @@ BOARD_COLUMNS = (
     # Another agent's wait is not the owner's: its own column, kept long.
     Column("waiting", "waiting on", 16, 1),
     Column("job", "current job", 12, 0, flex=True),
-    Column("jobs", "closed/open", 11, 4, right=True),
+    Column("jobs", "closed/working", 14, 4, right=True),
+    # Waiting on someone else's merge, not the agent's work: the first column
+    # a narrow board gives up, leaving the working count.
+    Column("delivered", "delivered", 9, 8, right=True),
     Column("rss", "RSS", 6, 3, right=True),
     Column("cpu", "CPU", 5, 5, right=True),
     Column("tokens", "tok 7d", 7, 7, right=True),
@@ -582,10 +601,11 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
     if jobs is None and closed is None:
         jobs_cell = (UNREAD, DIM)
     else:
-        open_n = len(open_jobs(ok_data(jobs))) if ok_data(jobs) is not None else None
+        listed = open_jobs(ok_data(jobs)) if ok_data(jobs) is not None else None
+        working_n = len(working_jobs(listed)) if listed is not None else None
         closed_n = (ok_data(closed) or {}).get("closed_total") if ok_data(closed) is not None else None
         left = str(closed_n) if closed_n is not None else (UNREAD if closed is None else NOT_READ)
-        right = str(open_n) if open_n is not None else (UNREAD if jobs is None else NOT_READ)
+        right = str(working_n) if working_n is not None else (UNREAD if jobs is None else NOT_READ)
         old = stale(jobs) or stale(closed)
         jobs_cell = (f"{left}/{right}", FAILED if NOT_READ in (left, right) else WARN if old else NORMAL)
     return {
@@ -595,6 +615,7 @@ def board_cells(a: Agent, now: datetime.datetime) -> dict[str, tuple[str, str]]:
         "waiting": waiting_cell(a, now),
         "job": cell(jobs, lambda d: job_label(current_job(open_jobs(d)))),
         "jobs": jobs_cell,
+        "delivered": cell(jobs, lambda d: str(len(delivered_jobs(open_jobs(d))))),
         "rss": cell(s.get("proc"), lambda d: size_kb(d.get("rss_kb"))),
         "cpu": cell(s.get("proc"), lambda d: pct(d.get("cpu_pct"))),
         "tokens": cell(s.get("tokens"), lambda d: count(tokens_total(d))),
@@ -986,10 +1007,24 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
     out.append([("", NORMAL)])
 
     rec = s.get("jobs")
-    out.append(heading(f"Open jobs ({len(jobs)})" if ok_data(rec) is not None else "Open jobs", rec, now))
+    working = working_jobs(jobs)
+    out.append(heading(f"Working jobs ({len(working)})" if ok_data(rec) is not None else "Working jobs", rec, now))
     out += not_read(rec, width)
-    out += [job_line(j, now, width) for j in jobs]
-    if ok_data(rec) is not None and not jobs:
+    out += [job_line(j, now, width) for j in working]
+    if ok_data(rec) is not None and not working:
+        out.append([("  none", DIM)])
+    out.append([("", NORMAL)])
+    # Shown with its count, or "none", like the working list: a missing
+    # heading would read the same as one not read.
+    # The count goes right after a short title, so a narrow pane cuts the
+    # explanation, never the count.
+    delivered = delivered_jobs(jobs)
+    title = "Delivered jobs"
+    out.append(heading(f"{title} ({len(delivered)})" if ok_data(rec) is not None else title, rec, now))
+    if delivered:
+        out.append([(fit("  handed over, waiting on someone else's merge", width), DIM)])
+    out += [job_line(j, now, width) for j in delivered]
+    if ok_data(rec) is not None and not delivered:
         out.append([("  none", DIM)])
     out.append([("", NORMAL)])
     rec = s.get("closed_jobs")

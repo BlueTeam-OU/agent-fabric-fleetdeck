@@ -607,7 +607,7 @@ mod tests {
     }
 
     fn run_git(repo: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
+        let status = crate::test_git::command()
             .arg("-C")
             .arg(repo)
             .args(args)

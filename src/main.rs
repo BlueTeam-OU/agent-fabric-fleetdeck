@@ -63,6 +63,8 @@ mod terminal_effects;
 mod terminal_modes;
 mod terminal_notify;
 mod terminal_theme;
+#[cfg(test)]
+mod test_git;
 mod thread_spawn;
 mod transition_sound;
 mod ui;
@@ -346,6 +348,15 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # [] hides the row only: the deck still shows an account tab's harness alone
 # (zoomed), and prefix+z unzooms the tab to show its panes side by side.
 # pane_tabs = ["harness", "shell", "status", "agent"]
+# The shown pane's cell: empty bg is the theme's yellow, empty fg reads on it.
+# pane_tab_selected_bg = ""
+# pane_tab_selected_fg = ""
+# Per pane label: [ui.pane_tab_colors.agent] selected_bg = "#89b4fa"
+# Per tab, by its label: [ui.pane_tab_order] "login" = ["agent", "harness", "shell", "status"]
+
+# Tab labels in the order each workspace keeps its tabs; this client moves the
+# server's tabs into it. Unlisted tabs follow. [] leaves tabs where they are.
+# tab_order = []
 
 # Title FleetDeck writes to the terminal it runs in, which is what window managers
 # show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},
