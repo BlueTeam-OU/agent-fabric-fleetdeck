@@ -524,7 +524,8 @@ fn pane_command() -> Command {
                 .args(current_pane_args())
                 .arg(flag("toggle"))
                 .arg(flag("on"))
-                .arg(flag("off")),
+                .arg(flag("off"))
+                .arg(flag("in-tab")),
         )
         .subcommand(
             Command::new("read")

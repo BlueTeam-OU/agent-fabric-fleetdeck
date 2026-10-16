@@ -359,19 +359,22 @@ fn parse_pane_resize_args(args: &[String]) -> Result<PaneResizeParams, String> {
 }
 
 fn pane_zoom(args: &[String]) -> std::io::Result<i32> {
-    let params = match parse_pane_zoom_args(args) {
-        Ok(params) => params,
+    let (params, in_tab) = match parse_pane_zoom_args(args) {
+        Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
             return Ok(2);
         }
     };
 
-    super::runtime::pane_zoom(params)
+    super::runtime::pane_zoom(params, in_tab)
 }
 
-fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
+/// The params, and whether `--in-tab` asked to stay in the tab shown
+/// (`pane.zoom_in_tab`): the pane still becomes its tab's focused pane.
+fn parse_pane_zoom_args(args: &[String]) -> Result<(PaneZoomParams, bool), String> {
     let mut pane_id = None;
+    let mut in_tab = false;
     let mut mode = PaneZoomMode::Toggle;
     let mut mode_seen = false;
 
@@ -394,6 +397,10 @@ fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
             }
             "--current" => {
                 pane_id = None;
+                index += 1;
+            }
+            "--in-tab" => {
+                in_tab = true;
                 index += 1;
             }
             "--toggle" => {
@@ -424,7 +431,7 @@ fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
         }
     }
 
-    Ok(PaneZoomParams { pane_id, mode })
+    Ok((PaneZoomParams { pane_id, mode }, in_tab))
 }
 
 fn pane_rename(args: &[String]) -> std::io::Result<i32> {
@@ -1685,7 +1692,7 @@ fn print_pane_help() {
         "  agent-fabric-fleetdeck pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
     );
     eprintln!(
-        "  agent-fabric-fleetdeck pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]"
+        "  agent-fabric-fleetdeck pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off] [--in-tab]"
     );
     eprintln!("  agent-fabric-fleetdeck pane rename <pane_id> <label>|--clear");
     eprintln!("  agent-fabric-fleetdeck pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
@@ -1949,7 +1956,8 @@ mod tests {
 
     #[test]
     fn parse_pane_zoom_args_defaults_to_current_toggle() {
-        let params = parse_pane_zoom_args(&args(&[])).unwrap();
+        let (params, in_tab) = parse_pane_zoom_args(&args(&[])).unwrap();
+        assert!(!in_tab);
 
         assert_eq!(params.pane_id, None);
         assert_eq!(params.mode, PaneZoomMode::Toggle);
@@ -1957,7 +1965,7 @@ mod tests {
 
     #[test]
     fn parse_pane_zoom_args_accepts_positional_pane_and_on() {
-        let params = parse_pane_zoom_args(&args(&["issue-1", "--on"])).unwrap();
+        let (params, _) = parse_pane_zoom_args(&args(&["issue-1", "--on"])).unwrap();
 
         assert_eq!(params.pane_id, Some("issue-1".into()));
         assert_eq!(params.mode, PaneZoomMode::On);
@@ -1965,10 +1973,20 @@ mod tests {
 
     #[test]
     fn parse_pane_zoom_args_accepts_pane_option_and_off() {
-        let params = parse_pane_zoom_args(&args(&["--pane", "issue-2", "--off"])).unwrap();
+        let (params, _) = parse_pane_zoom_args(&args(&["--pane", "issue-2", "--off"])).unwrap();
 
         assert_eq!(params.pane_id, Some("issue-2".into()));
         assert_eq!(params.mode, PaneZoomMode::Off);
+    }
+
+    #[test]
+    fn parse_pane_zoom_args_in_tab_stays_in_the_shown_tab() {
+        let (params, in_tab) =
+            parse_pane_zoom_args(&args(&["issue-3", "--on", "--in-tab"])).unwrap();
+
+        assert_eq!(params.pane_id, Some("issue-3".into()));
+        assert_eq!(params.mode, PaneZoomMode::On);
+        assert!(in_tab);
     }
 
     #[test]

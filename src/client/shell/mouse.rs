@@ -2060,6 +2060,16 @@ impl ClientShellState {
                     );
                     return;
                 }
+                let pane_tab = self
+                    .hits
+                    .pane_tabs
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, pane_id)| super::pane_tabs::pick_pane_tab(pane_id));
+                if let Some(method) = pane_tab {
+                    self.push_endpoint_method(method, outcome);
+                    return;
+                }
                 if super::contains(self.hits.new_tab, point) {
                     self.record_binding(
                         crate::input::KeybindMatch::Action(crate::input::KeybindAction::NewTab),

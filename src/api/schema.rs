@@ -149,6 +149,10 @@ pub enum Method {
     PaneMove(PaneMoveParams),
     #[serde(rename = "pane.zoom")]
     PaneZoom(PaneZoomParams),
+    /// `pane.zoom` that leaves the shown tab alone: a new name, as an older
+    /// server ignoring a flag would switch tabs and still report success.
+    #[serde(rename = "pane.zoom_in_tab")]
+    PaneZoomInTab(PaneZoomParams),
     #[serde(rename = "pane.layout")]
     PaneLayout(PaneLayoutParams),
     #[serde(rename = "pane.process_info")]

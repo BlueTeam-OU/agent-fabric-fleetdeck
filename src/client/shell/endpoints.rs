@@ -498,6 +498,13 @@ impl ClientShellState {
             .is_none_or(|methods| methods.contains(crate::api::api_method_name(method)))
     }
 
+    /// Whether the shown tab is one whose panes the second tab row picks from.
+    pub(super) fn shows_pane_tabs(&self) -> bool {
+        self.snapshot.as_deref().is_some_and(|snapshot| {
+            super::pane_tabs::pane_tab_row(snapshot, &self.config.pane_tabs).is_some()
+        })
+    }
+
     pub(super) fn focused_tab_count(&self) -> usize {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return 0;

@@ -177,6 +177,7 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # move_tab_next = ""       # optional, e.g. "alt+shift+right" moves the tab toward the back
 # switch_tab = "prefix+1..9"
 # switch_workspace = ""   # optional indexed binding, e.g. "prefix+shift+1..9"
+# select_pane_tab = "prefix+f1..f9"  # show pane N of the second tab row (ui.pane_tabs)
 # close_tab = "prefix+shift+x"
 # rename_pane = "prefix+shift+p"
 # edit_scrollback = "prefix+e"
@@ -339,6 +340,12 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # Hostname, datetime, and command entries resolve on the FleetDeck server.
 # tab_bar_right = []
 # tab_bar_right_separator = " "
+
+# A tab whose panes carry exactly these labels gets a second row under the tab
+# row that picks the one pane shown; the other panes keep running unseen.
+# [] hides the row only: the deck still shows an account tab's harness alone
+# (zoomed), and prefix+z unzooms the tab to show its panes side by side.
+# pane_tabs = ["harness", "shell", "status", "agent"]
 
 # Title FleetDeck writes to the terminal it runs in, which is what window managers
 # show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},

@@ -26,6 +26,7 @@ pub(crate) enum KeybindAction {
     CloseWorkspace,
     SwitchWorkspace(usize),
     SwitchTab(usize),
+    SelectPaneTab(usize),
     FocusAgent(usize),
     WorkspacePicker,
     PreviousWorkspace,
@@ -208,6 +209,13 @@ pub(crate) fn resolve_indexed_action(
                 }
             }
         }
+        for binding in &keybinds.select_pane_tab {
+            if trigger_matches(binding) {
+                if let Some(index) = binding.matched_index(key) {
+                    return Some(KeybindAction::SelectPaneTab(index));
+                }
+            }
+        }
         for binding in &keybinds.focus_agent {
             if trigger_matches(binding) {
                 if let Some(index) = binding.matched_index(key) {
@@ -313,6 +321,26 @@ mod tests {
             Some(KeybindMatch::Action(KeybindAction::Help))
         ));
 
+        let one = TerminalKey::new(KeyCode::Char('1'), KeyModifiers::empty());
+        assert!(matches!(
+            resolve_prefix_binding(&keybinds, &one),
+            Some(KeybindMatch::Action(KeybindAction::SwitchTab(0)))
+        ));
+    }
+
+    #[test]
+    fn by_default_prefix_f1_to_f4_pick_sub_tabs_and_digits_stay_tabs() {
+        let keybinds = Keybinds::default();
+        for (n, index) in [(1u8, 0usize), (4, 3)] {
+            let key = TerminalKey::new(KeyCode::F(n), KeyModifiers::empty());
+            assert!(
+                matches!(
+                    resolve_prefix_binding(&keybinds, &key),
+                    Some(KeybindMatch::Action(KeybindAction::SelectPaneTab(i))) if i == index
+                ),
+                "prefix+f{n}"
+            );
+        }
         let one = TerminalKey::new(KeyCode::Char('1'), KeyModifiers::empty());
         assert!(matches!(
             resolve_prefix_binding(&keybinds, &one),

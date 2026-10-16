@@ -157,6 +157,10 @@ pub(crate) fn keybind_help_groups(
                 entry(binding_label(&keybinds.move_tab_previous), "move tab left"),
                 entry(binding_label(&keybinds.move_tab_next), "move tab right"),
                 entry(indexed_label(&keybinds.switch_tab), "switch tab 1-9"),
+                entry(
+                    indexed_label(&keybinds.select_pane_tab),
+                    "show pane 1-9 of the second tab row",
+                ),
                 entry(binding_label(&keybinds.close_tab), "close tab"),
             ],
         ),

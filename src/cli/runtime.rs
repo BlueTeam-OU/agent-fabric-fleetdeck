@@ -99,8 +99,18 @@ pub(super) fn pane_resize(params: PaneResizeParams) -> std::io::Result<i32> {
     print_method_response("cli:pane:resize", Method::PaneResize(params))
 }
 
-pub(super) fn pane_zoom(params: PaneZoomParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:zoom", Method::PaneZoom(params))
+pub(super) fn pane_zoom(params: PaneZoomParams, in_tab: bool) -> std::io::Result<i32> {
+    print_method_response("cli:pane:zoom", pane_zoom_method(params, in_tab))
+}
+
+/// `pane zoom --in-tab` is a method of its own, never a flag an older
+/// server would ignore while it switched tabs and reported success.
+fn pane_zoom_method(params: PaneZoomParams, in_tab: bool) -> Method {
+    if in_tab {
+        Method::PaneZoomInTab(params)
+    } else {
+        Method::PaneZoom(params)
+    }
 }
 
 pub(super) fn pane_rename(params: PaneRenameParams) -> std::io::Result<i32> {
@@ -125,4 +135,26 @@ pub(super) fn pane_move(params: PaneMoveParams) -> std::io::Result<i32> {
 
 pub(super) fn pane_close(pane_id: String) -> std::io::Result<i32> {
     print_method_response("cli:pane:close", Method::PaneClose(PaneTarget { pane_id }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::schema::PaneZoomMode;
+
+    #[test]
+    fn pane_zoom_in_tab_sends_its_own_method() {
+        let params = || PaneZoomParams {
+            pane_id: Some("w1:p2".into()),
+            mode: PaneZoomMode::On,
+        };
+        assert!(matches!(
+            pane_zoom_method(params(), true),
+            Method::PaneZoomInTab(_)
+        ));
+        assert!(matches!(
+            pane_zoom_method(params(), false),
+            Method::PaneZoom(_)
+        ));
+    }
 }

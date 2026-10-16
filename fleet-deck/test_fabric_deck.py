@@ -250,6 +250,7 @@ class FakeHerdr(Herdr):
         self.fail_once = set()  # (subcommand, pane) pairs whose next call fails
         self.plugin_linked = True
         self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
+        self.zoom_in_tab = True  # False: a FleetDeck from before pane.zoom_in_tab
 
     def _id(self, kind):
         # Never one a test named by hand (p0, p1, p2...): a split must not
@@ -342,6 +343,10 @@ class FakeHerdr(Herdr):
                 self.panes[new] = dict(self.panes.pop(old), pane_id=new, tab_id=new_tab)
                 self.proc[new] = self.proc.pop(old)
             return {"tab": {"tab_id": new_tab, "workspace_id": target}}
+        if head == ("pane", "zoom"):
+            if "--in-tab" in args and not self.zoom_in_tab:
+                raise RuntimeError("herdr pane zoom: exit 1: unknown method pane.zoom_in_tab")
+            return {}
         if head == ("tab", "rename"):
             for tabs in self.tabs.values():
                 for tab in tabs:
@@ -524,6 +529,11 @@ class FleetTab(unittest.TestCase):
         self.assertNotIn(("w1", "fleet"), self.tabs(h))
 
 
+def fabric_deck_mode_view():
+    import fabric_deck
+    return fabric_deck.VIEW  # the waiting mode, not the typed command VIEW
+
+
 def four_panes(login, prefix):
     return [(f"{prefix}0", "harness", in_moveto(login, WAIT)), (f"{prefix}1", "shell", in_moveto(login)),
             (f"{prefix}2", "status", in_moveto(login, WATCH)), (f"{prefix}3", "agent", in_view(login))]
@@ -582,6 +592,45 @@ class ToRoleWorkspace(unittest.TestCase):
         self.assertEqual([t["label"] for t in herdr.tabs["w1"]], ["ui"])
         self.assertEqual(h.deck.harness_pane["ui"], "q0")
         self.assertEqual(sum("its tab stays in New" in line for line in h.logs), 1)
+
+
+    def test_a_restore_shows_the_harness_alone_without_switching_tabs(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        zooms = [c for c in herdr.calls if c[:2] == ("pane", "zoom")]
+        harness = h.deck.harness_pane["ui"]
+        self.assertEqual(herdr.panes[harness]["label"], "harness")
+        self.assertEqual(zooms, [("pane", "zoom", harness, "--on", "--in-tab")])
+
+    def test_a_tab_with_a_pane_of_its_own_is_not_shown_one_pane_at_a_time(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", [*four_panes("ui", "q"), ("q9", None, BARE)])
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertFalse(any(c[:2] == ("pane", "zoom") for c in herdr.calls),
+                         "no second row there, so all its panes stay in sight")
+
+    def test_a_retried_restore_leaves_the_pane_the_person_picked(self):
+        herdr = self.herdr()
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        h.deck.restore(1, only={"ui"})
+        self.assertEqual(len([c for c in herdr.calls if c[:2] == ("pane", "zoom")]), 1)
+
+    def test_a_fleetdeck_without_zoom_in_tab_still_restores_and_says_so_once(self):
+        herdr = self.herdr()
+        herdr.zoom_in_tab = False
+        herdr.add_tab("ui", four_panes("ui", "q"))
+        h = Harness(herdr, catalog=CATALOG)
+        h.deck.restore(0)
+        h.deck.restore(1)
+        self.assertEqual(herdr.panes[h.deck.harness_pane["ui"]]["label"], "harness")
+        said = [line for line in h.logs if "shows every pane" in line]
+        self.assertEqual(len(said), 1, "said once")
+        self.assertIn("pane.zoom_in_tab", said[0], "with the error itself")
 
 
 class Restore(unittest.TestCase):
@@ -929,7 +978,7 @@ class Restore(unittest.TestCase):
             h.deck.follow(RESTORE_WAIT_S + 12)
             self.assertEqual(herdr.runs("p3"), [VIEW])
 
-    def test_an_agent_pane_restored_focused_is_told_so(self):
+    def test_an_agent_pane_restored_focused_is_told_nothing(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
         herdr.panes["p3"]["focused"] = True
@@ -950,8 +999,181 @@ class Restore(unittest.TestCase):
         h.deck.follow(1)
         (typed,) = herdr.runs("p3")
         self.assertEqual(typed, VIEW, "marked, as every start")
-        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
-                         [("pane", "send-text", "p3", "\x1b[I")], "told it is focused, once it can hear")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [],
+                         "the list's focus is the server's default target, perhaps no one's")
+
+    def test_a_queued_restart_is_cancelled_when_the_pane_takes_another_role(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        import fabric_deck
+        queued = ("ui", "p3", fabric_deck.VIEW)  # the mode, not the typed command VIEW
+        herdr.proc["p3"] = BUSY  # it ended, and its shell is not at its prompt yet
+        h.deck.waiting[queued] = PANE_MAP_REFRESH_S + 1
+        herdr.panes["p3"]["label"] = "status"  # the person gave the pane another role
+        herdr.proc["p3"] = BARE
+        for at in range(2, 6):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [], "nothing typed into a pane the deck no longer owns")
+        self.assertNotIn(queued, h.deck.waiting)
+
+    def test_a_busy_restore_start_is_cancelled_when_the_pane_takes_another_role(self):
+        for role in ("status", "harness"):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+            h = Harness(herdr)
+            h.records["ui"] = record("ui")
+            h.deck.restore(0)
+            h.deck.follow(1)
+            self.assertEqual(herdr.runs("p3"), [], f"{role}: busy, not typed yet")
+            herdr.panes["p3"]["label"] = role
+            herdr.proc["p3"] = BARE
+            for at in range(1, 5):
+                h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+            self.assertEqual(herdr.runs("p3"), [], f"{role}: the agent screen is never typed there")
+            if role == "harness":
+                # Two harness labels: the account is forgotten (or the pane
+                # unlisted) before the agent-pane guard is reached.
+                self.assertNotIn(("ui", "p3", fabric_deck_mode_view()), h.deck.waiting)
+                # p3 listed after p0: the tab's harness is p3 now, so the
+                # account is forgotten (the guard against typing into a harness).
+                self.assertNotIn("ui", h.deck.harness_pane)
+
+    def test_a_busy_pane_given_another_role_loses_its_queued_start(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        herdr.panes["p3"]["label"] = "status"  # and it stays busy
+        for at in range(1, 5):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at + RESTORE_WAIT_S)
+        self.assertNotIn(("ui", "p3", fabric_deck_mode_view()), h.deck.waiting)
+        self.assertFalse(any("p3 is still busy" in line for line in h.logs), "not its agent pane any more")
+        self.assertEqual(sum("no longer its agent pane" in line for line in h.logs), 1)
+
+    def test_a_pane_relabelled_since_the_last_map_read_is_not_typed_into(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        herdr.panes["p3"]["label"] = "status"  # no map read since
+        herdr.proc["p3"] = BARE
+        h.deck.follow(2)
+        self.assertEqual(herdr.runs("p3"), [], "the label is read again before typing")
+        self.assertNotIn("ui", h.deck.agent_pane)
+        self.assertEqual(sum("no longer its agent pane" in line for line in h.logs), 1)
+
+    def test_an_ended_screen_restarted_after_the_last_client_left_is_told_nothing(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        herdr.panes["p3"]["focused"] = True  # the person was on agent, then detached
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real_run = herdr.call
+
+        def call(*args):
+            out = real_run(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                import fabric_deck
+                herdr.panes["p3"]["terminal_title"] = fabric_deck.view_title("ui", MARK)
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        herdr.proc["p3"] = BARE  # the screen crashed
+        for at in range(2, 5):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [VIEW], "started again")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [])
+
+    def test_a_view_started_out_of_sight_is_never_told_an_inferred_focus(self):
+        # The person picks the agent while its screen starts, then may leave
+        # (the last client detaching): the pane list still reads it focused,
+        # as the server's default target. The deck tells it nothing; the
+        # screen fetches at its first key, never while nobody watches.
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real = herdr.call
+
+        def call(*args):
+            out = real(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(1)
+        self.assertEqual(herdr.runs("p3"), [VIEW])
+        import fabric_deck
+        herdr.panes["p3"].update(terminal_title=fabric_deck.view_title("ui", MARK), focused=True)
+        for at in range(2, 8):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [])
+
+    def test_an_ended_agent_screen_is_started_again_once_per_end(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        self.assertEqual(herdr.runs("p3"), [], "its screen runs")
+        herdr.proc["p3"] = BARE  # it crashed; a start that fails leaves it bare
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 2)
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(herdr.runs("p3"), [VIEW])
+        h.deck.follow(3 * PANE_MAP_REFRESH_S + 4)
+        h.deck.follow(4 * PANE_MAP_REFRESH_S + 5)
+        self.assertEqual(herdr.runs("p3"), [VIEW], "not typed again until seen running again")
+
+    def test_a_forgotten_account_gets_no_agent_screen_started_again(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        herdr.panes["p0"]["label"] = "mine"  # the person took the harness pane over
+        h.deck.follow(2 * PANE_MAP_REFRESH_S + 2)
+        self.assertNotIn("ui", h.deck.harness_pane, "forgotten")
+        self.assertNotIn("ui", h.deck.agent_pane)
+        herdr.proc["p3"] = BARE
+        for at in range(3, 7):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [], "nothing typed into a tab no longer followed")
+
+    def test_an_agent_pane_a_person_took_over_or_closed_is_the_decks_no_more(self):
+        for change in ("relabel", "close"):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", four_panes("ui", "p"))
+            h = Harness(herdr)
+            h.records["ui"] = record("ui")
+            h.deck.restore(0)
+            h.deck.follow(PANE_MAP_REFRESH_S + 1)
+            if change == "relabel":
+                herdr.panes["p3"]["label"] = "mine"
+                herdr.proc["p3"] = BARE
+            else:
+                del herdr.panes["p3"]
+            for at in range(2, 6):
+                h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+            self.assertEqual(herdr.runs("p3"), [], change)
+            self.assertNotIn("ui", h.deck.agent_pane, change)
+            self.assertIn("ui", h.deck.harness_pane, f"{change}: the account is still followed")
+            looks = [c for c in herdr.calls if c[:2] == ("pane", "process-info") and c[-1] == "p3"]
+            self.assertLessEqual(len(looks), 2, f"{change}: not looked at every map read")
 
     def test_a_view_a_toggle_started_meanwhile_is_not_typed_again(self):
         # The pane was bare at the deck's first look; under the lock, a toggle

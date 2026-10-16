@@ -403,6 +403,9 @@ pub struct KeysConfig {
     pub switch_tab: BindingConfig,
     /// Switch to workspace 1-9 from prefix mode. Unset by default.
     pub switch_workspace: BindingConfig,
+    /// Show pane 1-9 of the second tab row (`ui.pane_tabs`).
+    /// Default: "prefix+f1..f9" (F1 harness, F2 shell, F3 status, F4 agent).
+    pub select_pane_tab: BindingConfig,
     /// Close the active tab. Default: "prefix+shift+x".
     pub close_tab: BindingConfig,
     /// Rename the focused pane. Default: "prefix+shift+p".
@@ -541,6 +544,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     switch_workspace: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    select_pane_tab: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     close_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rename_pane: Option<BindingConfig>,
@@ -677,6 +682,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(move_tab_next);
         apply_field!(switch_tab);
         apply_field!(switch_workspace);
+        apply_field!(select_pane_tab);
         apply_field!(close_tab);
         apply_field!(rename_pane);
         apply_field!(edit_scrollback);
@@ -782,6 +788,7 @@ impl KeysConfig {
         copy_effective_action_field!(move_tab_next, keybinds.move_tab_next);
         copy_effective_indexed_field!(switch_tab, keybinds.switch_tab);
         copy_effective_indexed_field!(switch_workspace, keybinds.switch_workspace);
+        copy_effective_indexed_field!(select_pane_tab, keybinds.select_pane_tab);
         copy_effective_action_field!(close_tab, keybinds.close_tab);
         copy_effective_action_field!(rename_pane, keybinds.rename_pane);
         copy_effective_action_field!(edit_scrollback, keybinds.edit_scrollback);
@@ -934,6 +941,13 @@ impl<'de> Deserialize<'de> for PaneBordersConfig {
     }
 }
 
+// FleetDeck's account tab, as fleet-deck/deck_tabs.py PANE_ROLES builds it.
+fn default_pane_tabs() -> Vec<String> {
+    ["harness", "shell", "status", "agent"]
+        .map(String::from)
+        .to_vec()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -992,6 +1006,12 @@ pub struct UiConfig {
     pub tab_bar_right: Vec<TabBarRightEntryConfig>,
     /// Text inserted between visible right-side tab bar entries. Default: one space.
     pub tab_bar_right_separator: String,
+    /// Pane labels that make a tab show one pane at a time, picked from a second tab
+    /// row, in this order. A tab qualifies when its panes carry exactly these labels.
+    /// Empty hides the row, nothing else: the zoom that shows one pane is the
+    /// server's (the fleet deck sets it). Default: FleetDeck's account tab, "harness", "shell",
+    /// "status" and "agent".
+    pub pane_tabs: Vec<String>,
     /// Format for the outer terminal window title. Empty leaves the title alone.
     /// Default: "{hostname}: {workspace}".
     pub window_title: String,
@@ -1189,6 +1209,8 @@ impl Default for KeysConfig {
             move_tab_next: BindingConfig::empty(),
             switch_tab: BindingConfig::one("prefix+1..9"),
             switch_workspace: BindingConfig::empty(),
+            // The owner's chord (2026-10-15): prefix+1..9 stays switch_tab.
+            select_pane_tab: BindingConfig::one("prefix+f1..f9"),
             close_tab: BindingConfig::one("prefix+shift+x"),
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
@@ -1258,6 +1280,7 @@ impl Default for UiConfig {
             tab_bar_position: TabBarPositionConfig::Top,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
+            pane_tabs: default_pane_tabs(),
             window_title: super::window_title::default_window_title(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,

@@ -168,12 +168,16 @@ class AccountTab:
     # Further tabs carrying the same login, which the deck leaves to the
     # operator: each may hold a harness pane of its own.
     others: int = 0
+    # Panes of the tab that hold no role of their own (unlabelled, another
+    # label, a role's label repeated): a tab with any is not shown one pane
+    # at a time, since its second row (ui.pane_tabs) does not appear.
+    extra: int = 0
 
 
 def read_tab(login: str, tab_id: str, workspace_id: str, panes: list[PaneInfo]) -> AccountTab:
     by_role = {p.label: p.pane_id for p in panes if p.label in PANE_ROLES}
     if HARNESS in by_role:
-        return AccountTab(login, tab_id, workspace_id, by_role)
+        return AccountTab(login, tab_id, workspace_id, by_role, extra=len(panes) - len(by_role))
     if len(panes) == 1 and not panes[0].label:
         return AccountTab(login, tab_id, workspace_id, by_role, adopt=panes[0].pane_id)
     return AccountTab(login, tab_id, workspace_id, by_role, undetermined=True)
@@ -314,7 +318,9 @@ OVERLAY_TITLE = "this agent"
 VIEW = "view"
 # Tells an overlay it opens focused (fabric_view.run): herdr reports focus
 # changes only, and a pane focused before the view turns reporting on never
-# sends it one. An agent pane's view is told its focus by its start instead.
+# sends it one. An agent pane's view the toggle starts, on a person's key, is
+# told its focus by its start instead; one the deck starts waits for a
+# report or a key (Deck._start_view).
 OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 # The terminal's focus reports (DECSET 1004), as a view reads them.
 FOCUS_IN_REPORT, FOCUS_OUT_REPORT = "\x1b[I", "\x1b[O"
@@ -429,7 +435,7 @@ def tell_focus(herdr, pane: str, login: str) -> None:
         tell(FOCUS_OUT_REPORT)
 
 
-def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> None:
+def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[float], None]) -> str:
     """Type the agent's screen into a bare pane, under view_lock, and hold
     on until the next one to look cannot misread the pane: until the shell
     has handed its foreground on; and, for a pane focused at the start,
@@ -450,15 +456,21 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
         sleep(VIEW_POLL_S)
         if wait_ready(herdr, pane, login, sleep, start):
             tell_focus(herdr, pane, login)
-        return
-    # Unfocused (the deck's restore): the shell's foreground handed on is
-    # enough here; the toggle waits for the view to hear focus before it
-    # moves the focus there (fabric_view._turn), so a restore of every tab
-    # does not wait for each view's Python to start.
+        return start
+    # Unfocused (every start by the deck: a restore, a restart of an ended
+    # screen): the shell's foreground handed on is
+    # enough here, so a restore of every tab does not wait for each view's
+    # Python to start. A focus moved there before the view can hear it (the
+    # second row's pick, a click) is dropped by herdr, and the view fetches
+    # at its first key: the deck never tells it a focus inferred from the
+    # pane list, which is the server's default target and no client's own,
+    # so a view nobody watches is never set fetching. The toggle waits for
+    # the view to hear before it moves the focus there (fabric_view._turn).
     for _ in range(VIEW_START_POLLS):
         sleep(VIEW_POLL_S)
         if not at_bare_shell(herdr.process_info(pane)):
-            return
+            return start
+    return start
 
 
 def view_mark(pid: int, proc_root: str = "/proc") -> str | None:
@@ -913,6 +925,15 @@ class Deck:
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
+    # login -> its tab's agent pane, looked at for an ended view at each map read
+    agent_pane: dict[str, str] = field(default_factory=dict)
+    # Agent panes whose screen was seen running at a map read: only such a
+    # screen, once gone, is started again, so a view that fails at its start
+    # is not typed again every map read.
+    view_seen: set[str] = field(default_factory=set)
+    # Tabs whose harness this run of restores has shown alone: a restore
+    # retried for an account does not take the person back to its harness.
+    harness_shown: set[str] = field(default_factory=set)
     befores: dict[str, Before] = field(default_factory=dict)
     loaded: bool = False
     instance: tuple[int, int] | None = None
@@ -1082,15 +1103,20 @@ class Deck:
             panes[SHELL] = self._split(harness, "right", HARNESS_RATIO, SHELL)
         if STATUS not in panes:
             panes[STATUS] = self._split(panes[SHELL], "down", 0.5, STATUS)
+        extra = tab.extra
         if AGENT in panes and any(is_overlay_view(p.get("argv") or []) for p in
                                   self.herdr.process_info(panes[AGENT]).get("foreground_processes") or []):
             # The overlay of a FleetDeck from before the agent pane, which its
             # manifest titled "agent": given the overlay's title, and the tab
             # its own agent pane.
             self.herdr.call("pane", "rename", panes.pop(AGENT), OVERLAY_TITLE)
+            extra += 1
         if AGENT not in panes:
             # A tab from before the agent pane gets one too.
             panes[AGENT] = self._split(panes[STATUS], "down", 0.5, AGENT)
+        self.agent_pane[login] = panes[AGENT]
+        if extra == 0:
+            self._show_harness(login, tab.tab_id, harness)
         # Everything the restore owes this account is recorded before the
         # first observation, so a herdr call failing below leaves it waiting
         # for its decision, never followed half-restored. The harness waits
@@ -1153,6 +1179,23 @@ class Deck:
         if len(infos) == 1 and at_bare_shell(infos[0]) and same_dir(panes[0].get("cwd"), BOARD_DIR):
             return "remnant"
         return "other"
+
+    def _show_harness(self, login: str, tab_id: str, harness: str) -> None:
+        """The harness as the tab's one shown pane: zoomed, the pane the tab's
+        second row (ui.pane_tabs) marks. --in-tab: a restore runs over every
+        tab, and a plain zoom would take the person to each in turn. Once a
+        tab per run of restores: a retried restore leaves the person on the
+        pane they picked."""
+        if tab_id in self.harness_shown:
+            return
+        try:
+            self.herdr.call("pane", "zoom", harness, "--on", "--in-tab")
+        except Exception as error:  # e.g. a FleetDeck without pane.zoom_in_tab: every pane shows
+            reason = printable(str(error))
+            self._say(f"zoom:{login}:{reason}", f"{login}: its harness could not be shown alone "
+                      f"(the tab shows every pane): {reason}")
+            return
+        self.harness_shown.add(tab_id)
 
     def _split(self, pane: str, direction: str, ratio: float, label: str) -> str:
         made = self.herdr.call("pane", "split", pane, "--direction", direction,
@@ -1233,6 +1276,7 @@ class Deck:
                 return
             if self.retry:
                 self.restore(now, only=set(self.retry))
+            self._restart_ended_views(now)
         self.decide_pending(now)
         self._note_befores(server)
         parents = self.parents()
@@ -1281,7 +1325,8 @@ class Deck:
         if self.lost:
             self.lost = False
             self._say("restoring", "herdr's server answers: restoring")
-            for kept in (self.tracks, self.harness_pane, self.pending, self.waiting, self.sent):
+            for kept in (self.tracks, self.harness_pane, self.pending, self.waiting, self.sent,
+                         self.agent_pane, self.view_seen, self.harness_shown):
                 kept.clear()
             self.restore(now)
             return not self.lost
@@ -1299,6 +1344,12 @@ class Deck:
             tab = tabs.get(login)
             if tab is None or tab.panes.get(HARNESS) != self.harness_pane[login]:
                 self._forget(login)
+        # The agent pane is checked as the harness is: one a person closed or
+        # relabelled is the deck's no more, its screen never started there again.
+        for login, pane in list(self.agent_pane.items()):
+            tab = tabs.get(login)
+            if tab is None or tab.panes.get(AGENT) != pane:
+                self._drop_agent_pane(login)
         if self.fleet_tab and self.fleet_unsettled is not None:
             self._restore_fleet_tab(recheck=self.fleet_unsettled)
         return True
@@ -1322,6 +1373,17 @@ class Deck:
         self.sent.pop(login, None)
         for key in [k for k in self.waiting if k[0] == login]:
             del self.waiting[key]
+        # Its agent screen is the deck's no more either: never started again
+        # in a pane the deck no longer follows.
+        self._drop_agent_pane(login)
+
+    def _drop_agent_pane(self, login: str) -> None:
+        """The agent pane is the deck's no more. A start of its screen still
+        queued (a restart that failed, a busy restore) is refused when it
+        comes up (_start_view), whatever role the pane has by then."""
+        agent = self.agent_pane.pop(login, None)
+        if agent is not None:
+            self.view_seen.discard(agent)
 
     # ---------------------------------------------------------- observing
 
@@ -1375,23 +1437,67 @@ class Deck:
         """The agent's screen in its pane, typed only at the operator's bare
         prompt: herdr restores a pane as a shell, never its program."""
         login, pane, _ = key
+        if self.agent_pane.get(login) != pane:
+            # No longer this account's agent pane at the last map read
+            # (relabelled to another role, closed, the account forgotten): not
+            # the deck's to type the screen into. A relabel to harness is
+            # dropped before here, by _forget or the unlisted sweep.
+            del self.waiting[key]
+            self.log(f"{login}: {pane} is no longer its agent pane; its screen is not started there")
+            return
         info = self.herdr.process_info(pane)
         if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
+            self.view_seen.add(pane)
             del self.waiting[key]
         elif at_bare_shell(info):
             with view_lock(self.lock_dir):
                 # Looked at again under the lock: a toggle may have started it.
                 if not at_bare_shell(self.herdr.process_info(pane)):
                     return
-                # FleetDeck's session restore can bring this pane back focused.
-                focused = any(p.get("pane_id") == pane and p.get("focused") is True
-                              for p in self.herdr.call("pane", "list").get("panes", []))
-                start_view(self.herdr, pane, login, focused, self.sleep)
+                # And its label read again: a person may have given the pane
+                # another role since the last map read.
+                label = next((p.get("label") for p in self.herdr.call("pane", "list").get("panes", [])
+                              if p.get("pane_id") == pane), None)
+                if label != AGENT:
+                    self._drop_agent_pane(login)
+                    del self.waiting[key]
+                    self.log(f"{login}: {pane} is no longer its agent pane; its screen is not started there")
+                    return
+                # Always started unfocused, even in a pane the list reads
+                # focused (a session restore, a restart of an ended screen):
+                # that focus is the server's default target, which may be no
+                # one's after the last client detached, and a view told it
+                # would fetch unseen. The screen says "press a key to go live"
+                # and fetches at that key, or at herdr's next focus report.
+                start_view(self.herdr, pane, login, False, self.sleep)
             del self.waiting[key]
             self.log(f"{login}: started its agent screen in {pane}")
         elif now - since >= RESTORE_WAIT_S:
             self._say(f"{pane}:busy", f"{login}: pane {pane} is still busy; "
                       "its agent screen is started when it reaches its prompt")
+
+    def _restart_ended_views(self, now: float) -> None:
+        """An agent pane whose screen was seen running and is now back at the
+        operator's shell gets its screen again: the screen cannot leave itself,
+        so an ended one crashed or was killed, and the second row's agent pick
+        would show a bare shell. Once per ending: it must be seen running again
+        before a later end starts it again."""
+        for login, pane in list(self.agent_pane.items()):
+            key = (login, pane, VIEW)
+            if key in self.waiting:
+                continue
+            try:
+                info = self.herdr.process_info(pane)
+            except Exception as error:  # looked at again at the next map read; a pane gone, _refresh drops
+                self._say(f"{pane}:look:{printable(str(error))}",
+                          f"{login}: its agent pane {pane} could not be looked at: {printable(str(error))}")
+                continue
+            if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
+                self.view_seen.add(pane)
+            elif pane in self.view_seen and at_bare_shell(info):
+                self.view_seen.discard(pane)
+                self.waiting[key] = now
+                self.log(f"{login}: its agent screen in {pane} had ended; starting it again")
 
     def _bare(self, pane: str) -> bool:
         info = self.herdr.process_info(pane)

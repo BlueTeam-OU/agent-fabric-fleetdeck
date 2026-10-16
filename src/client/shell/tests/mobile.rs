@@ -70,6 +70,28 @@ fn mobile_layout_reserves_only_client_header() {
 }
 
 #[test]
+fn a_narrow_window_keeps_the_pane_row_under_its_header() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(account_tab_snapshot()));
+    state.set_pane_surface(surface());
+    let layout = state.layout(44, 20);
+    assert_eq!(layout.mobile_header, Rect::new(0, 0, 44, 2));
+    assert_eq!(layout.pane_tabs, Rect::new(0, 2, 44, 1));
+    assert_eq!(layout.pane_surface, Rect::new(0, 3, 44, 17));
+    let frame = state.compose(44, 20).expect("an account tab, narrow");
+    let row: String = frame.cells[44 * 2..44 * 3]
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect();
+    // 44 columns: the key-and-name form needs 46, so every cell is its name.
+    assert!(
+        row.starts_with("[harness]  shell   status   agent"),
+        "{row:?}"
+    );
+    assert_click_on_agent_cell_zooms_it(&mut state);
+}
+
+#[test]
 fn mobile_switcher_can_activate_an_online_saved_machine() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     let profile = crate::client::endpoint::SavedSshEndpoint {

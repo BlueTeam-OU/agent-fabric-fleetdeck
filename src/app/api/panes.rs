@@ -1413,6 +1413,16 @@ impl App {
     }
 
     pub(super) fn handle_pane_zoom(&mut self, id: String, params: PaneZoomParams) -> String {
+        self.zoom_pane(id, params, false)
+    }
+
+    /// `pane.zoom_in_tab`: switches to the pane's tab only when it is the one
+    /// shown (`AppState::apply_pane_zoom_in_tab`).
+    pub(super) fn handle_pane_zoom_in_tab(&mut self, id: String, params: PaneZoomParams) -> String {
+        self.zoom_pane(id, params, true)
+    }
+
+    fn zoom_pane(&mut self, id: String, params: PaneZoomParams, in_tab: bool) -> String {
         let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
             return encode_error(id, "pane_not_found", "pane not found");
         };
@@ -1430,13 +1440,24 @@ impl App {
             PaneZoomMode::On => PaneZoomCommand::On,
             PaneZoomMode::Off => PaneZoomCommand::Off,
         };
-        let Some(outcome) = self.state.apply_pane_zoom(ws_idx, pane_id, command) else {
+        // Out of sight, a zoom in its tab is no navigation: the person's mode
+        // (navigate mode included) stays as it is.
+        let shown = self.state.active == Some(ws_idx)
+            && self.state.workspaces[ws_idx].active_tab == tab_idx;
+        let outcome = if in_tab {
+            self.state.apply_pane_zoom_in_tab(ws_idx, pane_id, command)
+        } else {
+            self.state.apply_pane_zoom(ws_idx, pane_id, command)
+        };
+        let Some(outcome) = outcome else {
             return pane_not_found(id, &pane_public_id);
         };
         if outcome.changed || outcome.focus_changed {
             self.schedule_session_save();
         }
-        self.state.mode = crate::app::Mode::Terminal;
+        if !in_tab || shown {
+            self.state.mode = crate::app::Mode::Terminal;
+        }
         let Some(layout) = self.pane_layout_snapshot(ws_idx, tab_idx) else {
             return encode_error(id, "pane_layout_unavailable", "pane layout unavailable");
         };
@@ -4118,6 +4139,38 @@ mod tests {
             EventData::LayoutUpdated { layout }
                 if layout.focused_pane_id == app.public_pane_id(0, right).unwrap()
         ));
+    }
+
+    #[test]
+    fn api_pane_zoom_in_tab_out_of_sight_keeps_the_mode() {
+        let mut app = app_with_linked_worktree();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let tab = app.state.workspaces[0].test_add_tab(Some("acct"));
+        app.state.workspaces[0].switch_tab(tab);
+        let harness = app.state.workspaces[0].tabs[tab].root_pane;
+        let agent = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0].tabs[tab].layout.focus_pane(agent);
+        app.state.workspaces[0].switch_tab(0);
+        app.state.ensure_test_terminals();
+        app.state.mode = crate::app::Mode::Navigate;
+        let harness_public = app.public_pane_id(0, harness).unwrap();
+
+        let response = app.handle_pane_zoom_in_tab(
+            "req".into(),
+            PaneZoomParams {
+                pane_id: Some(harness_public),
+                mode: PaneZoomMode::On,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::PaneZoom { zoom } = success.result else {
+            panic!("expected pane zoom response");
+        };
+        assert!(zoom.zoomed && zoom.focus_changed);
+        assert_eq!(app.state.mode, crate::app::Mode::Navigate);
+        assert_eq!(app.state.workspaces[0].active_tab, 0, "no tab switch");
     }
 
     #[test]

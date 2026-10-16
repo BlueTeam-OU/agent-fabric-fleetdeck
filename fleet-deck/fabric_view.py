@@ -49,7 +49,7 @@ from typing import Callable
 
 import report_render as rr
 import view_render as vr
-from deck_tabs import AGENT, HARNESS
+from deck_tabs import AGENT, HARNESS, PANE_ROLES
 # OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
 # before the view can hear it.
 from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
@@ -588,8 +588,9 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     # says the pane was opened focused. herdr reports focus changes only,
     # and a pane opened in the background never had focus to lose:
     # assuming focus at open would fetch in the background. A marked view
-    # (in an agent pane) is told its focus once it can hear it
-    # (fabric_deck.start_view), and trusts no hint.
+    # (in an agent pane) started by the toggle on a person's key is told its
+    # focus once it can hear it (fabric_deck.start_view); one the deck starts
+    # is told nothing, and waits for a report or a key. It trusts no hint.
     focused = initial_focus(env)
     # A refetch asked for with `r`, run once the input it came with is read.
     refetch_asked: View | None = None
@@ -915,15 +916,27 @@ def tab_roles(panes: list[dict], tab_id: str | None) -> dict[str, str]:
     return roles
 
 
-def toggle_step(roles: dict[str, str], focused: str | None) -> tuple[str, str] | None:
-    """The zoom that turns the tab over: from the agent screen to the harness
-    in its tab (zoom off, the harness focused), from anywhere else in the
-    tab to the agent screen (zoomed, focused). herdr's zoom focuses the pane
-    it names. None for a tab without both panes: not one the deck keeps."""
+def toggle_step(roles: dict[str, str], focused: str | None, alone: bool = True) -> tuple[str, str] | None:
+    """The zoom that turns the tab over: from the agent screen to the harness,
+    from anywhere else in the tab to the agent screen; herdr's zoom focuses
+    the pane it names. A tab of exactly the deck's four panes (`alone`) shows
+    one at a time, the one its second row marks (ui.pane_tabs), so the
+    harness is zoomed too; any other tab has no second row, and the harness
+    comes back with the tab's other panes, zoom off. None for a tab without
+    both panes: not one the deck keeps."""
     harness, agent = roles.get(HARNESS), roles.get(AGENT)
     if not harness or not agent:
         return None
-    return (harness, "--off") if focused == agent else (agent, "--on")
+    if focused == agent:
+        return (harness, "--on" if alone else "--off")
+    return (agent, "--on")
+
+
+def only_roles(panes: list[dict], tab_id: str | None) -> bool:
+    """Whether the tab holds the deck's four panes and nothing else, each
+    role once: the tab the second row is drawn for."""
+    labels = sorted(str(p.get("label")) for p in panes if tab_id is not None and p.get("tab_id") == tab_id)
+    return labels == sorted(PANE_ROLES)
 
 
 # Where view_lock is taken, for a test only; never set on a host.
@@ -950,7 +963,8 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
             return 0
         focused = next((p.get("pane_id") for p in panes if p.get("focused") is True and p.get("tab_id") == tab),
                        ctx.get("focused_pane_id"))
-        step = toggle_step(tab_roles(panes, tab), focused)
+        roles = tab_roles(panes, tab)
+        step = toggle_step(roles, focused, only_roles(panes, tab))
         if step is None:
             # Known by what runs in it, never by its label: a person may set
             # "this agent" on any pane, and the close ends what runs there.
@@ -973,7 +987,7 @@ def toggle(env: dict[str, str], herdr, sleep: Callable[[float], None] = time.sle
                     print(f"fabric-view toggle: {overlay} is no overlay to close: {error}", file=sys.stderr)
             # Opened before the lock is let go, so the next press finds it.
             return 0 if closed else open_overlay(env)
-        return _turn(ctx, herdr, step, sleep)
+        return _turn(ctx, herdr, step, roles.get(AGENT), sleep)
 
 
 def left_tab(panes: list[dict], tab: str | None) -> bool:
@@ -983,10 +997,11 @@ def left_tab(panes: list[dict], tab: str | None) -> bool:
         not any(p.get("focused") is True and p.get("tab_id") == tab for p in panes)
 
 
-def _turn(ctx: dict, herdr, step: tuple[str, str], sleep: Callable[[float], None]) -> int:
+def _turn(ctx: dict, herdr, step: tuple[str, str], agent: str | None,
+          sleep: Callable[[float], None]) -> int:
     pane, zoom = step
     login = ctx.get("tab_label")
-    if zoom != "--on" or not isinstance(login, str) or not SAFE_LOGIN.match(login):
+    if pane != agent or not isinstance(login, str) or not SAFE_LOGIN.match(login):
         herdr.call("pane", "zoom", pane, zoom)
         return 0
     info = herdr.process_info(pane)
@@ -1132,8 +1147,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def initial_focus(env) -> bool | None:
     """A view's focus before any report: True for an overlay `open` focused,
-    unknown otherwise, and unknown for a marked view whatever it is told,
-    which its start reports once it can hear (fabric_deck.start_view)."""
+    unknown otherwise, and unknown for a marked view whatever it is told:
+    one the toggle starts has its start report it once it can hear
+    (fabric_deck.start_view), one the deck starts waits for a report or a
+    key."""
     return True if env.get(OPENED_FOCUSED) == "1" and not env.get(VIEW_START) else None
 
 

@@ -1253,3 +1253,12 @@ fn context_menu_keyboard_and_outside_click_are_client_owned() {
     assert!(outside.repaint);
     assert!(state.overlay.is_none());
 }
+
+#[test]
+fn a_click_on_a_second_row_cell_zooms_that_pane() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(account_tab_snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("an account tab");
+    assert_click_on_agent_cell_zooms_it(&mut state);
+}

@@ -21,6 +21,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) mobile_width_threshold: u16,
     pub(super) tab_bar_position: TabBarPositionConfig,
     pub(super) hide_tab_bar_when_single_tab: bool,
+    pub(super) pane_tabs: Vec<String>,
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
@@ -58,6 +59,9 @@ pub(crate) struct ClientShellConfig {
 pub(super) struct ClientShellLayout {
     pub sidebar: Rect,
     pub tab_bar: Rect,
+    /// The second tab row, one cell per pane of a tab that shows its panes one at
+    /// a time (`ui.pane_tabs`); empty for any other tab.
+    pub pane_tabs: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
 }
@@ -91,6 +95,8 @@ pub(super) struct ShellHitMap {
     pub(super) workspace_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) workspace_max_scroll: usize,
     pub(super) tabs: Vec<(Rect, String)>,
+    /// The second tab row's cells, each with the pane it picks.
+    pub(super) pane_tabs: Vec<(Rect, String)>,
     pub(super) panes: Vec<PaneHit>,
     pub(super) popup: Option<PaneHit>,
     pub(super) pane_splits: Vec<PaneSplitHit>,
@@ -1249,6 +1255,7 @@ impl ClientShellState {
             rows,
             self.sidebar_collapsed,
             self.focused_tab_count(),
+            self.shows_pane_tabs(),
             self.sidebar_width,
         )
     }

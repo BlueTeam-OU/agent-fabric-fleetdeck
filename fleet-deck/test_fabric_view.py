@@ -164,8 +164,16 @@ class Toggle(unittest.TestCase):
         roles = fv.tab_roles(TAB_PANES, "t1")
         self.assertEqual(roles, {"harness": "h", "shell": "s", "status": "st", "agent": "a"})
         self.assertEqual(fv.toggle_step(roles, "h"), ("a", "--on"))
-        self.assertEqual(fv.toggle_step(roles, "a"), ("h", "--off"), "the same chord, back")
+        self.assertEqual(fv.toggle_step(roles, "a"), ("h", "--on"), "the same chord, back: still one pane shown")
         self.assertEqual(fv.toggle_step(roles, "s"), ("a", "--on"), "from anywhere else in the tab")
+
+    def test_a_tab_with_more_than_the_four_panes_comes_back_side_by_side(self):
+        self.assertTrue(fv.only_roles(TAB_PANES, "t1"))
+        extra = [*TAB_PANES, {"pane_id": "x", "tab_id": "t1", "label": "this agent"}]
+        self.assertFalse(fv.only_roles(extra, "t1"), "no second row there")
+        roles = fv.tab_roles(extra, "t1")
+        self.assertEqual(fv.toggle_step(roles, "a", fv.only_roles(extra, "t1")), ("h", "--off"))
+        self.assertEqual(fv.toggle_step(roles, "h", False), ("a", "--on"))
 
     def test_a_repeated_label_names_the_pane_the_deck_follows(self):
         from fabric_deck import PaneInfo, read_tab
@@ -185,7 +193,7 @@ class Toggle(unittest.TestCase):
         self.assertEqual(acts(herdr), [("pane", "zoom", "a", "--on")])
         herdr.calls.clear()
         fv.toggle(context(focused="a"), herdr)
-        self.assertEqual(acts(herdr), [("pane", "zoom", "h", "--off")], "the harness pane, never typed into")
+        self.assertEqual(acts(herdr), [("pane", "zoom", "h", "--on")], "the harness pane, never typed into")
 
     def test_a_view_in_the_tab_clears_its_title_as_it_ends(self):
         self.assertEqual(fv.closing(True), fv.FOCUS_OFF + "\x1b]2;\x07")
@@ -449,7 +457,7 @@ class Toggle(unittest.TestCase):
         panes = [dict(p, focused=p["pane_id"] == "a") for p in TAB_PANES]
         herdr = FakeHerdr(panes, {"a": VIEWING})
         fv.toggle(context(focused="h"), herdr)
-        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "h", "--off")])
+        self.assertEqual(herdr.calls[1:], [("pane", "zoom", "h", "--on")])
 
 
     def test_the_same_chord_closes_the_overlay_it_opened(self):

@@ -1065,6 +1065,12 @@ impl ClientShellState {
                         .nth(*index)
                 })
                 .is_some(),
+            KeybindMatch::Action(KeybindAction::SelectPaneTab(index)) => {
+                self.snapshot.as_deref().is_some_and(|snapshot| {
+                    super::pane_tabs::pane_tab_row(snapshot, &self.config.pane_tabs)
+                        .is_some_and(|row| *index < row.len())
+                })
+            }
             KeybindMatch::Action(KeybindAction::FocusAgent(index)) => {
                 super::aggregate_navigation::online_agent_targets(
                     &self.endpoints,

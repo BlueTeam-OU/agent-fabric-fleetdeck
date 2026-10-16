@@ -5543,6 +5543,23 @@
           "type": "object"
         },
         {
+          "description": "`pane.zoom` that leaves the shown tab alone: a new name, as an older\nserver ignoring a flag would switch tabs and still report success.",
+          "properties": {
+            "method": {
+              "const": "pane.zoom_in_tab",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneZoomParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "method": {
               "const": "pane.layout",
