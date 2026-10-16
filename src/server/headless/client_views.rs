@@ -447,6 +447,33 @@ impl HeadlessServer {
             .send_pane_focus_event(target.workspace_index, target.pane_id, event);
     }
 
+    /// Answers a pane that set focus reporting with the focus it has now, as
+    /// a terminal answers the program it runs: focused when some client whose
+    /// own terminal has focus shows it as its tab's focused pane, and
+    /// unfocused otherwise. Without it, a program started in the background,
+    /// or before any focus change, hears nothing until focus next moves.
+    /// Each client's own view decides, never the server's default target: a
+    /// pane focused only there is no one's once the last client detached.
+    pub(super) fn answer_focus_reporting_set(&self, pane_id: crate::layout::PaneId) {
+        let Some((workspace_index, _)) = self.app.find_pane(pane_id) else {
+            return;
+        };
+        let viewed_with_focus = self.clients.iter().any(|(&client_id, client)| {
+            client.is_active_shell_client()
+                && client.outer_terminal_focus == Some(true)
+                && self.shell_focus_target(client_id).is_some_and(|target| {
+                    target.workspace_index == workspace_index && target.pane_id == pane_id
+                })
+        });
+        let event = if viewed_with_focus {
+            crate::ghostty::FocusEvent::Gained
+        } else {
+            crate::ghostty::FocusEvent::Lost
+        };
+        self.app
+            .send_pane_focus_event(workspace_index, pane_id, event);
+    }
+
     fn shell_location_focus_transitions(
         &self,
         focus_before: Vec<(u64, Option<ShellFocusTarget>)>,

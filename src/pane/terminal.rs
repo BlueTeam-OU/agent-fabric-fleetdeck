@@ -23,6 +23,7 @@ mod windows_recent_fallback;
 #[cfg(test)]
 use super::cursor::CURSOR_POSITION_SETTLE;
 use super::cursor::{CursorPositionSettleState, DecscusrTracker};
+use super::focus_reporting::FocusReportingSetTracker;
 use super::{
     input::{
         configure_key_encoder, ghostty_key_event_from_terminal_key,
@@ -170,6 +171,9 @@ pub(crate) struct ProcessBytesResult {
     pub clipboard_writes: Vec<Vec<u8>>,
     pub reported_cwd: Option<std::path::PathBuf>,
     pub terminal_responses: Vec<Bytes>,
+    /// The output turned focus reporting on, or set it again while on; the
+    /// program now waits to hear its focus.
+    pub focus_reporting_set: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -216,6 +220,7 @@ pub(crate) struct GhosttyPaneCore {
     pub osc_debug_tracker: OscDebugTracker,
     pub agent_osc_state: AgentOscStateTracker,
     decscusr_tracker: DecscusrTracker,
+    focus_reporting_sets: FocusReportingSetTracker,
     cursor_settle_state: CursorPositionSettleState,
     windows_powershell_prompt_cwd_reporting: bool,
 }
@@ -1202,6 +1207,7 @@ impl GhosttyPaneTerminal {
                 osc_debug_tracker: OscDebugTracker::default(),
                 agent_osc_state: AgentOscStateTracker::default(),
                 decscusr_tracker: DecscusrTracker::default(),
+                focus_reporting_sets: FocusReportingSetTracker::default(),
                 cursor_settle_state: CursorPositionSettleState::default(),
                 windows_powershell_prompt_cwd_reporting: false,
             }),
@@ -1368,6 +1374,7 @@ impl GhosttyPaneTerminal {
                 clipboard_writes: Vec::new(),
                 reported_cwd: None,
                 terminal_responses: Vec::new(),
+                focus_reporting_set: false,
             };
         };
 
@@ -1404,6 +1411,11 @@ impl GhosttyPaneTerminal {
         core.c1_xtgettcap_tracker.observe(bytes);
         let c1_xtgettcap_responses = core.c1_xtgettcap_tracker.drain_pending();
         core.decscusr_tracker.observe(bytes);
+        core.focus_reporting_sets.observe(bytes);
+        let focus_reporting_before = core
+            .terminal
+            .mode_get(crate::ghostty::MODE_FOCUS_EVENT)
+            .unwrap_or(false);
         let in_progress_default_color_event = core.default_color_event_tracker.in_progress_event();
         let default_color_events = core.default_color_event_tracker.drain_pending();
         let synchronized_output_before = core
@@ -1421,6 +1433,14 @@ impl GhosttyPaneTerminal {
         );
         let terminal_bells = core.terminal.take_bell_count();
         let clipboard_writes = core.terminal.take_clipboard_writes();
+        // The mode's edge is checked as well as the tracker, so a set the
+        // tracker cannot parse (a C1 CSI, say) still counts once it lands.
+        let focus_reporting_set_seen = core.focus_reporting_sets.take_seen();
+        let focus_reporting_set = core
+            .terminal
+            .mode_get(crate::ghostty::MODE_FOCUS_EVENT)
+            .unwrap_or(false)
+            && (focus_reporting_set_seen || !focus_reporting_before);
         let reported_cwd = core
             .terminal
             .take_pwd_changes()
@@ -1485,6 +1505,7 @@ impl GhosttyPaneTerminal {
             clipboard_writes,
             reported_cwd,
             terminal_responses,
+            focus_reporting_set,
         }
     }
 
