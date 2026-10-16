@@ -1,5 +1,9 @@
-/// Sees every DECSET that names focus reporting (`CSI ? … 1004 … h`) in PTY
-/// output, split across reads or not.
+/// Sees each DECSET that names focus reporting (`CSI ? … 1004 … h`) in PTY
+/// output, split across reads or not, following the terminal's parser
+/// through escape and CSI sequences. It does not model the other states: a
+/// C1 CSI that breaks into a string or a DCS header (`ESC _ … 0x9B ? 1004 h`)
+/// goes unseen. No real program writes one, and a set missed while the mode
+/// is on costs only the answer, never a wrong one.
 ///
 /// The terminal core keeps only the mode's current value, so a set while it
 /// is already on (a program starting after one that left it on) is invisible

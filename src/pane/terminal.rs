@@ -1434,8 +1434,9 @@ impl GhosttyPaneTerminal {
         let terminal_bells = core.terminal.take_bell_count();
         let clipboard_writes = core.terminal.take_clipboard_writes();
         // The mode's edge is checked as well as the tracker, so a set the
-        // tracker cannot parse (a C1 CSI, say) still counts when it turns
-        // the mode on; one made while the mode is on rests on the tracker.
+        // tracker does not model (see FocusReportingSetTracker) still counts
+        // when it turns the mode on; one made while the mode is on rests on
+        // the tracker.
         let focus_reporting_set_seen = core.focus_reporting_sets.take_seen();
         let focus_reporting_set = core
             .terminal
