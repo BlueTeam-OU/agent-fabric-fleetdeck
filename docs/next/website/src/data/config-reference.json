@@ -1042,7 +1042,37 @@
           "key": "ui.pane_tabs",
           "type": "list of strings",
           "default": "[\"harness\", \"shell\", \"status\", \"agent\"]",
-          "description": "Pane labels for the second tab row. A tab whose panes carry exactly these labels, each once, gets a yellow row under the tab row that picks the one pane shown (the tab's zoom). An empty list hides the row only; the zoom key still shows the panes side by side."
+          "description": "Pane labels for the second tab row. A tab whose panes carry exactly these labels, each once, gets a row under the tab row, a blank row apart, that picks the one pane shown (the tab's zoom); the shown pane's cell is yellow. An empty list hides the row only; the zoom key still shows the panes side by side."
+        },
+        {
+          "key": "ui.pane_tab_order",
+          "type": "table",
+          "default": "{}",
+          "description": "A tab's own order for the second tab row, keyed by the tab's label: the labels of `ui.pane_tabs`, rearranged. The F1-F9 keys pick the cells in the order shown. A tab not listed, or listed with other labels, uses the `ui.pane_tabs` order."
+        },
+        {
+          "key": "ui.pane_tab_selected_bg",
+          "type": "color",
+          "default": "\"\"",
+          "description": "Background of the shown pane's cell in the second tab row. Empty uses the theme's yellow; a value that names no colour is a config diagnostic and uses it too."
+        },
+        {
+          "key": "ui.pane_tab_selected_fg",
+          "type": "color",
+          "default": "\"\"",
+          "description": "Text colour of the shown pane's cell. Empty uses black or white, whichever reads on the background."
+        },
+        {
+          "key": "ui.pane_tab_colors",
+          "type": "table",
+          "default": "{}",
+          "description": "The shown cell's colours for one pane label, over the two settings above: `[ui.pane_tab_colors.agent]` with `selected_bg` and `selected_fg`. A label that sets only `selected_bg` gets text that reads on it."
+        },
+        {
+          "key": "ui.tab_order",
+          "type": "list of strings",
+          "default": "[]",
+          "description": "Tab names in the order each workspace keeps its tabs; a tab is listed by a name given to it, not by the number an unnamed tab shows. A client with this set moves the server's tabs into it, so tab numbers, the go-to-tab keys and every attached client agree; tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. Empty leaves tabs where they are."
         },
         {
           "key": "ui.tab_bar_right",

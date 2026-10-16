@@ -21,7 +21,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) mobile_width_threshold: u16,
     pub(super) tab_bar_position: TabBarPositionConfig,
     pub(super) hide_tab_bar_when_single_tab: bool,
-    pub(super) pane_tabs: Vec<String>,
+    pub(super) pane_tabs: super::pane_tabs::PaneTabs,
+    pub(super) tab_order: Vec<String>,
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
@@ -959,6 +960,10 @@ pub(crate) struct ClientShellState {
     pub(super) popup_pending_deadline: Option<std::time::Instant>,
     pub(super) next_request_id: u64,
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
+    /// The tab arrangement a `ui.tab_order` move was last asked for, and of
+    /// which server: tab ids repeat across servers and across restarts.
+    /// Kept per endpoint, so visiting one server never forgets what another was asked.
+    pub(super) tab_order_asked: HashMap<ClientEndpointId, (String, Vec<String>)>,
     pub(super) pending_integration_installs: usize,
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
@@ -1141,6 +1146,7 @@ impl ClientShellState {
             popup_pending_deadline: None,
             next_request_id: 1,
             pending_requests: HashMap::new(),
+            tab_order_asked: HashMap::new(),
             pending_integration_installs: 0,
             pending_notifications: Vec::new(),
             visible_notification: None,

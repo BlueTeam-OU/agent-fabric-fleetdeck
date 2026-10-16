@@ -374,6 +374,45 @@ pub(super) fn begin_endpoint_activation(
     Ok(())
 }
 
+/// Sends `ui.tab_order`'s next move, if the shown tabs need one and the
+/// active endpoint takes requests now. Called where a snapshot lands and where
+/// an activation opens the endpoint's input, the two moments it can change.
+pub(super) fn send_tab_order_move(
+    state: &mut ClientState,
+    endpoints: &mut endpoint::EndpointRegistry,
+    endpoint_commands: &mut endpoint_commands::EndpointCommands,
+) -> Result<(), ClientError> {
+    let can_send = endpoints.active_surface_available();
+    let Some(outcome) = state
+        .shell
+        .as_mut()
+        .and_then(|shell| shell.tab_order_outcome(can_send))
+    else {
+        return Ok(());
+    };
+    // A tab move schedules no activation. The dispatch sends it too, and
+    // repaints for whatever notice a refused or cancelled move leaves.
+    let mut no_activation = None;
+    let (_, repaint) = dispatch_client_shell_actions(
+        outcome.actions,
+        endpoint_commands,
+        endpoints,
+        state.shell.as_mut(),
+        &mut state.detached_process_children,
+        &mut no_activation,
+    )?;
+    if repaint {
+        if let Some(frame) = state
+            .shell
+            .as_mut()
+            .and_then(|shell| shell.compose(state.reported_size.0, state.reported_size.1))
+        {
+            state.present_frame(frame);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn complete_endpoint_activation(
     state: &mut ClientState,
     endpoints: &mut endpoint::EndpointRegistry,
@@ -455,6 +494,7 @@ pub(super) fn complete_endpoint_activation(
                 shell.cancel_endpoint_request(&request_id);
             }
         }
+        send_tab_order_move(state, endpoints, endpoint_commands)?;
     }
     let (cleanup, frame) = {
         let shell = state.shell.as_mut().expect("checked client shell");

@@ -9,8 +9,94 @@
 use super::*;
 
 use super::render::{display_width, put_text};
+use std::collections::BTreeMap;
+
 use crate::api::schema::{Method, PaneZoomMode, PaneZoomParams};
-use crate::config::IndexedKeybind;
+use crate::config::{try_parse_color, IndexedKeybind, UiConfig};
+use ratatui::style::Color;
+
+/// The second tab row's settings as the client uses them: entries the
+/// diagnostics name as wrong are dropped here, so a wrong one changes nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct PaneTabs {
+    labels: Vec<String>,
+    orders: BTreeMap<String, Vec<String>>,
+    selected: CellColors,
+    colors: BTreeMap<String, CellColors>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct CellColors {
+    bg: Option<Color>,
+    fg: Option<Color>,
+}
+
+impl CellColors {
+    fn parse(bg: &str, fg: &str) -> Self {
+        // A value that names no colour is a config diagnostic and falls back
+        // to the default, as an empty one does.
+        let color = try_parse_color;
+        Self {
+            bg: color(bg),
+            fg: color(fg),
+        }
+    }
+}
+
+impl PaneTabs {
+    pub(crate) fn from_ui(ui: &UiConfig) -> Self {
+        Self {
+            labels: ui.pane_tabs.clone(),
+            orders: ui
+                .pane_tab_order
+                .iter()
+                .filter(|(_, order)| crate::config::is_pane_tab_order(&ui.pane_tabs, order))
+                .map(|(tab, order)| (tab.clone(), order.clone()))
+                .collect(),
+            selected: CellColors::parse(&ui.pane_tab_selected_bg, &ui.pane_tab_selected_fg),
+            colors: ui
+                .pane_tab_colors
+                .iter()
+                .map(|(label, colors)| {
+                    (
+                        label.clone(),
+                        CellColors::parse(&colors.selected_bg, &colors.selected_fg),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn labels(labels: &[&str]) -> Self {
+        Self {
+            labels: labels.iter().map(|label| label.to_string()).collect(),
+            ..Self::default()
+        }
+    }
+
+    /// The row's cells for the tab labelled `tab`, in the order it shows them.
+    fn order_for(&self, tab: &str) -> &[String] {
+        self.orders.get(tab).unwrap_or(&self.labels)
+    }
+
+    /// The picked cell's background and text. A label's own colour wins over
+    /// the row's; text no setting names is chosen to read on the background,
+    /// so a background set alone never leaves dark text on a dark colour.
+    fn selected_colors(&self, label: &str, palette: &Palette) -> (Color, Color) {
+        let own = self.colors.get(label).copied().unwrap_or_default();
+        let bg = own.bg.or(self.selected.bg).unwrap_or(palette.yellow);
+        let fg = own
+            .fg
+            .or(if own.bg.is_some() {
+                None
+            } else {
+                self.selected.fg
+            })
+            .unwrap_or_else(|| text_on(bg));
+        (bg, fg)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PaneTab<'a> {
@@ -24,13 +110,14 @@ pub(super) struct PaneTab<'a> {
 /// shows its panes as they are laid out.
 pub(super) fn pane_tab_row<'a>(
     snapshot: &'a ClientShellSnapshot,
-    labels: &'a [String],
+    pane_tabs: &'a PaneTabs,
 ) -> Option<Vec<PaneTab<'a>>> {
+    let tab_id = snapshot.focused_tab_id.as_deref()?;
+    let tab = snapshot.tabs.iter().find(|tab| tab.tab_id == tab_id)?;
+    let labels = pane_tabs.order_for(&tab.label);
     if labels.is_empty() {
         return None;
     }
-    let tab_id = snapshot.focused_tab_id.as_deref()?;
-    let tab = snapshot.tabs.iter().find(|tab| tab.tab_id == tab_id)?;
     let in_tab = || {
         snapshot
             .panes
@@ -67,13 +154,27 @@ pub(super) fn pick_pane_tab(pane_id: &str) -> Method {
     })
 }
 
-// Dark text on the yellow row reads in light and dark themes alike; a theme's
-// panel colour is light in a light theme. An indexed yellow pairs with the
-// indexed black of the same terminal palette.
-fn on_yellow(palette: &Palette) -> ratatui::style::Color {
-    match palette.yellow {
-        ratatui::style::Color::Rgb(..) => ratatui::style::Color::Rgb(0, 0, 0),
-        _ => ratatui::style::Color::Black,
+// Black or white, whichever reads on `bg`. A named or indexed colour pairs
+// with the named black or white of the same terminal palette; an RGB one
+// with RGB, by its luminance.
+fn text_on(bg: Color) -> Color {
+    match bg {
+        Color::Rgb(r, g, b) => {
+            let luminance = 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b);
+            if luminance > 128_000 {
+                Color::Rgb(0, 0, 0)
+            } else {
+                Color::Rgb(255, 255, 255)
+            }
+        }
+        Color::Black
+        | Color::Red
+        | Color::Blue
+        | Color::Magenta
+        | Color::DarkGray
+        | Color::Indexed(0 | 1 | 4 | 5 | 8 | 16..=19) => Color::White,
+        Color::Reset => Color::Reset,
+        _ => Color::Black,
     }
 }
 
@@ -142,28 +243,29 @@ fn pane_tab_cells(row: &[PaneTab<'_>], keys: &[Option<String>], width: u16) -> V
     names
 }
 
-/// One cell per pane. The picked one is drawn inverted, bold and in
-/// brackets, so the mark does not rest on colour alone; brackets and padding
-/// are the same width, so picking moves nothing.
+/// One cell per pane, on the tab bar's background like the tab row above.
+/// The picked one is drawn in its own colours (the theme's yellow unless set),
+/// bold and in brackets, so the mark does not rest on colour alone; brackets
+/// and padding are the same width, so picking moves nothing.
 pub(super) fn render_pane_tab_row(
     buffer: &mut Buffer,
     area: Rect,
     row: &[PaneTab<'_>],
     keys: &[Option<String>],
+    pane_tabs: &PaneTabs,
     palette: &Palette,
     hits: &mut ShellHitMap,
 ) {
-    let dark = on_yellow(palette);
-    let plain = Style::default().fg(dark).bg(palette.yellow);
-    let picked = Style::default()
-        .fg(palette.yellow)
-        .bg(dark)
-        .add_modifier(Modifier::BOLD);
+    let plain = Style::default().fg(palette.overlay1).bg(palette.panel_bg);
     buffer.set_style(area, plain);
     let mut x = area.x;
     for (tab, name) in row.iter().zip(pane_tab_cells(row, keys, area.width)) {
         let (text, style) = if tab.selected {
-            (format!("[{name}]"), picked)
+            let (bg, fg) = pane_tabs.selected_colors(tab.label, palette);
+            (
+                format!("[{name}]"),
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            )
         } else {
             (format!(" {name} "), plain)
         };
@@ -216,10 +318,8 @@ mod tests {
         snapshot
     }
 
-    fn labels() -> Vec<String> {
-        ["harness", "shell", "status", "agent"]
-            .map(String::from)
-            .to_vec()
+    fn labels() -> PaneTabs {
+        PaneTabs::labels(&["harness", "shell", "status", "agent"])
     }
 
     #[test]
@@ -311,7 +411,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            pane_tab_row(&snapshot, &[]),
+            pane_tab_row(&snapshot, &PaneTabs::default()),
             None,
             "an empty list turns the row off"
         );
@@ -356,7 +456,7 @@ mod tests {
         let area = Rect::new(0, 0, 60, 1);
         let mut buffer = Buffer::empty(area);
         let mut hits = ShellHitMap::default();
-        render_pane_tab_row(&mut buffer, area, &row, &keys, &palette, &mut hits);
+        render_pane_tab_row(&mut buffer, area, &row, &keys, &labels, &palette, &mut hits);
 
         let text: String = (0..area.width)
             .map(|x| buffer[(x, 0)].symbol().to_string())
@@ -367,8 +467,19 @@ mod tests {
         );
         let status = text.find("[F3").expect("the mark") as u16;
         assert!(buffer[(status, 0)].modifier.contains(Modifier::BOLD));
-        assert_eq!(buffer[(status, 0)].bg, on_yellow(&palette), "inverted");
-        assert_eq!(buffer[(1, 0)].bg, palette.yellow);
+        assert_eq!(
+            buffer[(status, 0)].bg,
+            palette.yellow,
+            "the picked cell is yellow"
+        );
+        assert_eq!(buffer[(status, 0)].fg, text_on(palette.yellow));
+        for x in [1, area.width - 1] {
+            assert_eq!(
+                buffer[(x, 0)].bg,
+                palette.panel_bg,
+                "the row and the other cells keep the tab bar's background"
+            );
+        }
 
         let clicked = hits
             .pane_tabs
@@ -402,7 +513,7 @@ mod tests {
             let area = Rect::new(0, 0, width, 1);
             let mut buffer = Buffer::empty(area);
             let mut hits = ShellHitMap::default();
-            render_pane_tab_row(&mut buffer, area, &row, &keys, &palette, &mut hits);
+            render_pane_tab_row(&mut buffer, area, &row, &keys, &labels, &palette, &mut hits);
             let text: String = (0..width)
                 .map(|x| buffer[(x, 0)].symbol().to_string())
                 .collect();
@@ -411,5 +522,111 @@ mod tests {
             assert!(hits.pane_tabs.iter().all(|(rect, _)| rect.right() <= width));
             assert_eq!(hits.pane_tabs[3].1, "p3");
         }
+    }
+
+    fn ui(toml: &str) -> UiConfig {
+        let config: crate::config::Config =
+            toml::from_str(&format!("[ui]\n{toml}")).expect("a valid [ui] section");
+        config.ui
+    }
+
+    #[test]
+    fn a_tab_with_its_own_order_shows_and_picks_in_it() {
+        // The test tab is labelled "acct"; "other" names a tab that is not shown.
+        let pane_tabs = PaneTabs::from_ui(&ui(r#"
+            [ui.pane_tab_order]
+            acct = ["agent", "harness", "shell", "status"]
+            other = ["status", "agent", "harness", "shell"]
+            "#));
+        let snapshot = account_tab("p3");
+        let row = pane_tab_row(&snapshot, &pane_tabs).expect("an account tab shows the row");
+        let shown: Vec<_> = row.iter().map(|tab| (tab.label, tab.pane_id)).collect();
+        assert_eq!(
+            shown,
+            [
+                ("agent", "p3"),
+                ("harness", "p0"),
+                ("shell", "p1"),
+                ("status", "p2")
+            ]
+        );
+        assert!(row[0].selected, "the mark follows the pane, not the slot");
+    }
+
+    #[test]
+    fn an_order_with_other_labels_leaves_the_tab_in_the_default_order() {
+        let ui = ui(r#"
+            [ui.pane_tab_order]
+            acct = ["agent", "harness", "shell"]
+            "#);
+        assert_eq!(ui.pane_tabs_diagnostics().len(), 1);
+        let pane_tabs = PaneTabs::from_ui(&ui);
+        let snapshot = account_tab("p0");
+        let row = pane_tab_row(&snapshot, &pane_tabs).expect("the row still shows");
+        let shown: Vec<_> = row.iter().map(|tab| tab.label).collect();
+        assert_eq!(shown, ["harness", "shell", "status", "agent"]);
+    }
+
+    #[test]
+    fn each_pane_label_can_have_its_own_picked_colours() {
+        let config = crate::config::Config::default();
+        let palette = crate::app::client_palette_from_config(&config);
+        let pane_tabs = PaneTabs::from_ui(&ui(r##"
+            pane_tab_selected_bg = "#ffffff"
+            pane_tab_selected_fg = "red"
+            [ui.pane_tab_colors.agent]
+            selected_bg = "#000080"
+            [ui.pane_tab_colors.shell]
+            selected_fg = "blue"
+            "##));
+        assert_eq!(
+            pane_tabs.selected_colors("harness", &palette),
+            (Color::Rgb(255, 255, 255), Color::Red),
+            "the row's colours"
+        );
+        assert_eq!(
+            pane_tabs.selected_colors("agent", &palette),
+            (Color::Rgb(0, 0, 128), Color::Rgb(255, 255, 255)),
+            "a label's own background brings text that reads on it, not the row's text"
+        );
+        assert_eq!(
+            pane_tabs.selected_colors("shell", &palette),
+            (Color::Rgb(255, 255, 255), Color::Blue)
+        );
+        assert_eq!(
+            PaneTabs::default().selected_colors("agent", &palette),
+            (palette.yellow, text_on(palette.yellow)),
+            "unset: the theme's yellow with dark text"
+        );
+    }
+
+    #[test]
+    fn a_value_that_names_no_colour_falls_back_to_the_default() {
+        let config = crate::config::Config::default();
+        let palette = crate::app::client_palette_from_config(&config);
+        let ui = ui(r##"
+            pane_tab_selected_bg = "yelow"
+            [ui.pane_tab_colors.agent]
+            selected_bg = "#89b4f"
+            "##);
+        assert_eq!(ui.pane_tabs_diagnostics().len(), 2);
+        let pane_tabs = PaneTabs::from_ui(&ui);
+        for label in ["harness", "agent"] {
+            assert_eq!(
+                pane_tabs.selected_colors(label, &palette),
+                (palette.yellow, text_on(palette.yellow)),
+                "{label}: the theme's yellow, not cyan"
+            );
+        }
+    }
+
+    #[test]
+    fn text_reads_on_its_background() {
+        assert_eq!(text_on(Color::Yellow), Color::Black);
+        assert_eq!(text_on(Color::Blue), Color::White);
+        assert_eq!(text_on(Color::Rgb(249, 226, 175)), Color::Rgb(0, 0, 0));
+        assert_eq!(text_on(Color::Rgb(30, 30, 46)), Color::Rgb(255, 255, 255));
+        assert_eq!(text_on(Color::Indexed(3)), Color::Black, "indexed yellow");
+        assert_eq!(text_on(Color::Indexed(4)), Color::White, "indexed blue");
     }
 }

@@ -76,10 +76,14 @@ fn a_narrow_window_keeps_the_pane_row_under_its_header() {
     state.set_pane_surface(surface());
     let layout = state.layout(44, 20);
     assert_eq!(layout.mobile_header, Rect::new(0, 0, 44, 2));
-    assert_eq!(layout.pane_tabs, Rect::new(0, 2, 44, 1));
-    assert_eq!(layout.pane_surface, Rect::new(0, 3, 44, 17));
+    assert_eq!(
+        layout.pane_tabs,
+        Rect::new(0, 3, 44, 1),
+        "a blank row apart"
+    );
+    assert_eq!(layout.pane_surface, Rect::new(0, 4, 44, 16));
     let frame = state.compose(44, 20).expect("an account tab, narrow");
-    let row: String = frame.cells[44 * 2..44 * 3]
+    let row: String = frame.cells[44 * 3..44 * 4]
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();

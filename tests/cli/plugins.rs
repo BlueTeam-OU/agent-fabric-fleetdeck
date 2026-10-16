@@ -193,14 +193,13 @@ platforms = ["linux", "macos", "windows"]
     run_git(&source_repo, &["commit", "--quiet", "-m", "add plugin"]);
 
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/example/plugins.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
 
     let alpha = spawn_named_server(&config_home, &runtime_dir, "alpha");
     wait_for_socket(
@@ -272,14 +271,13 @@ fn plugin_update_refreshes_selected_then_all_github_plugins() {
     run_git(&source_repo, &["commit", "--quiet", "-m", "add plugins"]);
 
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/example/plugins.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
     for subdir in ["first", "second"] {
         let source = format!("example/plugins/{subdir}");
         let ref_args = (subdir == "first").then_some(["--ref", "plugin-updates"]);
@@ -503,14 +501,13 @@ fn plugin_update_does_not_resurrect_a_plugin_unlinked_during_build() {
     run_git(&source_repo, &["commit", "--quiet", "-m", "add plugin"]);
 
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/example/race.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
     let installed = run_named_cli_with_env(
         &config_home,
         &runtime_dir,
@@ -567,6 +564,7 @@ fn plugin_update_does_not_resurrect_a_plugin_unlinked_during_build() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("GIT_CONFIG_GLOBAL", &git_config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("HERDR_SOCKET_PATH")
         .env_remove("HERDR_CLIENT_SOCKET_PATH")
         .env_remove("HERDR_ENV")
@@ -649,14 +647,13 @@ mv "$HERDR_PLUGIN_ROOT/result-$kind.tmp" "$HERDR_PLUGIN_ROOT/result-$kind"
     run_git(&source_repo, &["add", "."]);
     run_git(&source_repo, &["commit", "--quiet", "-m", "old plugin"]);
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/example/live.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
     let install = run_named_cli_with_env(
         &config_home,
         &runtime_dir,
@@ -1049,14 +1046,13 @@ command = ["sh", "-c", "echo bootstrap"]
     fs::create_dir_all(&config_home).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/herdr-plugin-examples.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
 
     run_git(&source_repo, &["tag", "v0.43.0"]);
     let install = run_named_cli_with_env(
@@ -1185,14 +1181,13 @@ command = ["sh", "-c", "echo should-not-install"]
     fs::create_dir_all(&config_home).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/herdr-plugin-examples.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
 
     let install = run_named_cli_with_env(
         &config_home,
@@ -1281,14 +1276,13 @@ command = ["sh", "-c", "echo should-not-install"]
     fs::create_dir_all(&config_home).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/herdr-plugin-examples.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
 
     let install = run_named_cli_with_env(
         &config_home,
@@ -1390,14 +1384,13 @@ EOF
     fs::create_dir_all(&config_home).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     let git_config = base.join("gitconfig");
-    fs::write(
+    write_test_git_config(
         &git_config,
         format!(
             "[url \"file://{}\"]\n    insteadOf = https://github.com/ogulcancelik/herdr-plugin-examples.git\n",
             source_repo.display()
         ),
-    )
-    .unwrap();
+    );
 
     let install = run_named_cli_with_env(
         &config_home,

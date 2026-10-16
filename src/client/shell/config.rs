@@ -109,6 +109,13 @@ impl ClientShellState {
     }
 }
 
+/// One blank row between the tab row and the pane row, so the two rows of
+/// tabs read as two levels, not one block. Only with both rows shown and a
+/// row of panes still left below; a short window gives up the gap first.
+fn pane_tabs_gap(tab_height: u16, pane_tabs_height: u16, rows: u16) -> u16 {
+    u16::from(tab_height > 0 && pane_tabs_height > 0 && rows > tab_height + pane_tabs_height + 1)
+}
+
 impl ClientShellConfig {
     pub(crate) fn from_config(config: &Config) -> Self {
         let theme_runtime = crate::app::client_theme_runtime_from_config(config);
@@ -121,7 +128,8 @@ impl ClientShellConfig {
             mobile_width_threshold: config.ui.mobile_width_threshold,
             tab_bar_position: config.ui.tab_bar_position,
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
-            pane_tabs: config.ui.pane_tabs.clone(),
+            pane_tabs: super::pane_tabs::PaneTabs::from_ui(&config.ui),
+            tab_order: config.ui.tab_order.clone(),
             spaces: config.ui.sidebar.spaces.clone(),
             agents: config.ui.sidebar.agents.clone(),
             agent_panel_sort: config.ui.agent_panel_sort,
@@ -350,7 +358,9 @@ impl ClientShellConfig {
                 self.mobile_width_threshold = ui.mobile_width_threshold;
                 self.tab_bar_position = ui.tab_bar_position;
                 self.hide_tab_bar_when_single_tab = ui.hide_tab_bar_when_single_tab;
-                self.pane_tabs = ui.pane_tabs.clone();
+                diagnostics.extend(ui.pane_tabs_diagnostics());
+                self.pane_tabs = super::pane_tabs::PaneTabs::from_ui(ui);
+                self.tab_order = ui.tab_order.clone();
                 self.spaces = ui.sidebar.spaces.clone();
                 self.agents = ui.sidebar.agents.clone();
                 self.agent_panel_sort = ui.agent_panel_sort;
@@ -400,11 +410,12 @@ impl ClientShellConfig {
             // A narrow window keeps the pane row too, under the header: it is
             // what says which pane is shown. At least one row of panes stays.
             let pane_tabs_height = u16::from(pane_tabs && rows > header_height.saturating_add(1));
-            let chrome = header_height + pane_tabs_height;
+            let gap = pane_tabs_gap(header_height, pane_tabs_height, rows);
+            let chrome = header_height + gap + pane_tabs_height;
             return ClientShellLayout {
                 sidebar: Rect::default(),
                 tab_bar: Rect::default(),
-                pane_tabs: Rect::new(0, header_height, cols, pane_tabs_height),
+                pane_tabs: Rect::new(0, header_height + gap, cols, pane_tabs_height),
                 mobile_header: Rect::new(0, 0, cols, header_height),
                 pane_surface: Rect::new(0, chrome, cols, rows.saturating_sub(chrome)),
             };
@@ -429,14 +440,15 @@ impl ClientShellConfig {
         let tab_height = u16::from(show_tab_bar);
         // The pane row keeps at least one row of panes below it.
         let pane_tabs_height = u16::from(pane_tabs && rows > tab_height.saturating_add(1));
-        let chrome = tab_height + pane_tabs_height;
+        let gap = pane_tabs_gap(tab_height, pane_tabs_height, rows);
+        let chrome = tab_height + gap + pane_tabs_height;
         let pane_height = rows.saturating_sub(chrome);
         // The pane row sits between the tab row and the panes, wherever the tab
-        // row is.
+        // row is, a blank row apart from the tab row.
         let (tab_bar, pane_tabs, pane_surface) = match self.tab_bar_position {
             TabBarPositionConfig::Top => (
                 Rect::new(main.x, 0, main.width, tab_height),
-                Rect::new(main.x, tab_height, main.width, pane_tabs_height),
+                Rect::new(main.x, tab_height + gap, main.width, pane_tabs_height),
                 Rect::new(main.x, chrome, main.width, pane_height),
             ),
             TabBarPositionConfig::Bottom => (

@@ -143,7 +143,12 @@ fn parse_rgb_color(value: &str) -> Option<RgbColor> {
         .filter(|_| parts.next().is_none());
     }
 
-    if let Some(hex) = value.strip_prefix('#') {
+    // Only ASCII hex digits are sliced below: a byte index into any other
+    // character would panic.
+    if let Some(hex) = value
+        .strip_prefix('#')
+        .filter(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         let digits = hex.len() / 3;
         if !matches!(digits, 1..=4) || hex.len() != digits * 3 {
             return None;
@@ -188,6 +193,13 @@ mod tests {
                 },
             ))
         );
+    }
+
+    #[test]
+    fn a_hash_reply_with_other_characters_is_no_colour() {
+        for reply in ["\x1b]11;#€abc\u{7}", "\x1b]11;#12g456\u{7}"] {
+            assert_eq!(parse_default_color_response(reply), None, "{reply:?}");
+        }
     }
 
     #[test]

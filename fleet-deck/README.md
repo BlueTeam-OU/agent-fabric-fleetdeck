@@ -476,17 +476,17 @@ account tabs as before.
 
 | view | opens as | shows |
 |---|---|---|
-| **board** | the `fleet` tab | one row per placed agent, who needs you first: state, whether it needs you (and why, and for how long), what it waits on otherwise, current job, closed/open jobs, RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
-| **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, open jobs; largest first, scaled to the largest, labelled "operational, not a score" |
+| **board** | the `fleet` tab | one row per placed agent, who needs you first: state, whether it needs you (and why, and for how long), what it waits on otherwise, current job, closed/working jobs, delivered jobs (handed over, waiting on someone else's merge; the first column a narrow board drops), RSS, CPU, tokens over 7 days, the 5-hour usage window, open PR; each host's memory and memory pressure below |
+| **compare** | `c` in the fleet tab | one bar per agent for one metric: RSS, CPU, swap, tokens over 7 days, jobs done, working jobs, delivered jobs; largest first, scaled to the largest, labelled "operational, not a score" |
 | **plan** | `p` in the fleet tab | each plan the coordinator keeps (agent-fabric ADR-047): its steps on a board by state (to do, queued, doing, delivered, done, and any other state), and a Gantt below |
 | **PRs** | a popup (`fabric.fleet.prs`), or `P` in the fleet tab | in-flight pull requests by owner, each with its repository, title, work and fix commits, checks, review, armed, and the gate's verdict |
-| **agent** | the account tab's agent pane, shown by `prefix+a` (`fabric.fleet.agent`); an overlay over a tab without that pane; or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing, whether its inbox watch runs; resources, with a sparkline of the samples taken while open; open and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
+| **agent** | the account tab's agent pane, shown by `prefix+a` (`fabric.fleet.agent`); an overlay over a tab without that pane; or Enter on a board row | state, role, project, session, what it waits on; attention: whether it needs you and since when, its blocked and queued jobs, its context in use and whether output is landing, whether its inbox watch runs; resources, with a sparkline of the samples taken while open; working, delivered and closed jobs with their times; its PRs; tokens over 7 days; usage windows |
 
 - **Keys.** ↑/↓ (or j/k), PgUp/PgDn, Home/End move. Enter on the board opens
   that agent, and Esc goes back to the board. In the fleet tab, `b`, `c`,
   `p` and `P` switch between board, compare, plan and PRs, and Esc leaves
   PRs for the screen it was opened from. In compare, ←/→ (or h/l, Tab)
-  and 1-6 choose the metric; the chosen one is bracketed in the footer.
+  and 1-7 choose the metric; the chosen one is bracketed in the footer.
   `r` refetches the screen's sections once. `q` closes the pane, as does
   Esc on an overlay or the popup. On the board, `n` and `N` jump to the
   next and the previous agent that needs you, `s` switches between the
@@ -582,7 +582,7 @@ account tabs as before.
   ```sh
   fleet-deck snapshot board              # the fleet tab
   fleet-deck snapshot agent <login>      # Enter on that agent's row
-  fleet-deck snapshot compare [--metric 1-6]
+  fleet-deck snapshot compare [--metric 1-7]
   fleet-deck snapshot plan
   fleet-deck snapshot prs
   ```

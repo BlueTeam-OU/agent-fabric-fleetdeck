@@ -1262,3 +1262,36 @@ fn a_click_on_a_second_row_cell_zooms_that_pane() {
     state.compose(106, 20).expect("an account tab");
     assert_click_on_agent_cell_zooms_it(&mut state);
 }
+
+#[test]
+fn the_second_row_sits_a_blank_row_from_the_tab_row_wherever_it_is() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(account_tab_snapshot()));
+    let layout = state.layout(106, 20);
+    let main = layout.tab_bar;
+    assert_eq!(main.y, 0);
+    assert_eq!(layout.pane_tabs, Rect::new(main.x, 2, main.width, 1));
+    assert_eq!(layout.pane_surface, Rect::new(main.x, 3, main.width, 17));
+
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.tab_bar_position = crate::config::TabBarPositionConfig::Bottom;
+    let mut state = ClientShellState::new(config);
+    state.set_snapshot(Box::new(account_tab_snapshot()));
+    let layout = state.layout(106, 20);
+    assert_eq!(layout.tab_bar.y, 19);
+    assert_eq!(layout.pane_tabs.y, 17);
+    assert_eq!(layout.pane_surface.height, 17);
+
+    // Three rows: the gap goes before the last row of panes does.
+    let state = {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_snapshot(Box::new(account_tab_snapshot()));
+        state
+    };
+    let layout = state.layout(106, 3);
+    assert_eq!(
+        layout.pane_tabs,
+        Rect::new(layout.tab_bar.x, 1, layout.tab_bar.width, 1)
+    );
+    assert_eq!(layout.pane_surface.height, 1);
+}

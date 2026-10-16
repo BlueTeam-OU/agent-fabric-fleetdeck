@@ -153,22 +153,36 @@ pub struct ModeThemeColors {
 /// Parse a color string into a ratatui Color.
 /// Supports: hex (#rrggbb, #rgb), named colors, rgb(r,g,b), and reset aliases.
 pub fn parse_color(s: &str) -> ratatui::style::Color {
+    try_parse_color(s).unwrap_or_else(|| {
+        warn!(color = s, "unknown color, defaulting to cyan");
+        ratatui::style::Color::Cyan
+    })
+}
+
+/// `parse_color` for a setting that has a default of its own to fall back to
+/// and a diagnostic to give: `None` for a string that names no colour.
+pub fn try_parse_color(s: &str) -> Option<ratatui::style::Color> {
     use ratatui::style::Color;
     let s = s.trim().to_lowercase();
 
     match s.as_str() {
-        "reset" | "default" | "none" | "transparent" => return Color::Reset,
+        "reset" | "default" | "none" | "transparent" => return Some(Color::Reset),
         _ => {}
     }
 
-    if let Some(hex) = s.strip_prefix('#') {
+    // Only ASCII hex digits are sliced below: a byte index into any other
+    // character ("#€abc" is six bytes) would panic.
+    if let Some(hex) = s
+        .strip_prefix('#')
+        .filter(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         if hex.len() == 6 {
             if let (Ok(r), Ok(g), Ok(b)) = (
                 u8::from_str_radix(&hex[0..2], 16),
                 u8::from_str_radix(&hex[2..4], 16),
                 u8::from_str_radix(&hex[4..6], 16),
             ) {
-                return Color::Rgb(r, g, b);
+                return Some(Color::Rgb(r, g, b));
             }
         } else if hex.len() == 3 {
             let chars: Vec<u8> = hex
@@ -176,7 +190,7 @@ pub fn parse_color(s: &str) -> ratatui::style::Color {
                 .filter_map(|c| u8::from_str_radix(&c.to_string(), 16).ok())
                 .collect();
             if chars.len() == 3 {
-                return Color::Rgb(chars[0] * 17, chars[1] * 17, chars[2] * 17);
+                return Some(Color::Rgb(chars[0] * 17, chars[1] * 17, chars[2] * 17));
             }
         }
     }
@@ -189,12 +203,12 @@ pub fn parse_color(s: &str) -> ratatui::style::Color {
                 parts[1].trim().parse::<u8>(),
                 parts[2].trim().parse::<u8>(),
             ) {
-                return Color::Rgb(r, g, b);
+                return Some(Color::Rgb(r, g, b));
             }
         }
     }
 
-    match s.as_str() {
+    Some(match s.as_str() {
         "black" => Color::Black,
         "red" => Color::Red,
         "green" => Color::Green,
@@ -211,11 +225,8 @@ pub fn parse_color(s: &str) -> ratatui::style::Color {
         "lightblue" => Color::LightBlue,
         "lightmagenta" => Color::LightMagenta,
         "lightcyan" => Color::LightCyan,
-        _ => {
-            warn!(color = s, "unknown color, defaulting to cyan");
-            Color::Cyan
-        }
-    }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -259,6 +270,21 @@ light_name = "lattee"
         for name in ["catppuccin-mocha", "tokyonight", "gruvbox-dark", "dawn"] {
             assert!(canonical_theme_name(name).is_some(), "alias: {name}");
         }
+    }
+
+    #[test]
+    fn a_hex_colour_with_other_characters_names_no_colour() {
+        for value in ["#€abc", "#ab€", "#12345g", "#"] {
+            assert_eq!(try_parse_color(value), None, "{value:?}");
+        }
+        assert_eq!(
+            try_parse_color("#89B4FA"),
+            Some(ratatui::style::Color::Rgb(0x89, 0xb4, 0xfa))
+        );
+        assert_eq!(
+            try_parse_color("#fff"),
+            Some(ratatui::style::Color::Rgb(255, 255, 255))
+        );
     }
 
     #[test]

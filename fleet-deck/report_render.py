@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from view_render import (BOLD, DIM, FAILED, NONE, NORMAL, NOT_READ, STALE, UNREAD, WARN, Agent, Line, failed,
-                         Status, cells, clean, clip, clock, count, fit, ok_data, open_jobs, pad, parse_utc,
+                         Status, cells, clean, clip, clock, count, delivered_jobs, fit, ok_data, open_jobs, pad, parse_utc,
+                         working_jobs,
                          age, pr_number, size_kb, stale, stale_text, status_line, tokens_total, wrap_cells)
 
-COMPARE_KEYS = "←→ metric  1-6 metric  b board  p plan  P PRs  r refetch  q close"
 PLAN_KEYS = "↑↓ scroll  b board  c compare  P PRs  r refetch  q close"
 PRS_KEYS = "↑↓ scroll  r refetch  q close"
 PRS_IN_TAB_KEYS = "↑↓ scroll  r refetch  Esc back  q close"
@@ -64,10 +64,16 @@ METRICS = (
     Metric("swap", "swap", "proc", lambda d: _num(d.get("swap_kb")), size_kb),
     Metric("tokens", "tokens, 7 days", "tokens", lambda d: _num(tokens_total(d)), count),
     Metric("done", "jobs done", "closed_jobs", jobs_done, lambda v: f"{v:.0f}"),
-    Metric("open", "open jobs", "jobs", lambda d: float(len(open_jobs(d))) if isinstance(d.get("jobs"), dict) else None,
+    Metric("working", "working jobs", "jobs",
+           lambda d: float(len(working_jobs(open_jobs(d)))) if isinstance(d.get("jobs"), dict) else None,
+           lambda v: f"{v:.0f}"),
+    Metric("delivered", "delivered jobs", "jobs",
+           lambda d: float(len(delivered_jobs(open_jobs(d)))) if isinstance(d.get("jobs"), dict) else None,
            lambda v: f"{v:.0f}"),
 )
 
+# The digit keys pick a metric by its place: the hint names as many as there are.
+COMPARE_KEYS = f"←→ metric  1-{len(METRICS)} metric  b board  p plan  P PRs  r refetch  q close"
 COMPARE_SECTIONS = ("proc", "tokens", "closed_jobs", "jobs")
 MISSING = {"done": "fleet.py gave no done_total, and the closed list it gave is not the whole of it"}
 
