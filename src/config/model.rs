@@ -1027,7 +1027,8 @@ pub struct UiConfig {
     /// The picked cell's colours for one pane label, over the two above, so each
     /// pane can have its own.
     pub pane_tab_colors: BTreeMap<String, super::pane_tabs::PaneTabColorsConfig>,
-    /// Tab labels in the order their tabs are kept in each workspace. A client
+    /// Tab names in the order their tabs are kept in each workspace (a name
+    /// given to a tab; an unnamed tab's label is its place). A client
     /// with this set moves the server's tabs into it (`tab.move`), so numbers,
     /// keys and every attached client agree; tabs not listed follow the listed
     /// ones, in their own order. Empty: tabs stay where they are.
@@ -1323,6 +1324,10 @@ impl UiConfig {
         super::pane_tabs::pane_tabs_diagnostics(
             &self.pane_tabs,
             &self.pane_tab_order,
+            &super::pane_tabs::PaneTabColorsConfig {
+                selected_bg: self.pane_tab_selected_bg.clone(),
+                selected_fg: self.pane_tab_selected_fg.clone(),
+            },
             &self.pane_tab_colors,
         )
     }

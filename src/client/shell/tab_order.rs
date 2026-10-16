@@ -20,10 +20,13 @@ pub(super) fn next_tab_order_move(
     if order.is_empty() {
         return None;
     }
+    // A tab named by hand is listed by its name. A tab with no name of its
+    // own is labelled with its place ("2"), which a move changes, so it
+    // counts as unlisted whatever the list says.
     let rank = |tab: &ClientShellTab| {
         order
             .iter()
-            .position(|label| *label == tab.label)
+            .position(|label| tab.custom_label && *label == tab.label)
             .unwrap_or(order.len())
     };
     for workspace in &snapshot.workspaces {
@@ -32,7 +35,8 @@ pub(super) fn next_tab_order_move(
             .iter()
             .filter(|tab| tab.workspace_id == workspace.workspace_id)
             .collect();
-        tabs.sort_by_key(|tab| tab.number);
+        // The snapshot lists a workspace's tabs where they stand. A tab's
+        // number is not its place: it stays with the tab when the tab moves.
         let mut wanted = tabs.clone();
         // A stable sort: equal ranks, unlisted tabs included, keep their order.
         wanted.sort_by_key(|tab| rank(tab));
@@ -63,6 +67,8 @@ impl ClientShellState {
         };
         let arrangement: Vec<String> = snapshot.tabs.iter().map(|tab| tab.tab_id.clone()).collect();
         let method = Method::TabMove(params);
+        // An endpoint with no method list is this build's own server, which
+        // serves tab.move; one that lists methods without it is asked nothing.
         if self.tab_order_asked.as_ref() == Some(&arrangement)
             || !self.endpoint_is_online(&self.active_endpoint_id)
             || !self.supports_endpoint_method(&method)
@@ -103,6 +109,7 @@ mod tests {
                         workspace_id: (*workspace).into(),
                         number: index + 1,
                         label: (*label).into(),
+                        custom_label: true,
                         ..template_tab.clone()
                     })
             })
@@ -114,29 +121,31 @@ mod tests {
         labels.iter().map(|label| label.to_string()).collect()
     }
 
-    /// Applies moves as the server does (`Workspace::move_tab`) until none is
-    /// asked, and returns each workspace's labels.
+    /// Applies moves as the server does (`Workspace::move_tab`: the tab
+    /// changes place, its number stays) until none is asked, and returns the
+    /// labels where they stand.
     fn settle(mut snapshot: ClientShellSnapshot, order: &[String]) -> (Vec<String>, usize) {
         let mut moves = 0;
         while let Some(params) = next_tab_order_move(&snapshot, order) {
             moves += 1;
             assert!(moves < 20, "the moves converge");
-            let tab = snapshot
+            let workspace = snapshot
                 .tabs
                 .iter()
                 .find(|tab| tab.tab_id == params.tab_id)
                 .expect("a move names a tab")
+                .workspace_id
                 .clone();
-            let mut tabs: Vec<_> = snapshot
-                .tabs
-                .iter()
-                .filter(|other| other.workspace_id == tab.workspace_id)
-                .cloned()
+            let slots: Vec<usize> = (0..snapshot.tabs.len())
+                .filter(|&index| snapshot.tabs[index].workspace_id == workspace)
                 .collect();
-            tabs.sort_by_key(|tab| tab.number);
+            let mut tabs: Vec<_> = slots
+                .iter()
+                .map(|&index| snapshot.tabs[index].clone())
+                .collect();
             let source = tabs
                 .iter()
-                .position(|other| other.tab_id == tab.tab_id)
+                .position(|tab| tab.tab_id == params.tab_id)
                 .unwrap();
             let target = if source < params.insert_index {
                 params.insert_index - 1
@@ -145,18 +154,33 @@ mod tests {
             };
             let moved = tabs.remove(source);
             tabs.insert(target, moved);
-            for (index, moved) in tabs.iter().enumerate() {
-                let tab = snapshot
-                    .tabs
-                    .iter_mut()
-                    .find(|tab| tab.tab_id == moved.tab_id)
-                    .unwrap();
-                tab.number = index + 1;
+            for (slot, tab) in slots.into_iter().zip(tabs) {
+                snapshot.tabs[slot] = tab;
             }
         }
-        let mut tabs = snapshot.tabs.clone();
-        tabs.sort_by_key(|tab| (tab.workspace_id.clone(), tab.number));
-        (tabs.into_iter().map(|tab| tab.label).collect(), moves)
+        (
+            snapshot.tabs.into_iter().map(|tab| tab.label).collect(),
+            moves,
+        )
+    }
+
+    #[test]
+    fn numbers_that_stay_with_their_tabs_do_not_stop_the_order() {
+        // Each move keeps every tab's number, so after the first one the
+        // numbers no longer say where the tabs stand.
+        let snapshot = snapshot(&[("w1", &["c", "b", "a"])]);
+        let (labels, moves) = settle(snapshot, &order(&["a", "b", "c"]));
+        assert_eq!(labels, ["a", "b", "c"]);
+        assert_eq!(moves, 2);
+    }
+
+    #[test]
+    fn a_tab_without_a_name_of_its_own_is_never_listed() {
+        let mut snapshot = snapshot(&[("w1", &["notes", "2", "fleet"])]);
+        // "2" is that tab's place, not a name: after a move it would be "3".
+        snapshot.tabs[1].custom_label = false;
+        let (labels, _) = settle(snapshot, &order(&["2", "fleet"]));
+        assert_eq!(labels, ["fleet", "notes", "2"]);
     }
 
     #[test]

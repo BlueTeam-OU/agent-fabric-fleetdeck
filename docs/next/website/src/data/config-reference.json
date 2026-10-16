@@ -1054,7 +1054,7 @@
           "key": "ui.pane_tab_selected_bg",
           "type": "color",
           "default": "\"\"",
-          "description": "Background of the shown pane's cell in the second tab row. Empty uses the theme's yellow."
+          "description": "Background of the shown pane's cell in the second tab row. Empty uses the theme's yellow; a value that names no colour is a config diagnostic and uses it too."
         },
         {
           "key": "ui.pane_tab_selected_fg",
@@ -1072,7 +1072,7 @@
           "key": "ui.tab_order",
           "type": "list of strings",
           "default": "[]",
-          "description": "Tab labels in the order each workspace keeps its tabs. A client with this set moves the server's tabs into it, so tab numbers, the go-to-tab keys and every attached client agree; tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. Empty leaves tabs where they are."
+          "description": "Tab names in the order each workspace keeps its tabs; a tab is listed by a name given to it, not by the number an unnamed tab shows. A client with this set moves the server's tabs into it, so tab numbers, the go-to-tab keys and every attached client agree; tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. Empty leaves tabs where they are."
         },
         {
           "key": "ui.tab_bar_right",

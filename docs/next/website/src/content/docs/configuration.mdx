@@ -333,9 +333,9 @@ selected_bg = "#89b4fa"           # text that reads on it, unless selected_fg is
 "rust-ui-dev-02" = ["agent", "harness", "shell", "status"]
 ```
 
-A tab's order must list the labels of `ui.pane_tabs`, each once; otherwise that tab keeps the `ui.pane_tabs` order and FleetDeck names the entry as a config problem.
+A tab's order must list the labels of `ui.pane_tabs`, each once; otherwise that tab keeps the `ui.pane_tabs` order and FleetDeck names the entry as a config problem. A colour that names no colour is named the same way, and the default is used.
 
-Set `tab_order` under `[ui]` to keep each workspace's tabs in an order by label, for example `tab_order = ["fleet", "rust-ui-dev-02"]`. The order is kept on the server: the client moves tabs into it, so tab numbers, the go-to-tab keys and every attached client agree. Tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. The selected tab's colour is `ui.accent`.
+Set `tab_order` under `[ui]` to keep each workspace's tabs in an order by name, for example `tab_order = ["fleet", "rust-ui-dev-02"]`. Only a name given to a tab counts: an unnamed tab shows its place, which a move changes. The order is kept on the server: the client moves tabs into it, so tab numbers, the go-to-tab keys and every attached client agree. Tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. The selected tab's colour is `ui.accent`.
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 

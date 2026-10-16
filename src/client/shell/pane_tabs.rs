@@ -12,7 +12,7 @@ use super::render::{display_width, put_text};
 use std::collections::BTreeMap;
 
 use crate::api::schema::{Method, PaneZoomMode, PaneZoomParams};
-use crate::config::{parse_color, IndexedKeybind, UiConfig};
+use crate::config::{try_parse_color, IndexedKeybind, UiConfig};
 use ratatui::style::Color;
 
 /// The second tab row's settings as the client uses them: entries the
@@ -33,7 +33,9 @@ struct CellColors {
 
 impl CellColors {
     fn parse(bg: &str, fg: &str) -> Self {
-        let color = |value: &str| (!value.trim().is_empty()).then(|| parse_color(value));
+        // A value that names no colour is a config diagnostic and falls back
+        // to the default, as an empty one does.
+        let color = try_parse_color;
         Self {
             bg: color(bg),
             fg: color(fg),
@@ -170,7 +172,7 @@ fn text_on(bg: Color) -> Color {
         | Color::Blue
         | Color::Magenta
         | Color::DarkGray
-        | Color::Indexed(0..=6 | 8 | 16..=17) => Color::White,
+        | Color::Indexed(0 | 1 | 4 | 5 | 8 | 16..=19) => Color::White,
         Color::Reset => Color::Reset,
         _ => Color::Black,
     }
@@ -599,10 +601,32 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_names_no_colour_falls_back_to_the_default() {
+        let config = crate::config::Config::default();
+        let palette = crate::app::client_palette_from_config(&config);
+        let ui = ui(r##"
+            pane_tab_selected_bg = "yelow"
+            [ui.pane_tab_colors.agent]
+            selected_bg = "#89b4f"
+            "##);
+        assert_eq!(ui.pane_tabs_diagnostics().len(), 2);
+        let pane_tabs = PaneTabs::from_ui(&ui);
+        for label in ["harness", "agent"] {
+            assert_eq!(
+                pane_tabs.selected_colors(label, &palette),
+                (palette.yellow, text_on(palette.yellow)),
+                "{label}: the theme's yellow, not cyan"
+            );
+        }
+    }
+
+    #[test]
     fn text_reads_on_its_background() {
         assert_eq!(text_on(Color::Yellow), Color::Black);
         assert_eq!(text_on(Color::Blue), Color::White);
         assert_eq!(text_on(Color::Rgb(249, 226, 175)), Color::Rgb(0, 0, 0));
         assert_eq!(text_on(Color::Rgb(30, 30, 46)), Color::Rgb(255, 255, 255));
+        assert_eq!(text_on(Color::Indexed(3)), Color::Black, "indexed yellow");
+        assert_eq!(text_on(Color::Indexed(4)), Color::White, "indexed blue");
     }
 }

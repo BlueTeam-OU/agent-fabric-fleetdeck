@@ -16,9 +16,29 @@ pub struct PaneTabColorsConfig {
 pub(crate) fn pane_tabs_diagnostics(
     labels: &[String],
     orders: &BTreeMap<String, Vec<String>>,
+    selected: &PaneTabColorsConfig,
     colors: &BTreeMap<String, PaneTabColorsConfig>,
 ) -> Vec<String> {
     let mut diagnostics = Vec::new();
+    let mut color = |key: String, value: &str| {
+        if !value.trim().is_empty() && super::try_parse_color(value).is_none() {
+            diagnostics.push(format!(
+                "{key} = {value:?} is not a colour; the default is used"
+            ));
+        }
+    };
+    color("ui.pane_tab_selected_bg".into(), &selected.selected_bg);
+    color("ui.pane_tab_selected_fg".into(), &selected.selected_fg);
+    for (label, colors) in colors {
+        color(
+            format!("ui.pane_tab_colors.{label:?}.selected_bg"),
+            &colors.selected_bg,
+        );
+        color(
+            format!("ui.pane_tab_colors.{label:?}.selected_fg"),
+            &colors.selected_fg,
+        );
+    }
     for (tab, order) in orders {
         if !is_pane_tab_order(labels, order) {
             diagnostics.push(format!(
@@ -82,9 +102,26 @@ mod tests {
             ("shell".to_string(), PaneTabColorsConfig::default()),
             ("shel".to_string(), PaneTabColorsConfig::default()),
         ]);
-        let diagnostics = pane_tabs_diagnostics(&labels, &orders, &colors);
-        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
-        assert!(diagnostics[0].contains("ui.pane_tab_order.\"bad\""));
-        assert!(diagnostics[1].contains("ui.pane_tab_colors.\"shel\""));
+        let selected = PaneTabColorsConfig {
+            selected_bg: "yelow".into(),
+            selected_fg: "black".into(),
+        };
+        let colors = colors
+            .into_iter()
+            .chain([(
+                "harness".to_string(),
+                PaneTabColorsConfig {
+                    selected_bg: "#89b4f".into(),
+                    selected_fg: String::new(),
+                },
+            )])
+            .collect();
+        let labels = strings(&["harness", "shell"]);
+        let diagnostics = pane_tabs_diagnostics(&labels, &orders, &selected, &colors);
+        assert_eq!(diagnostics.len(), 4, "{diagnostics:?}");
+        assert!(diagnostics[0].contains("ui.pane_tab_selected_bg = \"yelow\""));
+        assert!(diagnostics[1].contains("ui.pane_tab_colors.\"harness\".selected_bg"));
+        assert!(diagnostics[2].contains("ui.pane_tab_order.\"bad\""));
+        assert!(diagnostics[3].contains("ui.pane_tab_colors.\"shel\""));
     }
 }
