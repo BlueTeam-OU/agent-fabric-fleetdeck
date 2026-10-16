@@ -1016,9 +1016,13 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
     out.append([("", NORMAL)])
     # Shown with its count, or "none", like the working list: a missing
     # heading would read the same as one not read.
+    # The count goes right after a short title, so a narrow pane cuts the
+    # explanation, never the count.
     delivered = delivered_jobs(jobs)
-    title = "Delivered, waiting on a merge"
+    title = "Delivered jobs"
     out.append(heading(f"{title} ({len(delivered)})" if ok_data(rec) is not None else title, rec, now))
+    if delivered:
+        out.append([(fit("  handed over, waiting on someone else's merge", width), DIM)])
     out += [job_line(j, now, width) for j in delivered]
     if ok_data(rec) is not None and not delivered:
         out.append([("  none", DIM)])

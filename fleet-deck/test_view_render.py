@@ -282,11 +282,17 @@ class WorkingAndDelivered(unittest.TestCase):
 
     def test_no_delivered_jobs_still_says_so_and_a_failed_read_says_why(self):
         body = texts(vr.agent_body(fleet()[0], vr.Samples(), NOW, 100))
-        i = body.index(next(t for t in body if t.startswith("Delivered, waiting on a merge (0)")))
+        i = body.index(next(t for t in body if t.startswith("Delivered jobs (0)")))
         self.assertEqual(body[i + 1], "  none")
         body = texts(vr.agent_body(fleet()[1], vr.Samples(), NOW, 100))
-        self.assertTrue(any(t.startswith("Delivered, waiting on a merge") and "(" not in t.split("merge")[1][:3]
+        self.assertTrue(any(t.startswith("Delivered jobs") and not t.startswith("Delivered jobs (")
                             for t in body), "no count where the jobs were not read")
+
+    def test_a_narrow_agent_view_keeps_both_counts(self):
+        body = texts(vr.agent_body(self.agent(), vr.Samples(), NOW, 30))
+        self.assertTrue(all(vr.cells(t) <= 30 for t in body))
+        self.assertTrue(any(t.startswith("Working jobs (4)") for t in body))
+        self.assertTrue(any(t.startswith("Delivered jobs (2)") for t in body))
 
     def test_the_board_shows_working_and_delivered_apart(self):
         cells = vr.board_cells(self.agent(), NOW)
@@ -310,9 +316,9 @@ class WorkingAndDelivered(unittest.TestCase):
     def test_the_agent_view_lists_them_under_their_own_headings(self):
         body = texts(vr.agent_body(self.agent(), vr.Samples(), NOW, 100))
         self.assertTrue(any(t.startswith("Working jobs (4)") for t in body))
-        self.assertTrue(any(t.startswith("Delivered, waiting on a merge (2)") for t in body))
+        self.assertTrue(any(t.startswith("Delivered jobs (2)") for t in body))
         work = body.index(next(t for t in body if t.startswith("Working jobs")))
-        delivered = body.index(next(t for t in body if t.startswith("Delivered")))
+        delivered = body.index(next(t for t in body if t.startswith("Delivered jobs")))
         self.assertTrue(all("delivered" not in t for t in body[work + 1:delivered]))
         self.assertFalse(any(t.startswith("  j6 ") or t.startswith("  j7 ") for t in body),
                          "done and dropped are not listed as open")
