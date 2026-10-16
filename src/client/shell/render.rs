@@ -332,6 +332,7 @@ pub(super) fn render_shell(
                 layout.pane_tabs,
                 &row,
                 &keys,
+                &config.pane_tabs,
                 &config.palette,
                 &mut hits,
             );

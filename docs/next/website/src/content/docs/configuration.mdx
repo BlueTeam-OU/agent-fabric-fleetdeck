@@ -317,7 +317,25 @@ The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](
 
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
 
-A tab whose panes carry exactly the labels in `ui.pane_tabs` (by default `harness`, `shell`, `status` and `agent`, each once) shows one pane at a time, full size, and a yellow second row under the tab row. The row names each pane with the key that picks it (`keys.select_pane_tab`, F1-F4 after the prefix by default) and marks the one shown; a click picks one too. The other panes keep running unseen. The row follows the server's zoom: the shown pane is the zoomed tab's focused pane, so whoever zooms a pane moves the mark. A window at or under `ui.mobile_width_threshold` keeps the row under its header. Where the row is too narrow for every key and name, its cells show the names only, then the keys only: each cell stays whole and clickable, and the mark stays, down to the key-only width (19 columns with the default keys). Narrower still, the cells past the edge are cut off. Set `pane_tabs = []` to hide the row; that changes nothing else: the fleet deck still shows an account tab's harness alone (zoomed), and the zoom key (`prefix+z`) shows a tab's panes side by side.
+A tab whose panes carry exactly the labels in `ui.pane_tabs` (by default `harness`, `shell`, `status` and `agent`, each once) shows one pane at a time, full size, and a second row under the tab row, a blank row apart. The row names each pane with the key that picks it (`keys.select_pane_tab`, F1-F4 after the prefix by default) and marks the one shown; a click picks one too. The other panes keep running unseen. The row follows the server's zoom: the shown pane is the zoomed tab's focused pane, so whoever zooms a pane moves the mark. A window at or under `ui.mobile_width_threshold` keeps the row under its header. Where the row is too narrow for every key and name, its cells show the names only, then the keys only: each cell stays whole and clickable, and the mark stays, down to the key-only width (19 columns with the default keys). Narrower still, the cells past the edge are cut off. Set `pane_tabs = []` to hide the row; that changes nothing else: the fleet deck still shows an account tab's harness alone (zoomed), and the zoom key (`prefix+z`) shows a tab's panes side by side.
+
+The second row keeps the tab bar's background; only the shown pane's cell is coloured (the theme's yellow with dark text by default), bold and in brackets, so it is marked without colour too. Each pane label can have its own colours, and each tab its own order of cells; the F1-F9 keys follow the order shown:
+
+```toml
+[ui]
+pane_tab_selected_bg = "yellow"   # empty: the theme's yellow
+pane_tab_selected_fg = ""         # empty: black or white, whichever reads on it
+
+[ui.pane_tab_colors.agent]
+selected_bg = "#89b4fa"           # text that reads on it, unless selected_fg is set
+
+[ui.pane_tab_order]
+"rust-ui-dev-02" = ["agent", "harness", "shell", "status"]
+```
+
+A tab's order must list the labels of `ui.pane_tabs`, each once; otherwise that tab keeps the `ui.pane_tabs` order and FleetDeck names the entry as a config problem.
+
+Set `tab_order` under `[ui]` to keep each workspace's tabs in an order by label, for example `tab_order = ["fleet", "rust-ui-dev-02"]`. The order is kept on the server: the client moves tabs into it, so tab numbers, the go-to-tab keys and every attached client agree. Tabs not listed follow the listed ones in their own order, and a drag that breaks the order is undone. The selected tab's colour is `ui.accent`.
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.
 

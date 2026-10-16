@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
 
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -1012,6 +1015,23 @@ pub struct UiConfig {
     /// server's (the fleet deck sets it). Default: FleetDeck's account tab, "harness", "shell",
     /// "status" and "agent".
     pub pane_tabs: Vec<String>,
+    /// A tab's own order for the second tab row, by the tab's label: the labels of
+    /// `pane_tabs`, rearranged. F1-F9 pick the cells in the order shown. A tab not
+    /// listed, or listed with other labels, uses the `pane_tabs` order.
+    pub pane_tab_order: BTreeMap<String, Vec<String>>,
+    /// Background of the picked cell in the second tab row. Empty: the theme's yellow.
+    pub pane_tab_selected_bg: String,
+    /// Text colour of the picked cell. Empty: black or white, whichever reads on
+    /// the background.
+    pub pane_tab_selected_fg: String,
+    /// The picked cell's colours for one pane label, over the two above, so each
+    /// pane can have its own.
+    pub pane_tab_colors: BTreeMap<String, super::pane_tabs::PaneTabColorsConfig>,
+    /// Tab labels in the order their tabs are kept in each workspace. A client
+    /// with this set moves the server's tabs into it (`tab.move`), so numbers,
+    /// keys and every attached client agree; tabs not listed follow the listed
+    /// ones, in their own order. Empty: tabs stay where they are.
+    pub tab_order: Vec<String>,
     /// Format for the outer terminal window title. Empty leaves the title alone.
     /// Default: "{hostname}: {workspace}".
     pub window_title: String,
@@ -1281,6 +1301,11 @@ impl Default for UiConfig {
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             pane_tabs: default_pane_tabs(),
+            pane_tab_order: BTreeMap::new(),
+            pane_tab_selected_bg: String::new(),
+            pane_tab_selected_fg: String::new(),
+            pane_tab_colors: BTreeMap::new(),
+            tab_order: Vec::new(),
             window_title: super::window_title::default_window_title(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,
@@ -1294,6 +1319,14 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    pub(crate) fn pane_tabs_diagnostics(&self) -> Vec<String> {
+        super::pane_tabs::pane_tabs_diagnostics(
+            &self.pane_tabs,
+            &self.pane_tab_order,
+            &self.pane_tab_colors,
+        )
+    }
+
     pub fn mouse_scroll_lines(&self) -> usize {
         self.mouse_scroll_lines
             .map(NonZeroUsize::get)
