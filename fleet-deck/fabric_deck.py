@@ -1438,10 +1438,12 @@ class Deck:
         prompt: herdr restores a pane as a shell, never its program."""
         login, pane, _ = key
         if self.agent_pane.get(login) != pane:
-            # No longer this account's agent pane (relabelled, closed, the
-            # account forgotten): whatever role it has now, it is not the
-            # deck's to type the screen into, a harness least of all.
+            # No longer this account's agent pane at the last map read
+            # (relabelled to another role, closed, the account forgotten): not
+            # the deck's to type the screen into. A relabel to harness is
+            # dropped before here, by _forget or the unlisted sweep.
             del self.waiting[key]
+            self.log(f"{login}: {pane} is no longer its agent pane; its screen is not started there")
             return
         info = self.herdr.process_info(pane)
         if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
@@ -1451,6 +1453,15 @@ class Deck:
             with view_lock(self.lock_dir):
                 # Looked at again under the lock: a toggle may have started it.
                 if not at_bare_shell(self.herdr.process_info(pane)):
+                    return
+                # And its label read again: a person may have given the pane
+                # another role since the last map read.
+                label = next((p.get("label") for p in self.herdr.call("pane", "list").get("panes", [])
+                              if p.get("pane_id") == pane), None)
+                if label != AGENT:
+                    self._drop_agent_pane(login)
+                    del self.waiting[key]
+                    self.log(f"{login}: {pane} is no longer its agent pane; its screen is not started there")
                     return
                 # Always started unfocused, even in a pane the list reads
                 # focused (a session restore, a restart of an ended screen):

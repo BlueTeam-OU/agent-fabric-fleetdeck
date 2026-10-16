@@ -529,6 +529,11 @@ class FleetTab(unittest.TestCase):
         self.assertNotIn(("w1", "fleet"), self.tabs(h))
 
 
+def fabric_deck_mode_view():
+    import fabric_deck
+    return fabric_deck.VIEW  # the waiting mode, not the typed command VIEW
+
+
 def four_panes(login, prefix):
     return [(f"{prefix}0", "harness", in_moveto(login, WAIT)), (f"{prefix}1", "shell", in_moveto(login)),
             (f"{prefix}2", "status", in_moveto(login, WATCH)), (f"{prefix}3", "agent", in_view(login))]
@@ -1029,6 +1034,24 @@ class Restore(unittest.TestCase):
             for at in range(1, 5):
                 h.deck.follow(at * PANE_MAP_REFRESH_S + at)
             self.assertEqual(herdr.runs("p3"), [], f"{role}: the agent screen is never typed there")
+            if role == "harness":
+                # Two harness labels: the account is forgotten (or the pane
+                # unlisted) before the agent-pane guard is reached.
+                self.assertNotIn(("ui", "p3", fabric_deck_mode_view()), h.deck.waiting)
+
+    def test_a_pane_relabelled_since_the_last_map_read_is_not_typed_into(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(1)
+        herdr.panes["p3"]["label"] = "status"  # no map read since
+        herdr.proc["p3"] = BARE
+        h.deck.follow(2)
+        self.assertEqual(herdr.runs("p3"), [], "the label is read again before typing")
+        self.assertNotIn("ui", h.deck.agent_pane)
+        self.assertEqual(sum("no longer its agent pane" in line for line in h.logs), 1)
 
     def test_an_ended_screen_restarted_after_the_last_client_left_is_told_nothing(self):
         herdr = FakeHerdr()
