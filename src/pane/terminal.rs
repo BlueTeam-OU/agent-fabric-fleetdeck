@@ -4201,6 +4201,26 @@ mod tests {
     }
 
     #[test]
+    fn process_pty_bytes_reports_each_focus_reporting_set() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 100).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        let set = |bytes: &[u8]| {
+            pane.process_pty_bytes(pane_id, 0, bytes, &tx)
+                .focus_reporting_set
+        };
+
+        assert!(!set(b"plain output"));
+        assert!(set(b"\x1b[?1004h"));
+        assert!(set(b"\x1b[?1004h"), "a set while on is still a set");
+        assert!(!set(b"more output"));
+        assert!(set(b"\x1b[?2004;1004h"));
+        assert!(!set(b"\x1b[?1004l"));
+        assert!(!set(b"\x1b[?1004l\x1b[?1004h\x1b[?1004l"), "off by the end");
+    }
+
+    #[test]
     fn process_pty_bytes_reports_only_completed_title_changes() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 100).unwrap();

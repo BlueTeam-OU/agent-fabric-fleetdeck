@@ -2218,6 +2218,98 @@ async fn zoom_in_tab_tells_a_client_showing_that_tab_its_focus_moved() {
 }
 
 #[tokio::test]
+async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
+    let mut server = test_headless_server();
+    let mut workspace = crate::workspace::Workspace::test_new("focus-reporting-set");
+    let shown_pane = workspace.tabs[0].root_pane;
+    let second_tab = workspace.test_add_tab(Some("second"));
+    let unfocused_pane = workspace.tabs[second_tab].root_pane;
+    let hidden_tab = workspace.test_add_tab(Some("hidden"));
+    let hidden_pane = workspace.tabs[hidden_tab].root_pane;
+    workspace.switch_tab(0);
+    let reporting = || {
+        crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            0,
+            b"\x1b[?1004h",
+            4,
+        )
+    };
+    let (shown_runtime, mut shown_input) = reporting();
+    let (unfocused_runtime, mut unfocused_input) = reporting();
+    let (hidden_runtime, mut hidden_input) = reporting();
+    workspace.insert_test_runtime(shown_pane, shown_runtime);
+    workspace.insert_test_runtime(unfocused_pane, unfocused_runtime);
+    workspace.insert_test_runtime(hidden_pane, hidden_runtime);
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let second_tab_id = server.app.public_tab_id(0, second_tab).unwrap();
+    let hidden_tab_id = server.app.public_tab_id(0, hidden_tab).unwrap();
+
+    // Client 61's terminal has focus and shows the first tab. Clients 62 and
+    // 64 show the second from terminals that lost focus or never said. Client
+    // 63's terminal has focus, but the third tab is on a surface it put away.
+    let mut controls = Vec::new();
+    for client_id in [61, 62, 63, 64] {
+        let (control, _) = connect_matching_test_shell(&mut server, client_id);
+        let _ = control.recv().expect("snapshot");
+        controls.push(control);
+    }
+    assert!(server.focus_shell_client_on_tab(62, &second_tab_id));
+    assert!(server.focus_shell_client_on_tab(64, &second_tab_id));
+    assert!(server.focus_shell_client_on_tab(63, &hidden_tab_id));
+    server.clients.get_mut(&61).unwrap().outer_terminal_focus = Some(true);
+    server.clients.get_mut(&62).unwrap().outer_terminal_focus = Some(false);
+    server.clients.get_mut(&63).unwrap().outer_terminal_focus = Some(true);
+    server.clients.get_mut(&63).unwrap().shell_surface_active = false;
+    server.clients.get_mut(&64).unwrap().outer_terminal_focus = None;
+    server.app.sync_focus_events();
+    for input in [&mut shown_input, &mut unfocused_input, &mut hidden_input] {
+        while input.try_recv().is_ok() {}
+    }
+
+    // Each set is answered, even when the pane's focus did not change.
+    for pane_id in [shown_pane, unfocused_pane, hidden_pane] {
+        server
+            .handle_internal_event_with_forwarding(AppEvent::TerminalFocusReportingSet { pane_id });
+    }
+    assert_eq!(
+        shown_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[I"))
+    );
+    assert_eq!(
+        unfocused_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O")),
+        "shown only where focus is lost or unknown is not focused"
+    );
+    assert_eq!(
+        hidden_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O")),
+        "a surface put away shows nothing"
+    );
+    for input in [&mut shown_input, &mut unfocused_input, &mut hidden_input] {
+        assert!(input.try_recv().is_err(), "answered once");
+    }
+
+    // The server's own default target still names the first tab's pane once
+    // its only viewer has gone; no one's focus is on it.
+    assert!(server.handle_server_event(ServerEvent::ClientDisconnected { client_id: 61 }));
+    server.app.sync_focus_events();
+    while shown_input.try_recv().is_ok() {}
+    server.handle_internal_event_with_forwarding(AppEvent::TerminalFocusReportingSet {
+        pane_id: shown_pane,
+    });
+    assert_eq!(
+        shown_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O"))
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
 async fn client_local_navigation_emits_pane_focused_only_when_that_client_moves() {
     use api::schema::{EventData, Method, PaneTarget, TabTarget};
 
