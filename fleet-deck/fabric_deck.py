@@ -1378,6 +1378,9 @@ class Deck:
         self._drop_agent_pane(login)
 
     def _drop_agent_pane(self, login: str) -> None:
+        """The agent pane is the deck's no more. A start of its screen still
+        queued (a restart that failed, a busy restore) is refused when it
+        comes up (_start_view), whatever role the pane has by then."""
         agent = self.agent_pane.pop(login, None)
         if agent is not None:
             self.view_seen.discard(agent)
@@ -1434,6 +1437,12 @@ class Deck:
         """The agent's screen in its pane, typed only at the operator's bare
         prompt: herdr restores a pane as a shell, never its program."""
         login, pane, _ = key
+        if self.agent_pane.get(login) != pane:
+            # No longer this account's agent pane (relabelled, closed, the
+            # account forgotten): whatever role it has now, it is not the
+            # deck's to type the screen into, a harness least of all.
+            del self.waiting[key]
+            return
         info = self.herdr.process_info(pane)
         if any(is_agent_view(p.get("argv") or [], login) for p in info.get("foreground_processes") or []):
             self.view_seen.add(pane)

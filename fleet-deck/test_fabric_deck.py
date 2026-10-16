@@ -997,6 +997,39 @@ class Restore(unittest.TestCase):
         self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [],
                          "the list's focus is the server's default target, perhaps no one's")
 
+    def test_a_queued_restart_is_cancelled_when_the_pane_takes_another_role(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        import fabric_deck
+        queued = ("ui", "p3", fabric_deck.VIEW)  # the mode, not the typed command VIEW
+        herdr.proc["p3"] = BUSY  # it ended, and its shell is not at its prompt yet
+        h.deck.waiting[queued] = PANE_MAP_REFRESH_S + 1
+        herdr.panes["p3"]["label"] = "status"  # the person gave the pane another role
+        herdr.proc["p3"] = BARE
+        for at in range(2, 6):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [], "nothing typed into a pane the deck no longer owns")
+        self.assertNotIn(queued, h.deck.waiting)
+
+    def test_a_busy_restore_start_is_cancelled_when_the_pane_takes_another_role(self):
+        for role in ("status", "harness"):
+            herdr = FakeHerdr()
+            herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BUSY)])
+            h = Harness(herdr)
+            h.records["ui"] = record("ui")
+            h.deck.restore(0)
+            h.deck.follow(1)
+            self.assertEqual(herdr.runs("p3"), [], f"{role}: busy, not typed yet")
+            herdr.panes["p3"]["label"] = role
+            herdr.proc["p3"] = BARE
+            for at in range(1, 5):
+                h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+            self.assertEqual(herdr.runs("p3"), [], f"{role}: the agent screen is never typed there")
+
     def test_an_ended_screen_restarted_after_the_last_client_left_is_told_nothing(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", four_panes("ui", "p"))
