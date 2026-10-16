@@ -30,7 +30,7 @@ pub(super) fn next_tab_order_move(
             .unwrap_or(order.len())
     };
     for workspace in &snapshot.workspaces {
-        let mut tabs: Vec<&ClientShellTab> = snapshot
+        let tabs: Vec<&ClientShellTab> = snapshot
             .tabs
             .iter()
             .filter(|tab| tab.workspace_id == workspace.workspace_id)
@@ -58,8 +58,14 @@ impl ClientShellState {
     /// The `tab.move` this snapshot needs, if any, as input to send. A move is
     /// asked once per tab arrangement: a server that refuses it, or that
     /// another client keeps rearranging, is not asked again until the tabs
-    /// change.
-    pub(crate) fn tab_order_outcome(&mut self) -> Option<ClientShellInput> {
+    /// change. Nobody asked for this move, so it is built only when it can be
+    /// sent (`can_send`, the endpoint's surface taking requests): one built
+    /// earlier would be cancelled, with an "interrupted" notice, and its
+    /// arrangement remembered as asked.
+    pub(crate) fn tab_order_outcome(&mut self, can_send: bool) -> Option<ClientShellInput> {
+        if !can_send {
+            return None;
+        }
         let snapshot = self.snapshot.as_deref()?;
         let Some(params) = next_tab_order_move(snapshot, &self.config.tab_order) else {
             self.tab_order_asked = None;
@@ -67,8 +73,9 @@ impl ClientShellState {
         };
         let arrangement: Vec<String> = snapshot.tabs.iter().map(|tab| tab.tab_id.clone()).collect();
         let method = Method::TabMove(params);
-        // An endpoint with no method list is this build's own server, which
-        // serves tab.move; one that lists methods without it is asked nothing.
+        // An endpoint that lists its methods is asked only if tab.move is
+        // listed. One with no list is this build's local server, or a server
+        // from before method lists existed, and tab.move is older than they are.
         if self.tab_order_asked.as_ref() == Some(&arrangement)
             || !self.endpoint_is_online(&self.active_endpoint_id)
             || !self.supports_endpoint_method(&method)
@@ -213,7 +220,13 @@ mod tests {
         config.tab_order = order(&["a", "b"]);
         let mut state = ClientShellState::new(config);
         state.set_snapshot(Box::new(snapshot(&[("w1", &["b", "a"])])));
-        let first = state.tab_order_outcome().expect("out of order: one move");
+        assert!(
+            state.tab_order_outcome(false).is_none(),
+            "nothing is built while requests cannot be sent"
+        );
+        let first = state
+            .tab_order_outcome(true)
+            .expect("out of order: one move, once requests can be sent");
         assert!(matches!(
             first.actions.as_slice(),
             [ClientShellAction::Endpoint { request, .. }]
@@ -223,12 +236,12 @@ mod tests {
                 })
         ));
         assert!(
-            state.tab_order_outcome().is_none(),
+            state.tab_order_outcome(true).is_none(),
             "the same arrangement again (the move refused, or not yet applied) asks nothing"
         );
         state.set_snapshot(Box::new(snapshot(&[("w1", &["b", "c", "a"])])));
         assert!(
-            state.tab_order_outcome().is_some(),
+            state.tab_order_outcome(true).is_some(),
             "a new arrangement is looked at afresh"
         );
     }

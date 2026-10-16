@@ -170,7 +170,12 @@ pub fn try_parse_color(s: &str) -> Option<ratatui::style::Color> {
         _ => {}
     }
 
-    if let Some(hex) = s.strip_prefix('#') {
+    // Only ASCII hex digits are sliced below: a byte index into any other
+    // character ("#€abc" is six bytes) would panic.
+    if let Some(hex) = s
+        .strip_prefix('#')
+        .filter(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         if hex.len() == 6 {
             if let (Ok(r), Ok(g), Ok(b)) = (
                 u8::from_str_radix(&hex[0..2], 16),
@@ -265,6 +270,21 @@ light_name = "lattee"
         for name in ["catppuccin-mocha", "tokyonight", "gruvbox-dark", "dawn"] {
             assert!(canonical_theme_name(name).is_some(), "alias: {name}");
         }
+    }
+
+    #[test]
+    fn a_hex_colour_with_other_characters_names_no_colour() {
+        for value in ["#€abc", "#ab€", "#12345g", "#"] {
+            assert_eq!(try_parse_color(value), None, "{value:?}");
+        }
+        assert_eq!(
+            try_parse_color("#89B4FA"),
+            Some(ratatui::style::Color::Rgb(0x89, 0xb4, 0xfa))
+        );
+        assert_eq!(
+            try_parse_color("#fff"),
+            Some(ratatui::style::Color::Rgb(255, 255, 255))
+        );
     }
 
     #[test]

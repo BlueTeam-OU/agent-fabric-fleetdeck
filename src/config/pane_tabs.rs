@@ -93,7 +93,6 @@ mod tests {
 
     #[test]
     fn diagnostics_name_each_wrong_entry() {
-        let labels = strings(&["harness", "shell"]);
         let orders = BTreeMap::from([
             ("good".to_string(), strings(&["shell", "harness"])),
             ("bad".to_string(), strings(&["shell"])),

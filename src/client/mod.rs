@@ -2167,24 +2167,7 @@ async fn run_client_loop(
                             &mut write_stream,
                             &mut prefix_input_source,
                         )?;
-                        if let Some(outcome) = state
-                            .shell
-                            .as_mut()
-                            .and_then(shell::ClientShellState::tab_order_outcome)
-                        {
-                            if finish_client_shell_input(
-                                &mut state,
-                                outcome,
-                                None,
-                                &mut write_stream,
-                                &mut pending_activation,
-                                &mut endpoint_commands,
-                                &mut prefix_input_source,
-                                &mut scheduled_activation,
-                            )? {
-                                return Ok(());
-                            }
-                        }
+                        send_tab_order_move(&mut state, &mut write_stream, &mut endpoint_commands)?;
                         if matches!(
                             activation_progress,
                             Some(endpoint::SurfaceActivationProgress::Ready)
