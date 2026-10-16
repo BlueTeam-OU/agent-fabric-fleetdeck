@@ -52,6 +52,9 @@ impl FocusReportingSetTracker {
             self.state = ParseState::Escape;
             return;
         }
+        if !matches!(self.state, ParseState::Ground) && passes_through_sequence(byte) {
+            return;
+        }
         match &mut self.state {
             ParseState::Ground => {}
             ParseState::Escape => {
@@ -104,6 +107,14 @@ impl FocusReportingSetTracker {
     }
 }
 
+/// A C0 control the terminal executes in the middle of an escape sequence,
+/// or DEL, which it ignores there: the sequence goes on around it (Ghostty's
+/// parse_table.zig, as in the VT500 parser it follows). CAN and SUB are not
+/// among them; they cancel the sequence.
+fn passes_through_sequence(byte: u8) -> bool {
+    matches!(byte, 0x00..=0x17 | 0x19 | 0x1c..=0x1f | 0x7f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::FocusReportingSetTracker;
@@ -144,6 +155,15 @@ mod tests {
     fn an_escape_inside_a_sequence_starts_a_new_one() {
         assert!(seen(&[b"\x1b[?20\x1b[?1004h"]));
         assert!(!seen(&[b"\x1b[?1004\x1b[?2004h"]));
+    }
+
+    #[test]
+    fn a_control_inside_a_sequence_leaves_it_going() {
+        assert!(seen(&[b"\x1b[?10\r04h"]));
+        assert!(seen(&[b"\x1b\n[?1004\x7fh"]));
+        assert!(seen(&[b"\x1b[\x08?1004;\x00h"]));
+        assert!(!seen(&[b"\x1b[?1004\x18h"]), "CAN cancels it");
+        assert!(!seen(&[b"\x1b[?1004\x1ah"]), "so does SUB");
     }
 
     #[test]

@@ -2222,6 +2222,8 @@ async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
     let mut server = test_headless_server();
     let mut workspace = crate::workspace::Workspace::test_new("focus-reporting-set");
     let shown_pane = workspace.tabs[0].root_pane;
+    let beside_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+    workspace.tabs[0].layout.focus_pane(shown_pane);
     let second_tab = workspace.test_add_tab(Some("second"));
     let unfocused_pane = workspace.tabs[second_tab].root_pane;
     let hidden_tab = workspace.test_add_tab(Some("hidden"));
@@ -2239,7 +2241,9 @@ async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
     let (shown_runtime, mut shown_input) = reporting();
     let (unfocused_runtime, mut unfocused_input) = reporting();
     let (hidden_runtime, mut hidden_input) = reporting();
+    let (beside_runtime, mut beside_input) = reporting();
     workspace.insert_test_runtime(shown_pane, shown_runtime);
+    workspace.insert_test_runtime(beside_pane, beside_runtime);
     workspace.insert_test_runtime(unfocused_pane, unfocused_runtime);
     workspace.insert_test_runtime(hidden_pane, hidden_runtime);
     server.app.state.workspaces = vec![workspace];
@@ -2249,7 +2253,18 @@ async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
     let second_tab_id = server.app.public_tab_id(0, second_tab).unwrap();
     let hidden_tab_id = server.app.public_tab_id(0, hidden_tab).unwrap();
 
-    // Client 61's terminal has focus and shows the first tab. Clients 62 and
+    // With no client at all, the pane the server would show first is no
+    // one's focus.
+    server.handle_internal_event_with_forwarding(AppEvent::TerminalFocusReportingSet {
+        pane_id: shown_pane,
+    });
+    assert_eq!(
+        shown_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O"))
+    );
+
+    // Client 61's terminal has focus and shows the first tab, whose focused
+    // pane is not the one beside it. Clients 62 and
     // 64 show the second from terminals that lost focus or never said. Client
     // 63's terminal has focus, but the third tab is on a surface it put away.
     let mut controls = Vec::new();
@@ -2267,18 +2282,28 @@ async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
     server.clients.get_mut(&63).unwrap().shell_surface_active = false;
     server.clients.get_mut(&64).unwrap().outer_terminal_focus = None;
     server.app.sync_focus_events();
-    for input in [&mut shown_input, &mut unfocused_input, &mut hidden_input] {
+    for input in [
+        &mut shown_input,
+        &mut beside_input,
+        &mut unfocused_input,
+        &mut hidden_input,
+    ] {
         while input.try_recv().is_ok() {}
     }
 
     // Each set is answered, even when the pane's focus did not change.
-    for pane_id in [shown_pane, unfocused_pane, hidden_pane] {
+    for pane_id in [shown_pane, beside_pane, unfocused_pane, hidden_pane] {
         server
             .handle_internal_event_with_forwarding(AppEvent::TerminalFocusReportingSet { pane_id });
     }
     assert_eq!(
         shown_input.try_recv().ok(),
         Some(bytes::Bytes::from_static(b"\x1b[I"))
+    );
+    assert_eq!(
+        beside_input.try_recv().ok(),
+        Some(bytes::Bytes::from_static(b"\x1b[O")),
+        "on screen beside the focused pane is not focused"
     );
     assert_eq!(
         unfocused_input.try_recv().ok(),
@@ -2290,7 +2315,12 @@ async fn focus_reporting_set_hears_the_focus_its_viewers_give_it() {
         Some(bytes::Bytes::from_static(b"\x1b[O")),
         "a surface put away shows nothing"
     );
-    for input in [&mut shown_input, &mut unfocused_input, &mut hidden_input] {
+    for input in [
+        &mut shown_input,
+        &mut beside_input,
+        &mut unfocused_input,
+        &mut hidden_input,
+    ] {
         assert!(input.try_recv().is_err(), "answered once");
     }
 

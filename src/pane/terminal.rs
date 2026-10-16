@@ -1434,7 +1434,8 @@ impl GhosttyPaneTerminal {
         let terminal_bells = core.terminal.take_bell_count();
         let clipboard_writes = core.terminal.take_clipboard_writes();
         // The mode's edge is checked as well as the tracker, so a set the
-        // tracker cannot parse (a C1 CSI, say) still counts once it lands.
+        // tracker cannot parse (a C1 CSI, say) still counts when it turns
+        // the mode on; one made while the mode is on rests on the tracker.
         let focus_reporting_set_seen = core.focus_reporting_sets.take_seen();
         let focus_reporting_set = core
             .terminal
@@ -4216,6 +4217,10 @@ mod tests {
         assert!(set(b"\x1b[?1004h"), "a set while on is still a set");
         assert!(!set(b"more output"));
         assert!(set(b"\x1b[?2004;1004h"));
+        assert!(
+            set(b"\x1b[?10\r04h"),
+            "a control inside is executed, not an end"
+        );
         assert!(!set(b"\x1b[?1004l"));
         assert!(!set(b"\x1b[?1004l\x1b[?1004h\x1b[?1004l"), "off by the end");
     }
