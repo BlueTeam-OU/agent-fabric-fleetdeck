@@ -242,13 +242,14 @@ def open_jobs(data: dict | None) -> list[dict]:
 
 # ADR-037 counts a delivered job as open: handed over, it waits on someone
 # else's merge. A person reads "open" as work the agent has to do, so the deck
-# counts the two apart. Blocked is work the agent still has; done and dropped
-# are never in the open list.
-WORKING = ("active", "queued", "paused", "blocked")
+# counts the two apart. Every other open job is work, blocked included, and so
+# is a state the deck does not know yet: a job is never left out of both
+# counts. Done and dropped are closed, never counted, whatever a list holds.
+NOT_WORKING = ("delivered", "done", "dropped")
 
 
 def working_jobs(jobs: list[dict]) -> list[dict]:
-    return [j for j in jobs if j.get("state") in WORKING]
+    return [j for j in jobs if j.get("state") not in NOT_WORKING]
 
 
 def delivered_jobs(jobs: list[dict]) -> list[dict]:
@@ -1013,11 +1014,15 @@ def agent_body(a: Agent, samples: Samples, now: datetime.datetime, width: int, a
     if ok_data(rec) is not None and not working:
         out.append([("  none", DIM)])
     out.append([("", NORMAL)])
+    # Shown with its count, or "none", like the working list: a missing
+    # heading would read the same as one not read.
     delivered = delivered_jobs(jobs)
-    if delivered:
-        out.append(heading(f"Delivered, waiting on a merge ({len(delivered)})", rec, now))
-        out += [job_line(j, now, width) for j in delivered]
-        out.append([("", NORMAL)])
+    title = "Delivered, waiting on a merge"
+    out.append(heading(f"{title} ({len(delivered)})" if ok_data(rec) is not None else title, rec, now))
+    out += [job_line(j, now, width) for j in delivered]
+    if ok_data(rec) is not None and not delivered:
+        out.append([("  none", DIM)])
+    out.append([("", NORMAL)])
     rec = s.get("closed_jobs")
     data = ok_data(rec)
     closed = data.get("closed") if data and isinstance(data.get("closed"), list) else []

@@ -277,6 +277,16 @@ class WorkingAndDelivered(unittest.TestCase):
         jobs = vr.open_jobs(vr.ok_data(self.agent().sections["jobs"]))
         self.assertEqual([j["state"] for j in vr.working_jobs(jobs)], ["active", "queued", "paused", "blocked"])
         self.assertEqual(len(vr.delivered_jobs(jobs)), 2)
+        # A state the deck does not know yet is work, never left out of both.
+        self.assertEqual(len(vr.working_jobs([{"state": "awaiting-review"}])), 1)
+
+    def test_no_delivered_jobs_still_says_so_and_a_failed_read_says_why(self):
+        body = texts(vr.agent_body(fleet()[0], vr.Samples(), NOW, 100))
+        i = body.index(next(t for t in body if t.startswith("Delivered, waiting on a merge (0)")))
+        self.assertEqual(body[i + 1], "  none")
+        body = texts(vr.agent_body(fleet()[1], vr.Samples(), NOW, 100))
+        self.assertTrue(any(t.startswith("Delivered, waiting on a merge") and "(" not in t.split("merge")[1][:3]
+                            for t in body), "no count where the jobs were not read")
 
     def test_the_board_shows_working_and_delivered_apart(self):
         cells = vr.board_cells(self.agent(), NOW)
