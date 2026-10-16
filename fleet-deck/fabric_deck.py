@@ -1440,10 +1440,13 @@ class Deck:
                 # Looked at again under the lock: a toggle may have started it.
                 if not at_bare_shell(self.herdr.process_info(pane)):
                     return
-                # FleetDeck's session restore can bring this pane back focused.
-                focused = any(p.get("pane_id") == pane and p.get("focused") is True
-                              for p in self.herdr.call("pane", "list").get("panes", []))
-                start_view(self.herdr, pane, login, focused, self.sleep)
+                # Always started unfocused, even in a pane the list reads
+                # focused (a session restore, a restart of an ended screen):
+                # that focus is the server's default target, which may be no
+                # one's after the last client detached, and a view told it
+                # would fetch unseen. The screen says "press a key to go live"
+                # and fetches at that key, or at herdr's next focus report.
+                start_view(self.herdr, pane, login, False, self.sleep)
             del self.waiting[key]
             self.log(f"{login}: started its agent screen in {pane}")
         elif now - since >= RESTORE_WAIT_S:

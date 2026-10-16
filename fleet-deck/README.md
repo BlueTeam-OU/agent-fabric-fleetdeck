@@ -275,9 +275,13 @@ again whole within 10 s, and is followed in nothing until then.
   shell, never its program. One already showing this account's screen is
   left as it is, and nothing is typed into one running anything else. A
   pick of `agent` made while its screen is still starting is not heard by
-  the screen (herdr drops it), so the screen fetches at its first key; the
-  deck never tells it a focus it can only infer, so a screen nobody watches
-  never fetches. `prefix+a` waits for the screen instead. A screen seen
+  the screen (herdr drops it): the screen says "press a key to go live" and
+  fetches at that key. The deck never tells a screen it starts a focus it
+  can only infer: the pane list's focus is the server's default target,
+  which may be no one's once the last client has detached. So a screen the
+  deck starts or restarts where a person is looking also says "press a key
+  to go live". `prefix+a` waits for the screen instead, and so it is live
+  at once. A screen seen
   running that has ended is started again at the next map read (10 s),
   once for each end.
 - **A harness pane running this account's moveto** is classified and

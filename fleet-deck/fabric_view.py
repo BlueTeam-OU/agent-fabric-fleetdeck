@@ -588,8 +588,9 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
     # says the pane was opened focused. herdr reports focus changes only,
     # and a pane opened in the background never had focus to lose:
     # assuming focus at open would fetch in the background. A marked view
-    # (in an agent pane) is told its focus once it can hear it
-    # (fabric_deck.start_view), and trusts no hint.
+    # (in an agent pane) started by the toggle on a person's key is told its
+    # focus once it can hear it (fabric_deck.start_view); one the deck starts
+    # is told nothing, and waits for a report or a key. It trusts no hint.
     focused = initial_focus(env)
     # A refetch asked for with `r`, run once the input it came with is read.
     refetch_asked: View | None = None
@@ -1146,8 +1147,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def initial_focus(env) -> bool | None:
     """A view's focus before any report: True for an overlay `open` focused,
-    unknown otherwise, and unknown for a marked view whatever it is told,
-    which its start reports once it can hear (fabric_deck.start_view)."""
+    unknown otherwise, and unknown for a marked view whatever it is told:
+    one the toggle starts has its start report it once it can hear
+    (fabric_deck.start_view), one the deck starts waits for a report or a
+    key."""
     return True if env.get(OPENED_FOCUSED) == "1" and not env.get(VIEW_START) else None
 
 

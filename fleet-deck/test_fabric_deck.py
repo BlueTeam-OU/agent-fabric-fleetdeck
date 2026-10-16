@@ -973,7 +973,7 @@ class Restore(unittest.TestCase):
             h.deck.follow(RESTORE_WAIT_S + 12)
             self.assertEqual(herdr.runs("p3"), [VIEW])
 
-    def test_an_agent_pane_restored_focused_is_told_so(self):
+    def test_an_agent_pane_restored_focused_is_told_nothing(self):
         herdr = FakeHerdr()
         herdr.add_tab("ui", [*four_panes("ui", "p")[:3], ("p3", "agent", BARE)])
         herdr.panes["p3"]["focused"] = True
@@ -994,8 +994,33 @@ class Restore(unittest.TestCase):
         h.deck.follow(1)
         (typed,) = herdr.runs("p3")
         self.assertEqual(typed, VIEW, "marked, as every start")
-        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")],
-                         [("pane", "send-text", "p3", "\x1b[I")], "told it is focused, once it can hear")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [],
+                         "the list's focus is the server's default target, perhaps no one's")
+
+    def test_an_ended_screen_restarted_after_the_last_client_left_is_told_nothing(self):
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", four_panes("ui", "p"))
+        herdr.panes["p3"]["focused"] = True  # the person was on agent, then detached
+        h = Harness(herdr)
+        h.records["ui"] = record("ui")
+        real_run = herdr.call
+
+        def call(*args):
+            out = real_run(*args)
+            if args[:3] == ("pane", "run", "p3"):
+                import fabric_deck
+                herdr.panes["p3"]["terminal_title"] = fabric_deck.view_title("ui", MARK)
+                herdr.proc["p3"] = in_view("ui")
+            return out
+
+        herdr.call = call
+        h.deck.restore(0)
+        h.deck.follow(PANE_MAP_REFRESH_S + 1)
+        herdr.proc["p3"] = BARE  # the screen crashed
+        for at in range(2, 5):
+            h.deck.follow(at * PANE_MAP_REFRESH_S + at)
+        self.assertEqual(herdr.runs("p3"), [VIEW], "started again")
+        self.assertEqual([c for c in herdr.calls if c[:2] == ("pane", "send-text")], [])
 
     def test_a_view_started_out_of_sight_is_never_told_an_inferred_focus(self):
         # The person picks the agent while its screen starts, then may leave
