@@ -318,7 +318,9 @@ OVERLAY_TITLE = "this agent"
 VIEW = "view"
 # Tells an overlay it opens focused (fabric_view.run): herdr reports focus
 # changes only, and a pane focused before the view turns reporting on never
-# sends it one. An agent pane's view is told its focus by its start instead.
+# sends it one. An agent pane's view the toggle starts, on a person's key, is
+# told its focus by its start instead; one the deck starts waits for a
+# report or a key (Deck._start_view).
 OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 # The terminal's focus reports (DECSET 1004), as a view reads them.
 FOCUS_IN_REPORT, FOCUS_OUT_REPORT = "\x1b[I", "\x1b[O"
@@ -455,7 +457,8 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
         if wait_ready(herdr, pane, login, sleep, start):
             tell_focus(herdr, pane, login)
         return start
-    # Unfocused (the deck's restore): the shell's foreground handed on is
+    # Unfocused (every start by the deck: a restore, a restart of an ended
+    # screen): the shell's foreground handed on is
     # enough here, so a restore of every tab does not wait for each view's
     # Python to start. A focus moved there before the view can hear it (the
     # second row's pick, a click) is dropped by herdr, and the view fetches
