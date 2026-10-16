@@ -176,6 +176,9 @@ pub enum AppEvent {
     /// A pane child emitted one or more executable BEL characters.
     /// The host-facing process forwards them to its outer terminal.
     TerminalBell { pane_id: PaneId, count: u16 },
+    /// A pane child turned focus reporting (DECSET 1004) on, or set it again.
+    /// The main loop answers with the focus its viewers really give the pane.
+    TerminalFocusReportingSet { pane_id: PaneId },
     /// A pane child emitted a valid OSC 52 clipboard write. The main loop
     /// re-emits it through herdr's own clipboard writer.
     ClipboardWrite { content: Vec<u8> },

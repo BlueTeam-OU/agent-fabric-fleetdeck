@@ -341,6 +341,10 @@ impl HeadlessServer {
                 }
                 false
             }
+            AppEvent::TerminalFocusReportingSet { pane_id } => {
+                self.answer_focus_reporting_set(*pane_id);
+                false
+            }
             AppEvent::ClipboardWrite { content } => {
                 // Clipboard writes are client-local side effects. Forward them only to
                 // the foreground client instead of broadcasting to every attached client.

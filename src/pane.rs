@@ -27,6 +27,7 @@ use crate::render_signal::RenderSignal;
 mod agent_detection;
 mod background_agent;
 mod cursor;
+mod focus_reporting;
 mod input;
 mod kitty_keyboard;
 mod osc;
@@ -2210,6 +2211,16 @@ fn publish_terminal_bells(pane_id: PaneId, count: u16, events: &mpsc::Sender<App
     }
 }
 
+fn publish_focus_reporting_set(pane_id: PaneId, events: &mpsc::Sender<AppEvent>) {
+    if let Err(err) = events.try_send(AppEvent::TerminalFocusReportingSet { pane_id }) {
+        warn!(
+            pane = pane_id.raw(),
+            err = %err,
+            "failed to queue focus reporting set"
+        );
+    }
+}
+
 fn publish_reported_cwd(
     pane_id: PaneId,
     cwd: std::path::PathBuf,
@@ -2595,6 +2606,9 @@ impl PaneRuntime {
                 drop(_content_write_guard);
                 compression_wake.wake();
                 publish_terminal_bells(pane_id, result.terminal_bells, &read_events);
+                if result.focus_reporting_set {
+                    publish_focus_reporting_set(pane_id, &read_events);
+                }
                 observe_detection_content_change(bytes, &detection_content_seq);
                 let title_requested =
                     result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
@@ -2798,6 +2812,9 @@ impl PaneRuntime {
                 drop(_content_write_guard);
                 compression_wake.wake();
                 publish_terminal_bells(pane_id, result.terminal_bells, &events);
+                if result.focus_reporting_set {
+                    publish_focus_reporting_set(pane_id, &events);
+                }
                 if agent_detection == AgentDetection::Enabled {
                     observe_detection_content_change(bytes, &detection_content_seq);
                 }

@@ -46,7 +46,7 @@ impl App {
                 self.handle_api_worktree_read_finished(*result);
                 changes_workspace
             }
-            ev @ AppEvent::TerminalBell { .. } => {
+            ev @ (AppEvent::TerminalBell { .. } | AppEvent::TerminalFocusReportingSet { .. }) => {
                 self.handle_internal_event(ev);
                 false
             }
@@ -109,7 +109,9 @@ impl App {
         };
         if matches!(
             &ev,
-            AppEvent::TerminalBell { .. } | AppEvent::ClipboardWrite { .. }
+            AppEvent::TerminalBell { .. }
+                | AppEvent::TerminalFocusReportingSet { .. }
+                | AppEvent::ClipboardWrite { .. }
         ) {
             return Vec::new();
         }

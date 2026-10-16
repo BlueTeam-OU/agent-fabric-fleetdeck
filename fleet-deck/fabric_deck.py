@@ -316,11 +316,12 @@ OVERLAY_TITLE = "this agent"
 # The mode of a `waiting` entry for the agent pane: not a moveto, but the
 # agent's screen started in the operator's own shell there.
 VIEW = "view"
-# Tells an overlay it opens focused (fabric_view.run): herdr reports focus
-# changes only, and a pane focused before the view turns reporting on never
-# sends it one. An agent pane's view the toggle starts, on a person's key, is
-# told its focus by its start instead; one the deck starts waits for a
-# report or a key (Deck._start_view).
+# Tells an overlay it opens focused (fabric_view.run): a herdr server older
+# than its answer to a focus-reporting set reports focus changes only, and a
+# pane focused before the view turns reporting on never sends it one. An
+# agent pane's view the toggle starts, on a person's key, is told its focus
+# by its start instead; one the deck starts waits for a report or a key
+# (Deck._start_view).
 OPENED_FOCUSED = "FABRIC_VIEW_OPENED_FOCUSED"
 # The terminal's focus reports (DECSET 1004), as a view reads them.
 FOCUS_IN_REPORT, FOCUS_OUT_REPORT = "\x1b[I", "\x1b[O"
@@ -447,7 +448,9 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
     every change made before the view turns reporting on. So the report is
     the real one, read once the view can hear, and a view that never gets
     it (it took longer than the bound) waits for a key, never fetches while
-    hidden."""
+    hidden. herdr itself answers the view's turning reporting on with its
+    viewers' real focus; the report told here is for an older server, which
+    does not."""
     # Every start is marked: the toggle reads a running view's mark
     # (view_mark) to know its title from one a killed view left behind.
     start = new_mark()
@@ -461,8 +464,9 @@ def start_view(herdr, pane: str, login: str, focused: bool, sleep: Callable[[flo
     # screen): the shell's foreground handed on is
     # enough here, so a restore of every tab does not wait for each view's
     # Python to start. A focus moved there before the view can hear it (the
-    # second row's pick, a click) is dropped by herdr, and the view fetches
-    # at its first key: the deck never tells it a focus inferred from the
+    # second row's pick, a click) is answered by herdr as the view turns
+    # reporting on (an older server drops it, and the view fetches at its
+    # first key): the deck never tells it a focus inferred from the
     # pane list, which is the server's default target and no client's own,
     # so a view nobody watches is never set fetching. The toggle waits for
     # the view to hear before it moves the focus there (fabric_view._turn).
@@ -1467,8 +1471,9 @@ class Deck:
                 # focused (a session restore, a restart of an ended screen):
                 # that focus is the server's default target, which may be no
                 # one's after the last client detached, and a view told it
-                # would fetch unseen. The screen says "press a key to go live"
-                # and fetches at that key, or at herdr's next focus report.
+                # would fetch unseen. herdr tells the screen its viewers' real
+                # focus as it turns reporting on; under an older server it
+                # says "press a key to go live" until a key or a report.
                 start_view(self.herdr, pane, login, False, self.sleep)
             del self.waiting[key]
             self.log(f"{login}: started its agent screen in {pane}")
