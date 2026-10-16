@@ -68,25 +68,24 @@ impl ClientShellState {
         }
         let snapshot = self.snapshot.as_deref()?;
         let Some(params) = next_tab_order_move(snapshot, &self.config.tab_order) else {
-            self.tab_order_asked = None;
+            self.tab_order_asked.remove(&self.active_endpoint_id);
             return None;
         };
         let arrangement = (
-            self.active_endpoint_id.clone(),
             snapshot.boot_id.clone(),
             snapshot.tabs.iter().map(|tab| tab.tab_id.clone()).collect(),
         );
         let method = Method::TabMove(params);
-        // An endpoint that lists its methods is asked only if tab.move is
-        // listed. One with no list is this build's local server, or a server
-        // from before method lists existed, and tab.move is older than they are.
-        if self.tab_order_asked.as_ref() == Some(&arrangement)
+        // Only an endpoint that lists tab.move is asked. A client shell always
+        // gets a method list in its handshake; without one, nothing is sent.
+        if self.tab_order_asked.get(&self.active_endpoint_id) == Some(&arrangement)
             || !self.endpoint_is_online(&self.active_endpoint_id)
-            || !self.supports_endpoint_method(&method)
+            || !self.advertises_endpoint_method(&method)
         {
             return None;
         }
-        self.tab_order_asked = Some(arrangement);
+        self.tab_order_asked
+            .insert(self.active_endpoint_id.clone(), arrangement);
         let mut outcome = ClientShellInput::default();
         self.push_endpoint_method(method, &mut outcome);
         Some(outcome)
@@ -225,6 +224,16 @@ mod tests {
         let mut state = ClientShellState::new(config);
         state.set_snapshot(Box::new(snapshot(&[("w1", &["b", "a"])])));
         assert!(
+            state.tab_order_outcome(true).is_none(),
+            "an endpoint that lists no methods is asked nothing"
+        );
+        state.set_endpoint_methods(Some(vec!["tab.focus".into()]));
+        assert!(
+            state.tab_order_outcome(true).is_none(),
+            "nor one whose list lacks tab.move"
+        );
+        state.set_endpoint_methods(Some(vec!["tab.move".into()]));
+        assert!(
             state.tab_order_outcome(false).is_none(),
             "nothing is built while requests cannot be sent"
         );
@@ -254,6 +263,43 @@ mod tests {
         assert!(
             state.tab_order_outcome(true).is_some(),
             "the same tab ids from another server, or the same one restarted, are not asked yet"
+        );
+    }
+
+    #[test]
+    fn one_server_in_order_keeps_what_another_was_asked() {
+        let mut config = ClientShellConfig::from_config(&crate::config::Config::default());
+        config.tab_order = order(&["a", "b"]);
+        let mut state = ClientShellState::new(config);
+        state.set_endpoint_methods(Some(vec!["tab.move".into()]));
+        let local = state.active_endpoint_id.clone();
+        // What another server, visited before, was asked and refused.
+        let other = ClientEndpointId::Ssh(
+            crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef")
+                .expect("a profile id"),
+        );
+        let refused = ("other-boot".to_string(), vec!["w1-b".to_string()]);
+        state.tab_order_asked.insert(other.clone(), refused.clone());
+
+        state.set_snapshot(Box::new(snapshot(&[("w1", &["b", "a"])])));
+        assert!(
+            state.tab_order_outcome(true).is_some(),
+            "this server is asked"
+        );
+        state.set_snapshot(Box::new(snapshot(&[("w1", &["a", "b"])])));
+        assert!(
+            state.tab_order_outcome(true).is_none(),
+            "and is in order now"
+        );
+
+        assert!(
+            !state.tab_order_asked.contains_key(&local),
+            "its own memory goes"
+        );
+        assert_eq!(
+            state.tab_order_asked.get(&other),
+            Some(&refused),
+            "the other server's stays: back there, its refused move is not asked again"
         );
     }
 }

@@ -962,7 +962,8 @@ pub(crate) struct ClientShellState {
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
     /// The tab arrangement a `ui.tab_order` move was last asked for, and of
     /// which server: tab ids repeat across servers and across restarts.
-    pub(super) tab_order_asked: Option<(ClientEndpointId, String, Vec<String>)>,
+    /// Kept per endpoint, so visiting one server never forgets what another was asked.
+    pub(super) tab_order_asked: HashMap<ClientEndpointId, (String, Vec<String>)>,
     pub(super) pending_integration_installs: usize,
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
@@ -1145,7 +1146,7 @@ impl ClientShellState {
             popup_pending_deadline: None,
             next_request_id: 1,
             pending_requests: HashMap::new(),
-            tab_order_asked: None,
+            tab_order_asked: HashMap::new(),
             pending_integration_installs: 0,
             pending_notifications: Vec::new(),
             visible_notification: None,
