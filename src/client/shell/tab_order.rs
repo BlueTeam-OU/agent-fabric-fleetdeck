@@ -71,7 +71,11 @@ impl ClientShellState {
             self.tab_order_asked = None;
             return None;
         };
-        let arrangement: Vec<String> = snapshot.tabs.iter().map(|tab| tab.tab_id.clone()).collect();
+        let arrangement = (
+            self.active_endpoint_id.clone(),
+            snapshot.boot_id.clone(),
+            snapshot.tabs.iter().map(|tab| tab.tab_id.clone()).collect(),
+        );
         let method = Method::TabMove(params);
         // An endpoint that lists its methods is asked only if tab.move is
         // listed. One with no list is this build's local server, or a server
@@ -243,6 +247,13 @@ mod tests {
         assert!(
             state.tab_order_outcome(true).is_some(),
             "a new arrangement is looked at afresh"
+        );
+        let mut restarted = snapshot(&[("w1", &["b", "c", "a"])]);
+        restarted.boot_id = format!("{}-again", restarted.boot_id);
+        state.set_snapshot(Box::new(restarted));
+        assert!(
+            state.tab_order_outcome(true).is_some(),
+            "the same tab ids from another server, or the same one restarted, are not asked yet"
         );
     }
 }

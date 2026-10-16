@@ -960,8 +960,9 @@ pub(crate) struct ClientShellState {
     pub(super) popup_pending_deadline: Option<std::time::Instant>,
     pub(super) next_request_id: u64,
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
-    /// The tab arrangement a `ui.tab_order` move was last asked for.
-    pub(super) tab_order_asked: Option<Vec<String>>,
+    /// The tab arrangement a `ui.tab_order` move was last asked for, and of
+    /// which server: tab ids repeat across servers and across restarts.
+    pub(super) tab_order_asked: Option<(ClientEndpointId, String, Vec<String>)>,
     pub(super) pending_integration_installs: usize,
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
