@@ -374,8 +374,8 @@ class Shown:
 
 def display(track: Track, live: Live | None, last_blocked: bool = False) -> Shown:
     """`last_blocked` is whether the account's newest record that lists
-    sessions has one blocked, posted since the deck last saw this pane
-    without a harness (fabric_deck.blocked_since). The contract keeps a
+    sessions has one blocked and belongs to this harness, as far as the
+    deck can tell (fabric_deck.blocked_since). The contract keeps a
     stale record's blocked, labelled stale, until a newer record says
     otherwise: a person may still be wanted when the record stops
     advancing (python-dev-03, 2026-10-17). ctl marks such a row unknown

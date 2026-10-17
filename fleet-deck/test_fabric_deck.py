@@ -9,6 +9,7 @@ import unittest
 
 from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
 from fabric_deck import (
+    StreamRecords,
     live_of,
     BOARD_DIR,
     PANE_MAP_REFRESH_S,
@@ -373,7 +374,7 @@ class Harness:
     def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False,
                  roles=None, catalog=None):
         self.herdr = herdr or FakeHerdr()
-        self.records = {}
+        self.records = StreamRecords()
         self.tree, self.argvs = {}, {}
         # pid -> the client ends of that ssh's connections, as /proc gives them
         self.sockets = {}
@@ -1764,6 +1765,14 @@ class Follow(unittest.TestCase):
         h.harness_runs(harness)
         h.deck.follow(h.at(5 + SAME_SESSION_S))
         h.deck.follow(h.at(STALE_AFTER_S + 60))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
+    def test_a_record_superseded_between_two_looks_still_says_otherwise(self):
+        h, harness = self.running_at_restore(record("ui", "blocked"))
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.records["ui"] = record("ui", "working")  # a person answered
+        h.records["ui"] = StateRecord("ui", "unknown", (), record("ui").ts, host="h")  # then unreadable
+        h.deck.follow(h.at(3))
         self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
 
     def test_a_working_session_whose_record_goes_stale_reads_stale_as_before(self):
