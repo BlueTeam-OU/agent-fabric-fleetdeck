@@ -320,6 +320,21 @@ class StreamRecords(dict):
         if record.sessions or record.state != "unknown":
             self.listed[login] = record
 
+    # dict's own update and setdefault write past __setitem__, and would
+    # leave `listed` behind the records they store.
+    def update(self, *args, **kwargs) -> None:
+        for login, record in dict(*args, **kwargs).items():
+            self[login] = record
+
+    def setdefault(self, login: str, record: StateRecord) -> StateRecord:
+        if login not in self:
+            self[login] = record
+        return self[login]
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
 
 def posted_after(record: StateRecord | None, earlier: StateRecord | None) -> bool:
     """Whether `record` was posted after `earlier` (None: any record is)."""
@@ -969,9 +984,9 @@ class Deck:
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
     # login -> when its harness pane was last seen without a running harness
-    # (wall clock), until a fresh record shows the harness that runs since:
-    # a record posted before then describes an earlier session. None for a
-    # pane running since the deck started, where any record counts
+    # (wall clock); while it is set, a record posted before it counts as an
+    # earlier session's. A fresh record newer than record_at_cutoff ends it.
+    # None for a pane running since the deck started, where any record counts
     not_running_at: dict[str, datetime.datetime] = field(default_factory=dict)
     # login -> the record current when not_running_at was last stamped; a
     # record is newer than it by its ts, since ctl re-sends a row unchanged

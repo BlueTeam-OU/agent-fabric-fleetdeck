@@ -2179,6 +2179,27 @@ class StreamLines(unittest.TestCase):
         self.assertEqual(logs, ["a state record was skipped: bad"])
 
 
+class StreamRecordsListed(unittest.TestCase):
+    def test_every_way_of_storing_a_record_keeps_listed(self):
+        blocked, unreadable = record("ui", "blocked"), StateRecord("ui", "unknown", (), record("ui").ts)
+        for store in (lambda r: r.__setitem__("ui", blocked), lambda r: r.update(ui=blocked),
+                      lambda r: r.update({"ui": blocked}), lambda r: r.setdefault("ui", blocked),
+                      lambda r: r.__ior__({"ui": blocked})):
+            records = StreamRecords()
+            store(records)
+            self.assertIs(records.listed.get("ui"), blocked)
+            records.update(ui=unreadable)
+            self.assertIs(records["ui"], unreadable)
+            self.assertIs(records.listed["ui"], blocked, "a row that lists nothing changes nothing")
+
+    def test_setdefault_keeps_a_record_already_there(self):
+        first, second = record("ui", "working"), record("ui", "blocked")
+        records = StreamRecords()
+        records["ui"] = first
+        self.assertIs(records.setdefault("ui", second), first)
+        self.assertIs(records.listed["ui"], first)
+
+
 class StopChild(unittest.TestCase):
     def stubborn_child(self):
         import subprocess
