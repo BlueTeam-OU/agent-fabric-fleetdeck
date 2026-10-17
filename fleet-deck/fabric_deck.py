@@ -1512,12 +1512,46 @@ class Deck:
     def _show(self, login: str, pane: str, shown: Shown, now: float) -> None:
         last = self.sent.get(login)
         if last is None or last[0] != shown or now - last[1] >= RESEND_AFTER_S:
-            for command in (account_command(pane, login), report_command(pane, shown),
-                            *label_commands(pane, shown)):
-                self.herdr.call(*command)
+            report = report_command(pane, shown)
+            reported = False
+            try:
+                for command in (account_command(pane, login), report, *label_commands(pane, shown)):
+                    self.herdr.call(*command)
+                    reported = reported or command == report
+            except Exception:
+                # A label command that fails after the state went out still
+                # leaves a state to read back; its error reaches the caller.
+                if reported:
+                    self._read_back(login, pane, shown)
+                raise
             self.sent[login] = (shown, now)
             if last is None or last[0] != shown:
                 self.log(status_line(login, shown.label or shown.status))
+            self._read_back(login, pane, shown)
+
+    def _read_back(self, login: str, pane: str, shown: Shown) -> None:
+        """herdr answers a report it drops (another agent detected in the
+        pane, a session another source owns, an agent exit just seen) as one
+        it took, so the deck reads the state back and logs a difference: a
+        blocked that never became herdr's red and sound is then in the log
+        with what herdr held instead (j23, 2026-10-17)."""
+        try:
+            pane_info = self.herdr.call("pane", "get", pane).get("pane") or {}
+            if not isinstance(pane_info, dict):
+                raise DeckError(f"pane get answered {type(pane_info).__name__}, not a pane")
+        except Exception as error:  # the next send reads it again
+            self.log(f"{login}: pane {pane} could not be read back: {printable(str(error))}")
+            return
+        held = pane_info.get("agent_status")
+        if held not in APPLIED_AS.get(shown.status, (shown.status,)):
+            # The session's owner, never its id: a session another source
+            # owns is one reason herdr drops the deck's reports.
+            session = pane_info.get("agent_session")
+            owner = (f"{session.get('source')}/{session.get('agent')}"
+                     if isinstance(session, dict) else "none")
+            self.log(f"{login}: herdr holds {printable(str(held))} for pane {pane} after the deck "
+                     f"reported {shown.status} (agent {printable(str(pane_info.get('agent')))}, "
+                     f"session {printable(owner)})")
 
     # ------------------------------------------------------------- before
 
@@ -1598,6 +1632,11 @@ class Deck:
         if key not in self.said:
             self.said.add(key)
             self.log(line)
+
+
+# The agent_status herdr answers for a reported state: an idle the person
+# has not looked at yet reads as done.
+APPLIED_AS = {"idle": ("idle", "done")}
 
 
 def report_command(pane: str, shown: Shown) -> tuple[str, ...]:
