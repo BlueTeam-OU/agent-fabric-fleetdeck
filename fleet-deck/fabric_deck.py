@@ -1528,6 +1528,8 @@ class Deck:
         with what herdr held instead (j23, 2026-10-17)."""
         try:
             pane_info = self.herdr.call("pane", "get", pane).get("pane") or {}
+            if not isinstance(pane_info, dict):
+                raise DeckError(f"pane get answered {type(pane_info).__name__}, not a pane")
         except Exception as error:  # the next send reads it again
             self.log(f"{login}: pane {pane} could not be read back: {printable(str(error))}")
             return

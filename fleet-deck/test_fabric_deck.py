@@ -1647,8 +1647,35 @@ class Follow(unittest.TestCase):
         h.herdr.fail_once.add(("get", harness))
         h.records["ui"] = record("ui", "working")
         h.deck.follow(20)
-        self.assertTrue([line for line in h.logs if "could not be read back" in line], h.logs)
-        self.assertEqual(h.herdr.agent_status[harness], "working")
+        self.assertEqual(sum(harness in line for line in h.logs[-1:]), 1)
+        self.assertIn("could not be read back", h.logs[-1])
+        self.assertIsNotNone(h.deck.mapped_at, "not taken as a failure of the account's tab")
+        h.herdr.drops_reports.add(harness)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(22)
+        self.assertEqual(h.herdr.reports(harness)[-3][-1], "blocked", "the next report is sent")
+        self.assertIn("herdr holds working", h.logs[-1], "and read back")
+
+    def test_a_resend_is_read_back_too(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        h.herdr.agent_status[harness] = "idle"
+        h.herdr.drops_reports.add(harness)
+        h.deck.follow(h.at(21 + RESEND_AFTER_S))
+        self.assertIn(f"ui: herdr holds idle for pane {harness} after the deck reported working "
+                      "(agent claude, session none)", h.logs)
+
+    def test_an_answer_that_is_not_a_pane_is_logged_as_unreadable(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.herdr.call = lambda *args, _call=h.herdr.call: (
+            {"pane": ["not", "a", "pane"]} if args[:2] == ("pane", "get") else _call(*args))
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        self.assertIn("could not be read back", h.logs[-1])
+        self.assertIsNotNone(h.deck.mapped_at)
 
     def test_a_session_elsewhere_reads_running_elsewhere_and_touches_nothing(self):
         h, harness = self.ready()
