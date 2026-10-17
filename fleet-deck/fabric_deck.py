@@ -1512,9 +1512,18 @@ class Deck:
     def _show(self, login: str, pane: str, shown: Shown, now: float) -> None:
         last = self.sent.get(login)
         if last is None or last[0] != shown or now - last[1] >= RESEND_AFTER_S:
-            for command in (account_command(pane, login), report_command(pane, shown),
-                            *label_commands(pane, shown)):
-                self.herdr.call(*command)
+            report = report_command(pane, shown)
+            reported = False
+            try:
+                for command in (account_command(pane, login), report, *label_commands(pane, shown)):
+                    self.herdr.call(*command)
+                    reported = reported or command == report
+            except Exception:
+                # A label command that fails after the state went out still
+                # leaves a state to read back; its error reaches the caller.
+                if reported:
+                    self._read_back(login, pane, shown)
+                raise
             self.sent[login] = (shown, now)
             if last is None or last[0] != shown:
                 self.log(status_line(login, shown.label or shown.status))

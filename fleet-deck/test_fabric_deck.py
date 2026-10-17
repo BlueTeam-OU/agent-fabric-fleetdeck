@@ -1656,6 +1656,36 @@ class Follow(unittest.TestCase):
         self.assertEqual(h.herdr.reports(harness)[-3][-1], "blocked", "the next report is sent")
         self.assertIn("herdr holds working", h.logs[-1], "and read back")
 
+    def test_a_label_command_that_fails_after_the_report_still_has_it_read_back(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        h.herdr.drops_reports.add(harness)
+        refused = lambda *args, _call=h.herdr.call: (
+            _ for _ in ()).throw(RuntimeError("metadata refused")) \
+            if "--clear-state-labels" in args else _call(*args)
+        h.herdr.call = refused
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(22)
+        self.assertIn(f"ui: herdr holds working for pane {harness} after the deck reported blocked "
+                      "(agent claude, session none)", h.logs)
+        self.assertIn("metadata refused", h.logs[-1], "the label's error still reaches the log")
+
+    def test_an_account_command_that_fails_before_the_report_reads_nothing_back(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        gets = len([c for c in h.herdr.calls if c[:2] == ("pane", "get")])
+        h.herdr.call = lambda *args, _call=h.herdr.call: (
+            _ for _ in ()).throw(RuntimeError("account refused")) \
+            if "--token" in args else _call(*args)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(22)
+        self.assertEqual(len([c for c in h.herdr.calls if c[:2] == ("pane", "get")]), gets)
+        self.assertNotIn(("pane", "report-agent", harness), [c[:3] for c in h.herdr.calls[-3:]])
+
     def test_a_resend_is_read_back_too(self):
         h, harness = self.ready()
         h.harness_runs(harness)
