@@ -303,6 +303,15 @@ def blocked_since(record: StateRecord | None, since: datetime.datetime | None) -
     return posted is not None and (since is None or posted > since)
 
 
+def posted_after(record: StateRecord | None, earlier: StateRecord | None) -> bool:
+    """Whether `record` was posted after `earlier` (None: any record is)."""
+    posted = parse_utc(record.ts) if record is not None else None
+    if posted is None:
+        return False
+    before = parse_utc(earlier.ts) if earlier is not None else None
+    return before is None or posted > before
+
+
 def printable(text: str) -> str:
     """Another account's pane text, safe to print on the operator's terminal."""
     return "".join(ch for ch in text if ch == "\t" or (ch.isprintable() and ord(ch) >= 0x20))
@@ -949,6 +958,10 @@ class Deck:
     # a record posted before then describes an earlier session. None for a
     # pane running since the deck started, where any record counts
     not_running_at: dict[str, datetime.datetime] = field(default_factory=dict)
+    # login -> the record current when not_running_at was last stamped; a
+    # record is newer than it by its ts, since ctl re-sends a row unchanged
+    # but for its state when it marks it unknown
+    record_at_cutoff: dict[str, StateRecord | None] = field(default_factory=dict)
     # login -> its tab's agent pane, looked at for an ended view at each map read
     agent_pane: dict[str, str] = field(default_factory=dict)
     # Agent panes whose screen was seen running at a map read: only such a
@@ -1314,11 +1327,15 @@ class Deck:
                 self.tracks[login] = track
                 if track.state is not State.RUNNING:
                     self.not_running_at[login] = self.utc()
-                elif live is not None and live.fresh:
-                    # A fresh record while a harness runs is that harness's,
-                    # and every later one too: the cutoff, stamped after the
-                    # look that missed the harness, could otherwise reject
-                    # its first record once it goes stale.
+                    self.record_at_cutoff[login] = self.records.get(login)
+                elif live is not None and live.fresh and posted_after(self.records.get(login),
+                                                                     self.record_at_cutoff.get(login)):
+                    # A fresh record that arrived since the look that missed
+                    # the harness is the running harness's, and every later
+                    # one too: the cutoff, stamped after that look, could
+                    # otherwise reject its first record once it goes stale.
+                    # The record already current then may be the earlier
+                    # session's, and keeps the cutoff.
                     self.not_running_at.pop(login, None)
                 record = self.records.get(login)
                 if record is not None and (record.sessions or record.state != "unknown"):

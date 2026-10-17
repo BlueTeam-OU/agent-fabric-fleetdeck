@@ -1751,6 +1751,21 @@ class Follow(unittest.TestCase):
         h.deck.follow(h.at(STALE_AFTER_S + 5))
         self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "blocked=stale"))
 
+    def test_a_fresh_record_of_an_ended_session_does_not_paint_the_next_harness(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(h.at(1))
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.tree.clear()
+        h.argvs.clear()
+        h.deck.follow(h.at(2))
+        h.deck.follow(h.at(3 + SAME_SESSION_S))  # the harness ended; no record since
+        h.harness_runs(harness)
+        h.deck.follow(h.at(5 + SAME_SESSION_S))
+        h.deck.follow(h.at(STALE_AFTER_S + 60))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
     def test_a_working_session_whose_record_goes_stale_reads_stale_as_before(self):
         h, harness = self.ready()
         h.harness_runs(harness)
