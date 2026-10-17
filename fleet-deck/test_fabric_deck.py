@@ -1622,11 +1622,14 @@ class Follow(unittest.TestCase):
         h.records["ui"] = record("ui", "working")
         h.deck.follow(20)
         h.herdr.drops_reports.add(harness)
+        h.herdr.panes[harness]["agent_session"] = {"source": "herdr:claude", "agent": "claude",
+                                                    "kind": "id", "value": "s-1"}
         h.records["ui"] = record("ui", "blocked")
         h.deck.follow(22)
         self.assertEqual(h.herdr.reports(harness)[-3][-1], "blocked", "the deck did report it")
         self.assertIn(f"ui: herdr holds working for pane {harness} after the deck reported blocked "
-                      "(agent claude)", h.logs)
+                      "(agent claude, session herdr:claude/claude)", h.logs)
+        self.assertFalse([line for line in h.logs if "s-1" in line], "the session's id stays out")
 
     def test_a_report_herdr_applied_logs_no_difference_and_an_unread_idle_is_done(self):
         h, harness = self.ready()

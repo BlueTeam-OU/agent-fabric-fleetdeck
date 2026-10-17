@@ -1533,8 +1533,14 @@ class Deck:
             return
         held = pane_info.get("agent_status")
         if held not in APPLIED_AS.get(shown.status, (shown.status,)):
+            # The session's owner, never its id: a session another source
+            # owns is one reason herdr drops the deck's reports.
+            session = pane_info.get("agent_session")
+            owner = (f"{session.get('source')}/{session.get('agent')}"
+                     if isinstance(session, dict) else "none")
             self.log(f"{login}: herdr holds {printable(str(held))} for pane {pane} after the deck "
-                     f"reported {shown.status} (agent {printable(str(pane_info.get('agent')))})")
+                     f"reported {shown.status} (agent {printable(str(pane_info.get('agent')))}, "
+                     f"session {printable(owner)})")
 
     # ------------------------------------------------------------- before
 
