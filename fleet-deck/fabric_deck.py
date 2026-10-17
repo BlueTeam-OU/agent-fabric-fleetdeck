@@ -1518,6 +1518,23 @@ class Deck:
             self.sent[login] = (shown, now)
             if last is None or last[0] != shown:
                 self.log(status_line(login, shown.label or shown.status))
+            self._read_back(login, pane, shown)
+
+    def _read_back(self, login: str, pane: str, shown: Shown) -> None:
+        """herdr answers a report it drops (another agent detected in the
+        pane, a session another source owns, an agent exit just seen) as one
+        it took, so the deck reads the state back and logs a difference: a
+        blocked that never became herdr's red and sound is then in the log
+        with what herdr held instead (j23, 2026-10-17)."""
+        try:
+            pane_info = self.herdr.call("pane", "get", pane).get("pane") or {}
+        except Exception as error:  # the next send reads it again
+            self.log(f"{login}: pane {pane} could not be read back: {printable(str(error))}")
+            return
+        held = pane_info.get("agent_status")
+        if held not in APPLIED_AS.get(shown.status, (shown.status,)):
+            self.log(f"{login}: herdr holds {printable(str(held))} for pane {pane} after the deck "
+                     f"reported {shown.status} (agent {printable(str(pane_info.get('agent')))})")
 
     # ------------------------------------------------------------- before
 
@@ -1598,6 +1615,11 @@ class Deck:
         if key not in self.said:
             self.said.add(key)
             self.log(line)
+
+
+# The agent_status herdr answers for a reported state: an idle the person
+# has not looked at yet reads as done.
+APPLIED_AS = {"idle": ("idle", "done")}
 
 
 def report_command(pane: str, shown: Shown) -> tuple[str, ...]:

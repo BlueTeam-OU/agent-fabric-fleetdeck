@@ -248,6 +248,8 @@ class FakeHerdr(Herdr):
         self.new_pane = BARE
         self.workspace_lists_ok = None  # after this many, `workspace list` fails
         self.fail_once = set()  # (subcommand, pane) pairs whose next call fails
+        self.agent_status = {}  # pane -> the state herdr holds from the deck's reports
+        self.drops_reports = set()  # panes whose reports herdr answers but does not apply
         self.plugin_linked = True
         self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
         self.zoom_in_tab = True  # False: a FleetDeck from before pane.zoom_in_tab
@@ -319,6 +321,11 @@ class FakeHerdr(Herdr):
             return {}
         if head == ("pane", "process-info"):
             return {"process_info": self.proc[args[3]]}
+        if head == ("pane", "report-agent") and args[2] not in self.drops_reports:
+            self.agent_status[args[2]] = args[args.index("--state") + 1]
+        if head == ("pane", "get"):
+            return {"pane": {**self.panes[args[2]], "agent": "claude",
+                             "agent_status": self.agent_status.get(args[2], "unknown")}}
         if head[0] == "pane" and head[1] in ("run", "send-text", "report-agent", "report-metadata", "release-agent"):
             return {}
         if args[:3] == ("plugin", "pane", "open"):
@@ -1608,6 +1615,37 @@ class Follow(unittest.TestCase):
         h.deck.follow(20)
         self.assertEqual(h.herdr.reports(harness)[-3][-1], "working")
         self.assertEqual(h.store, {"ui": Before(running=True)})
+
+    def test_a_blocked_report_herdr_did_not_apply_is_logged_with_what_herdr_holds(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        h.herdr.drops_reports.add(harness)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(22)
+        self.assertEqual(h.herdr.reports(harness)[-3][-1], "blocked", "the deck did report it")
+        self.assertIn(f"ui: herdr holds working for pane {harness} after the deck reported blocked "
+                      "(agent claude)", h.logs)
+
+    def test_a_report_herdr_applied_logs_no_difference_and_an_unread_idle_is_done(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        for at, state in ((20, "working"), (22, "blocked"), (24, "idle")):
+            h.records["ui"] = record("ui", state)
+            h.deck.follow(at)
+        h.herdr.agent_status[harness] = "done"
+        h.deck._read_back("ui", harness, Shown("idle", ""))
+        self.assertFalse([line for line in h.logs if "herdr holds" in line], h.logs)
+
+    def test_a_pane_that_cannot_be_read_back_is_logged_and_the_deck_goes_on(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.herdr.fail_once.add(("get", harness))
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(20)
+        self.assertTrue([line for line in h.logs if "could not be read back" in line], h.logs)
+        self.assertEqual(h.herdr.agent_status[harness], "working")
 
     def test_a_session_elsewhere_reads_running_elsewhere_and_touches_nothing(self):
         h, harness = self.ready()
