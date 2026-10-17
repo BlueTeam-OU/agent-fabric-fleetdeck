@@ -373,12 +373,13 @@ class Shown:
 
 
 def display(track: Track, live: Live | None, last_blocked: bool = False) -> Shown:
-    """`last_blocked` is whether the account's newest record lists a blocked
-    session of this harness: a blocked session posts nothing while it waits,
-    so its record goes stale exactly when a person is wanted, and the
-    contract keeps it blocked, labelled stale, until a newer record says
-    otherwise. ctl later marks such a row unknown (`live` None) but keeps
-    its sessions, so the caller reads them (fabric_deck.blocked_since)."""
+    """`last_blocked` is whether the account's newest record that lists
+    sessions has one blocked, posted since the deck last saw this pane
+    without a harness (fabric_deck.blocked_since). The contract keeps a
+    stale record's blocked, labelled stale, until a newer record says
+    otherwise: a person may still be wanted when the record stops
+    advancing (python-dev-03, 2026-10-17). ctl marks such a row unknown
+    (`live` None) but keeps its sessions, so the caller reads them."""
     if live is None or not live.fresh:
         if last_blocked and track.state is State.RUNNING:
             return Shown("blocked", "stale")

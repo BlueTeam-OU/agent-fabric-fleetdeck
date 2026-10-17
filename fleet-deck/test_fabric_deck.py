@@ -1729,16 +1729,27 @@ class Follow(unittest.TestCase):
         self.assertEqual(h.herdr.agent_status[harness], "blocked", "not a record saying otherwise")
 
     def test_a_new_harness_is_not_painted_with_an_earlier_sessions_block(self):
-        h, harness = self.running_at_restore(self.ctl_marked("blocked"))
-        self.assertEqual(h.herdr.agent_status[harness], "blocked")
-        h.tree.clear()
-        h.argvs.clear()
-        h.deck.follow(h.at(3))
-        self.assertEqual(h.herdr.agent_status[harness], "unknown", "the blocked harness ended")
+        for rec in (self.ctl_marked("blocked"), record("ui", "blocked", age_s=STALE_AFTER_S + 1)):
+            h, harness = self.running_at_restore(rec)
+            self.assertEqual(h.herdr.agent_status[harness], "blocked")
+            h.tree.clear()
+            h.argvs.clear()
+            h.deck.follow(h.at(3))
+            h.deck.follow(h.at(4 + SAME_SESSION_S))  # past the tracker's same-session grace
+            self.assertEqual(h.herdr.agent_status[harness], "unknown", "the blocked harness ended")
+            h.harness_runs(harness)
+            h.deck.follow(h.at(6 + SAME_SESSION_S))
+            self.assertEqual(h.herdr.agent_status[harness], "unknown", ("its session has not posted yet", rec))
+            self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
+    def test_a_first_record_posted_before_the_look_that_missed_its_harness_still_counts(self):
+        h, harness = self.ready()  # the pane seen without a harness at the wall clock's NOW
         h.harness_runs(harness)
-        h.deck.follow(h.at(5))
-        self.assertEqual(h.herdr.agent_status[harness], "unknown", "its session has not posted yet")
-        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+        h.records["ui"] = record("ui", "blocked", age_s=1)  # posted just before that look
+        h.deck.follow(20)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.deck.follow(h.at(STALE_AFTER_S + 5))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "blocked=stale"))
 
     def test_a_working_session_whose_record_goes_stale_reads_stale_as_before(self):
         h, harness = self.ready()

@@ -945,7 +945,9 @@ class Deck:
     # row for an account that cannot read its state (unknown, none listed)
     listed: dict[str, StateRecord] = field(default_factory=dict)
     # login -> when its harness pane was last seen without a running harness
-    # (wall clock): a record posted before then describes an earlier session
+    # (wall clock), until a fresh record shows the harness that runs since:
+    # a record posted before then describes an earlier session. None for a
+    # pane running since the deck started, where any record counts
     not_running_at: dict[str, datetime.datetime] = field(default_factory=dict)
     # login -> its tab's agent pane, looked at for an ended view at each map read
     agent_pane: dict[str, str] = field(default_factory=dict)
@@ -1312,6 +1314,12 @@ class Deck:
                 self.tracks[login] = track
                 if track.state is not State.RUNNING:
                     self.not_running_at[login] = self.utc()
+                elif live is not None and live.fresh:
+                    # A fresh record while a harness runs is that harness's,
+                    # and every later one too: the cutoff, stamped after the
+                    # look that missed the harness, could otherwise reject
+                    # its first record once it goes stale.
+                    self.not_running_at.pop(login, None)
                 record = self.records.get(login)
                 if record is not None and (record.sessions or record.state != "unknown"):
                     self.listed[login] = record
