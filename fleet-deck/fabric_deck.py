@@ -929,6 +929,9 @@ class Deck:
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
+    # login -> whether its last record that listed sessions had one blocked,
+    # for after ctl marks the row unknown; kept for this run of the deck only
+    last_blocked: dict[str, bool] = field(default_factory=dict)
     # login -> its tab's agent pane, looked at for an ended view at each map read
     agent_pane: dict[str, str] = field(default_factory=dict)
     # Agent panes whose screen was seen running at a map read: only such a
@@ -1290,6 +1293,8 @@ class Deck:
             try:
                 seen = self.observe(login, pane, parents)
                 live = self.live(login)
+                if live is not None:  # ctl's unknown row (None) says nothing of its sessions
+                    self.last_blocked[login] = live.count >= 1 and live.state == "blocked"
                 track, arm = step(self.tracks.get(login, Track(State.IDLE)), seen, live, now)
                 self.tracks[login] = track
                 if arm is not None:
@@ -1306,7 +1311,7 @@ class Deck:
                 # command the operator ran) is not the deck's to name: herdr's
                 # own word for both, never "dormant" with Enter going elsewhere.
                 unknown = login in self.unarmed or (seen.present and seen.moveto is None)
-                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live)
+                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live, self.last_blocked.get(login, False))
                 self._show(login, pane, shown, now)
             except Exception as error:  # one account's failure must not stop the others
                 self.log(f"{login}: {printable(str(error))}")

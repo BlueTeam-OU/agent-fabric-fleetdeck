@@ -295,6 +295,16 @@ class Display(unittest.TestCase):
         self.assertEqual(display(Track(State.RUNNING), stale), Shown("unknown", "stale"))
         self.assertEqual(display(Track(State.IDLE), None), Shown("unknown", "stale"))
 
+    def test_a_stale_record_after_a_blocked_one_keeps_blocked_labelled_stale(self):
+        stale = Live(1, "blocked", fresh=False, reason="permission")
+        for live in (stale, None):
+            self.assertEqual(display(Track(State.RUNNING), live, last_blocked=True),
+                             Shown("blocked", "stale"))
+        # Not running here any more: the contract's other states decide, stale as before.
+        self.assertEqual(display(Track(State.IDLE), None, last_blocked=True), Shown("unknown", "stale"))
+        self.assertEqual(display(Track(State.RUNNING), Live(1, "working", True), last_blocked=True),
+                         Shown("working", ""), "a fresh record decides")
+
 
 ENTER = "/usr/local/share/moveto/enter"
 

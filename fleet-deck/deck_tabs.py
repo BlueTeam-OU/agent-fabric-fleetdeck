@@ -372,8 +372,16 @@ class Shown:
     label: str
 
 
-def display(track: Track, live: Live | None) -> Shown:
+def display(track: Track, live: Live | None, last_blocked: bool = False) -> Shown:
+    """`last_blocked` is whether the account's last record that listed its
+    sessions had one blocked: a blocked session posts nothing while it
+    waits, so its record goes stale exactly when a person is wanted, and the
+    contract keeps it blocked, labelled stale, until a newer record says
+    otherwise. ctl later marks such a row unknown (`live` None), so the
+    caller remembers it."""
     if live is None or not live.fresh:
+        if last_blocked and track.state is State.RUNNING:
+            return Shown("blocked", "stale")
         return Shown("unknown", "stale")
     if track.state is State.RUNNING:
         # herdr's own agent name and the session's state; a harness whose
