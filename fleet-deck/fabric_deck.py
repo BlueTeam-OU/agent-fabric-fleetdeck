@@ -291,6 +291,18 @@ def live_of(record: StateRecord | None, now_utc: datetime.datetime) -> Live | No
     return live_from_record([(s.session, s.state, s.reason, s.ssh_client) for s in record.sessions], age)
 
 
+def blocked_since(record: StateRecord | None, since: datetime.datetime | None) -> bool:
+    """Whether the record lists a blocked session and was posted after
+    `since`. Read from the sessions themselves: ctl keeps them on a row it
+    marks unknown for its age, which `live_of` reads as no record. A record
+    posted before the pane's harness last stopped describes an earlier
+    session."""
+    if record is None or not any(s.state == "blocked" for s in record.sessions):
+        return False
+    posted = parse_utc(record.ts)
+    return posted is not None and (since is None or posted > since)
+
+
 def printable(text: str) -> str:
     """Another account's pane text, safe to print on the operator's terminal."""
     return "".join(ch for ch in text if ch == "\t" or (ch.isprintable() and ord(ch) >= 0x20))
@@ -929,9 +941,12 @@ class Deck:
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
-    # login -> whether its last record that listed sessions had one blocked,
-    # for after ctl marks the row unknown; kept for this run of the deck only
-    last_blocked: dict[str, bool] = field(default_factory=dict)
+    # login -> its newest record that says what its sessions are: not ctl's
+    # row for an account that cannot read its state (unknown, none listed)
+    listed: dict[str, StateRecord] = field(default_factory=dict)
+    # login -> when its harness pane was last seen without a running harness
+    # (wall clock): a record posted before then describes an earlier session
+    not_running_at: dict[str, datetime.datetime] = field(default_factory=dict)
     # login -> its tab's agent pane, looked at for an ended view at each map read
     agent_pane: dict[str, str] = field(default_factory=dict)
     # Agent panes whose screen was seen running at a map read: only such a
@@ -1293,10 +1308,13 @@ class Deck:
             try:
                 seen = self.observe(login, pane, parents)
                 live = self.live(login)
-                if live is not None:  # ctl's unknown row (None) says nothing of its sessions
-                    self.last_blocked[login] = live.count >= 1 and live.state == "blocked"
                 track, arm = step(self.tracks.get(login, Track(State.IDLE)), seen, live, now)
                 self.tracks[login] = track
+                if track.state is not State.RUNNING:
+                    self.not_running_at[login] = self.utc()
+                record = self.records.get(login)
+                if record is not None and (record.sessions or record.state != "unknown"):
+                    self.listed[login] = record
                 if arm is not None:
                     self._arm(login, pane, arm.mode)
                 elif track.halted:
@@ -1311,7 +1329,8 @@ class Deck:
                 # command the operator ran) is not the deck's to name: herdr's
                 # own word for both, never "dormant" with Enter going elsewhere.
                 unknown = login in self.unarmed or (seen.present and seen.moveto is None)
-                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live, self.last_blocked.get(login, False))
+                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live,
+                                  blocked_since(self.listed.get(login), self.not_running_at.get(login)))
                 self._show(login, pane, shown, now)
             except Exception as error:  # one account's failure must not stop the others
                 self.log(f"{login}: {printable(str(error))}")
