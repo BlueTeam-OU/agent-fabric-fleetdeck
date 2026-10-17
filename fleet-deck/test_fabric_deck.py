@@ -7,8 +7,9 @@ import sys
 import tempfile
 import unittest
 
-from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, WAIT, WATCH, Before, Shown, State, endpoint
+from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
 from fabric_deck import (
+    StreamRecords,
     live_of,
     BOARD_DIR,
     PANE_MAP_REFRESH_S,
@@ -373,7 +374,7 @@ class Harness:
     def __init__(self, herdr=None, logins=("ui",), modes=ALL_MODES, befores=None, fleet_tab=False,
                  roles=None, catalog=None):
         self.herdr = herdr or FakeHerdr()
-        self.records = {}
+        self.records = StreamRecords()
         self.tree, self.argvs = {}, {}
         # pid -> the client ends of that ssh's connections, as /proc gives them
         self.sockets = {}
@@ -1685,6 +1686,106 @@ class Follow(unittest.TestCase):
         h.deck.follow(22)
         self.assertEqual(len([c for c in h.herdr.calls if c[:2] == ("pane", "get")]), gets)
         self.assertNotIn(("pane", "report-agent", harness), [c[:3] for c in h.herdr.calls[-3:]])
+
+    def running_at_restore(self, rec):
+        """A deck started while the account's harness already runs."""
+        herdr = FakeHerdr()
+        herdr.add_tab("ui", [("p0", "harness", in_moveto("ui", WAIT)), ("p1", "shell", in_moveto("ui")),
+                             ("p2", "status", in_moveto("ui", WATCH)), ("p3", "agent", in_view("ui"))])
+        h = Harness(herdr)
+        h.harness_runs("p0")
+        h.records["ui"] = rec
+        h.deck.restore(0)
+        h.deck.follow(1)
+        return h, "p0"
+
+    @staticmethod
+    def ctl_marked(*states, age_s=STALE_AFTER_S + 30):
+        """ctl's row for an account whose record outlived two heartbeats:
+        state unknown, its ts and sessions kept."""
+        ts = (NOW - datetime.timedelta(seconds=age_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return StateRecord("ui", "unknown", tuple(Session(f"s{i}", s, ts) for i, s in enumerate(states)),
+                           ts, host="h")
+
+    def test_a_stale_blocked_record_keeps_the_tab_blocked_labelled_stale(self):
+        for rec in (record("ui", "blocked", age_s=STALE_AFTER_S + 1), self.ctl_marked("blocked")):
+            h, harness = self.running_at_restore(rec)
+            self.assertEqual(h.herdr.agent_status[harness], "blocked", rec)
+            self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "blocked=stale"))
+
+    def test_a_newer_record_decides_after_a_stale_blocked_one(self):
+        for newer, held in ((record("ui", "working"), "working"), (self.ctl_marked("working", age_s=0), "unknown")):
+            h, harness = self.running_at_restore(self.ctl_marked("blocked"))
+            h.records["ui"] = newer
+            h.deck.follow(3)
+            self.assertEqual(h.herdr.agent_status[harness], held, newer)
+
+    def test_an_account_that_cannot_read_its_state_says_nothing_new(self):
+        unreadable = StateRecord("ui", "unknown", (), record("ui").ts, host="h")
+        h, harness = self.running_at_restore(unreadable)
+        self.assertEqual(h.herdr.agent_status[harness], "unknown", "nothing listed yet")
+        h, harness = self.running_at_restore(self.ctl_marked("blocked"))
+        h.records["ui"] = unreadable
+        h.deck.follow(3)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked", "not a record saying otherwise")
+
+    def test_a_new_harness_is_not_painted_with_an_earlier_sessions_block(self):
+        for rec in (self.ctl_marked("blocked"), record("ui", "blocked", age_s=STALE_AFTER_S + 1)):
+            h, harness = self.running_at_restore(rec)
+            self.assertEqual(h.herdr.agent_status[harness], "blocked")
+            h.tree.clear()
+            h.argvs.clear()
+            h.deck.follow(h.at(3))
+            h.deck.follow(h.at(4 + SAME_SESSION_S))  # past the tracker's same-session grace
+            self.assertEqual(h.herdr.agent_status[harness], "unknown", "the blocked harness ended")
+            h.harness_runs(harness)
+            h.deck.follow(h.at(6 + SAME_SESSION_S))
+            self.assertEqual(h.herdr.agent_status[harness], "unknown", ("its session has not posted yet", rec))
+            self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
+    def test_a_first_record_posted_before_the_look_that_missed_its_harness_still_counts(self):
+        h, harness = self.ready()  # the pane seen without a harness at the wall clock's NOW
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "blocked", age_s=1)  # posted just before that look
+        h.deck.follow(20)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.deck.follow(h.at(STALE_AFTER_S + 5))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "blocked=stale"))
+
+    def test_a_fresh_record_of_an_ended_session_does_not_paint_the_next_harness(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(h.at(1))
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.tree.clear()
+        h.argvs.clear()
+        h.deck.follow(h.at(2))
+        h.deck.follow(h.at(3 + SAME_SESSION_S))  # the harness ended; no record since
+        h.harness_runs(harness)
+        h.deck.follow(h.at(5 + SAME_SESSION_S))
+        h.deck.follow(h.at(STALE_AFTER_S + 60))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
+    def test_a_record_superseded_between_two_looks_still_says_otherwise(self):
+        h, harness = self.running_at_restore(record("ui", "blocked"))
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        h.records["ui"] = record("ui", "working")  # a person answered
+        h.records["ui"] = StateRecord("ui", "unknown", (), record("ui").ts, host="h")  # then unreadable
+        h.deck.follow(h.at(3))
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
+
+    def test_a_working_session_whose_record_goes_stale_reads_stale_as_before(self):
+        h, harness = self.ready()
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "blocked")
+        h.deck.follow(20)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(22)
+        h.records["ui"] = record("ui", "working", age_s=STALE_AFTER_S + 1)
+        h.deck.follow(24)
+        self.assertEqual(h.herdr.agent_status[harness], "unknown")
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("stale", "--state-label", "unknown=stale"))
 
     def test_a_resend_is_read_back_too(self):
         h, harness = self.ready()

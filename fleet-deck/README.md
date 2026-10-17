@@ -317,6 +317,7 @@ agent's name, so the deck's word goes in its place, and FleetDeck's own
 | something other than this account's moveto holds the harness pane | `unknown` | `unknown` |
 | a session runs on the account, not in this pane | `unknown` | `running elsewhere` |
 | the account's record is older than two heartbeats, or says the account cannot read its session state (`state: unknown`) | `unknown` | `stale` |
+| the same, while a harness runs and the account's newest record that lists sessions (ctl keeps them on a row it marks unknown) has one blocked: a person may still be wanted. A record that was already the account's newest when the deck last saw the pane without a harness belongs to an earlier session and does not count, unless a newer record arrives while the harness runs; for a harness already running when the deck started, any record counts | `blocked` | `stale` |
 
 The same words are set as FleetDeck state labels, for a sidebar layout that
 shows `state_text`. FleetDeck shows an `idle` the person has not looked at as

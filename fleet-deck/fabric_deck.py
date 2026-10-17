@@ -291,6 +291,45 @@ def live_of(record: StateRecord | None, now_utc: datetime.datetime) -> Live | No
     return live_from_record([(s.session, s.state, s.reason, s.ssh_client) for s in record.sessions], age)
 
 
+def blocked_since(record: StateRecord | None, since: datetime.datetime | None) -> bool:
+    """Whether the record lists a blocked session and was posted after
+    `since`, the cutoff the caller keeps while a record that arrived before
+    the pane's harness last stopped may still be the newest (Deck.follow
+    ends it once a newer one arrives). Read from the sessions themselves:
+    ctl keeps them on a row it marks unknown for its age, which `live_of`
+    reads as no record."""
+    if record is None or not any(s.state == "blocked" for s in record.sessions):
+        return False
+    posted = parse_utc(record.ts)
+    return posted is not None and (since is None or posted > since)
+
+
+class StreamRecords(dict):
+    """login -> its newest record, and `listed`: login -> its newest record
+    that says what its sessions are (not ctl's row for an account that
+    cannot read its state: unknown, none listed). `listed` is kept as each
+    record arrives, not when the deck looks: a record superseded between
+    two looks still counts."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.listed: dict[str, StateRecord] = {}
+
+    def __setitem__(self, login: str, record: StateRecord) -> None:
+        super().__setitem__(login, record)
+        if record.sessions or record.state != "unknown":
+            self.listed[login] = record
+
+
+def posted_after(record: StateRecord | None, earlier: StateRecord | None) -> bool:
+    """Whether `record` was posted after `earlier` (None: any record is)."""
+    posted = parse_utc(record.ts) if record is not None else None
+    if posted is None:
+        return False
+    before = parse_utc(earlier.ts) if earlier is not None else None
+    return before is None or posted > before
+
+
 def printable(text: str) -> str:
     """Another account's pane text, safe to print on the operator's terminal."""
     return "".join(ch for ch in text if ch == "\t" or (ch.isprintable() and ord(ch) >= 0x20))
@@ -895,7 +934,7 @@ class Deck:
     herdr: "Herdr"
     accounts: Callable[[], list[Account]]
     # Written by the stream's thread, one whole record per assignment.
-    records: dict[str, StateRecord]
+    records: "StreamRecords"
     modes: frozenset[str]
     cwd: str
     catalog: dict | None
@@ -929,6 +968,15 @@ class Deck:
     waiting: dict[tuple[str, str, str], float] = field(default_factory=dict)
     # login -> (what the panel shows, when it was sent)
     sent: dict[str, tuple[Shown, float]] = field(default_factory=dict)
+    # login -> when its harness pane was last seen without a running harness
+    # (wall clock), until a fresh record shows the harness that runs since:
+    # a record posted before then describes an earlier session. None for a
+    # pane running since the deck started, where any record counts
+    not_running_at: dict[str, datetime.datetime] = field(default_factory=dict)
+    # login -> the record current when not_running_at was last stamped; a
+    # record is newer than it by its ts, since ctl re-sends a row unchanged
+    # but for its state when it marks it unknown
+    record_at_cutoff: dict[str, StateRecord | None] = field(default_factory=dict)
     # login -> its tab's agent pane, looked at for an ended view at each map read
     agent_pane: dict[str, str] = field(default_factory=dict)
     # Agent panes whose screen was seen running at a map read: only such a
@@ -1292,6 +1340,22 @@ class Deck:
                 live = self.live(login)
                 track, arm = step(self.tracks.get(login, Track(State.IDLE)), seen, live, now)
                 self.tracks[login] = track
+                if track.state is not State.RUNNING:
+                    self.not_running_at[login] = self.utc()
+                    self.record_at_cutoff[login] = self.records.get(login)
+                elif live is not None and live.fresh and posted_after(self.records.get(login),
+                                                                     self.record_at_cutoff.get(login)):
+                    # A fresh record that arrived since the look that missed
+                    # the harness is the running harness's, and every later
+                    # one too: the cutoff, stamped after that look, could
+                    # otherwise reject its first record once it goes stale.
+                    # The record already current then may be the earlier
+                    # session's, and keeps the cutoff. That costs the red of
+                    # a harness whose first, blocked record a look read while
+                    # missing the harness, should no newer record follow
+                    # before it goes stale: chosen over painting a session
+                    # red with another's block (PR 40, judged P3).
+                    self.not_running_at.pop(login, None)
                 if arm is not None:
                     self._arm(login, pane, arm.mode)
                 elif track.halted:
@@ -1306,7 +1370,8 @@ class Deck:
                 # command the operator ran) is not the deck's to name: herdr's
                 # own word for both, never "dormant" with Enter going elsewhere.
                 unknown = login in self.unarmed or (seen.present and seen.moveto is None)
-                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live)
+                shown = Shown("unknown", "unknown") if unknown else display(self.tracks[login], live,
+                                  blocked_since(self.records.listed.get(login), self.not_running_at.get(login)))
                 self._show(login, pane, shown, now)
             except Exception as error:  # one account's failure must not stop the others
                 self.log(f"{login}: {printable(str(error))}")
@@ -1989,7 +2054,7 @@ def main(argv: list[str] | None = None) -> int:
     if host is None:
         log("cannot tell this host's fleet name (fabric-whoami); "
             "state records of the same login on other hosts may be mixed in")
-    records: dict[str, StateRecord] = {}
+    records = StreamRecords()
     woken = threading.Event()
 
     def take(raw: str) -> None:
