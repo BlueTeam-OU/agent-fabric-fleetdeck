@@ -322,8 +322,13 @@ class StreamRecords(dict):
 
     # dict's own update and setdefault write past __setitem__, and would
     # leave `listed` behind the records they store.
-    def update(self, *args, **kwargs) -> None:
-        for login, record in dict(*args, **kwargs).items():
+    def update(self, other=(), /, **kwargs) -> None:
+        # Entry by entry, in dict.update's order: a temporary dict would
+        # keep only the last of two records for one login.
+        pairs = ((key, other[key]) for key in other.keys()) if hasattr(other, "keys") else other
+        for login, record in pairs:
+            self[login] = record
+        for login, record in kwargs.items():
             self[login] = record
 
     def setdefault(self, login: str, record: StateRecord) -> StateRecord:

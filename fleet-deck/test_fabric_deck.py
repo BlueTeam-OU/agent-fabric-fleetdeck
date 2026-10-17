@@ -2192,6 +2192,15 @@ class StreamRecordsListed(unittest.TestCase):
             self.assertIs(records["ui"], unreadable)
             self.assertIs(records.listed["ui"], blocked, "a row that lists nothing changes nothing")
 
+    def test_update_stores_each_entry_in_turn(self):
+        blocked, unreadable = record("ui", "blocked"), StateRecord("ui", "unknown", (), record("ui").ts)
+        for call in (lambda r: r.update({"ui": blocked}, ui=unreadable),
+                     lambda r: r.update([("ui", blocked), ("ui", unreadable)])):
+            records = StreamRecords()
+            call(records)
+            self.assertIs(records["ui"], unreadable)
+            self.assertIs(records.listed["ui"], blocked)
+
     def test_setdefault_keeps_a_record_already_there(self):
         first, second = record("ui", "working"), record("ui", "blocked")
         records = StreamRecords()
