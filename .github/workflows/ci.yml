@@ -121,12 +121,13 @@ jobs:
     steps: &check-steps
       # What the steps below, and the tests (ssh for the remote-attach
       # probe, ps for the session tests, openssl for the installer's
-      # checksum test), assume a host already has.
+      # checksum test), assume a host already has. Without zstd the cache
+      # actions fall back to single-threaded gzip: 85 s to save 1.5 GB.
       - name: Container prerequisites (Debian)
         if: startsWith(env.LEG, 'debian')
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3 xz-utils unzip openssh-client procps openssl
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config python3 xz-utils zstd unzip openssh-client procps openssl
 
       - name: Container prerequisites (Fedora)
         if: startsWith(env.LEG, 'fedora')
