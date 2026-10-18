@@ -47,6 +47,11 @@ async fn watch_connection(
     .await?;
     let mut owners = manager.receive_owner_changed().await?;
     let mut signals = manager.receive_signal("PrepareForShutdown").await?;
+    // zbus 6.0 receives the lock without MSG_CMSG_CLOEXEC and returns a
+    // close-on-exec duplicate. A child that another thread forks between the two
+    // keeps a copy, and shutdown then waits out logind's InhibitDelayMaxSec.
+    // Panes close inherited descriptors themselves. Drop this note once zbus
+    // receives with the flag.
     let inhibitor: zbus::OwnedFd = manager
         .call(
             "Inhibit",
@@ -91,9 +96,9 @@ mod tests {
     use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
 
-    struct PrivateBus(Child);
+    struct KillOnDrop(Child);
 
-    impl Drop for PrivateBus {
+    impl Drop for KillOnDrop {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let _ = self.0.wait();
@@ -131,7 +136,7 @@ mod tests {
     #[ignore = "requires dbus-daemon; uses a private bus, never requests host shutdown"]
     async fn shutdown_warning_holds_inhibitor_until_monitor_is_dropped() {
         for already_preparing in [false, true] {
-            let mut bus = PrivateBus(
+            let mut bus = KillOnDrop(
                 Command::new("dbus-daemon")
                     .args(["--session", "--nofork", "--print-address=1"])
                     .stdout(Stdio::piped())
@@ -198,9 +203,16 @@ mod tests {
                 std::io::ErrorKind::WouldBlock,
                 "shutdown must remain inhibited while the server saves"
             );
+            // A child started while the lock is held, as a hook or a handed-off
+            // server is, must not keep shutdown delayed after the server lets go.
+            let _child = KillOnDrop(Command::new("sleep").arg("30").spawn().unwrap());
             task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
-            assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+            assert_eq!(
+                peer.read(&mut [0]).ok(),
+                Some(0),
+                "a child process must not inherit the delay lock"
+            );
         }
     }
 }
