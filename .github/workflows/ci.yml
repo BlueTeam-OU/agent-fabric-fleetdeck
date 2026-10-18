@@ -206,13 +206,18 @@ jobs:
           path: ${{ runner.temp }}/herdr-zig-0.16.0
           key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
 
+      # What Zig builds is decided by the vendored source and the compiler
+      # alone, so the key names those and an exact hit saves nothing: a key
+      # per run stored ~0.5 GB per leg on every master push and evicted the
+      # cargo caches the next commit reuses.
       - name: Restore Zig build cache
+        id: zig-build
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**', 'crates/ghostty-vt/build.rs') }}
           restore-keys: |
-            zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-
+            zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-
 
       - name: Restore cargo cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -250,11 +255,11 @@ jobs:
           key: ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
 
       - name: Save Zig build cache
-        if: env.SAVE_CACHES == 'true'
+        if: env.SAVE_CACHES == 'true' && steps.zig-build.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v1-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**', 'crates/ghostty-vt/build.rs') }}
 
   check-distro:
     name: check (${{ matrix.leg }})
