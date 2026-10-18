@@ -47,7 +47,7 @@ async fn watch_connection(
     .await?;
     let mut owners = manager.receive_owner_changed().await?;
     let mut signals = manager.receive_signal("PrepareForShutdown").await?;
-    let inhibitor: zbus::zvariant::OwnedFd = manager
+    let inhibitor: zbus::OwnedFd = manager
         .call(
             "Inhibit",
             &(
@@ -113,7 +113,7 @@ mod tests {
             _who: &str,
             _why: &str,
             mode: &str,
-        ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        ) -> zbus::fdo::Result<zbus::OwnedFd> {
             assert_eq!((what, mode), ("shutdown", "delay"));
             let (lock, peer) = UnixStream::pair().unwrap();
             peer.set_nonblocking(true).unwrap();
@@ -144,9 +144,7 @@ mod tests {
                 .unwrap();
             let peer = Arc::new(Mutex::new(None));
             let service = zbus::connection::Builder::address(address.trim())
-                .unwrap()
                 .name("org.freedesktop.login1")
-                .unwrap()
                 .serve_at(
                     "/org/freedesktop/login1",
                     LoginManager {
@@ -154,12 +152,10 @@ mod tests {
                         peer: peer.clone(),
                     },
                 )
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
             let client = zbus::connection::Builder::address(address.trim())
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
