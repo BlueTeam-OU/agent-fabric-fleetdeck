@@ -2359,6 +2359,12 @@ class SafeguardScreen(unittest.TestCase):
         mixed = ["  ⎿  API Error: 529 overloaded", "● Note: safeguards flagged nothing here.", RULE, "> ", RULE]
         self.assertFalse(safeguard_stopped("\n".join(mixed)))
 
+    def test_a_result_line_the_model_wrote_is_taken_for_the_harnesss(self):
+        # The stated assumption (safeguard_stopped's docstring), pinned so
+        # a change to it is a decision, not a drift.
+        forged = ["● Saw this on the other pane:", "  ⎿  API Error: safeguards flagged it", "", RULE, "> ", RULE]
+        self.assertTrue(safeguard_stopped("\n".join(forged)))
+
     def test_a_screen_without_the_box_is_judged_by_its_last_lines(self):
         bare = SAFEGUARD_SCREEN.split(RULE)[0]
         self.assertTrue(safeguard_stopped(bare))

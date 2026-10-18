@@ -1841,11 +1841,16 @@ _ITEM_GLYPHS = ("⎿", "●", ">")
 def safeguard_stopped(screen: str) -> bool:
     """The error is the harness's own block: a line that begins with the
     result glyph ⎿ and the first mark, and the indented lines it wraps
-    onto, which hold both marks. Text the agent wrote never carries ⎿ (its
-    message begins with ●, and its later lines are only indented), so a
-    message that quotes the error, on its first line or on a line of its
-    own, is no stop: the screen's text is the agent's and its model's to
-    write."""
+    onto, which hold both marks. A message that quotes the error as an
+    agent writes one (● first, later lines only indented) is no stop.
+
+    An assumption, not a check: a ⎿ line is taken for the harness's. The
+    screen is text the agent's model may write, glyph included, and a
+    tool's output is drawn under ⎿ too, so such a line reads as a stop. Its
+    cost is bounded: a false "safeguard stop" and one INFO, and the deck
+    types nothing. Requiring more of the layout (no ● item above the line)
+    would rest on a screen not yet captured live, and could miss a real
+    stop, which costs an agent left waiting unseen."""
     lines = last_turn_lines(screen)
     for i, line in enumerate(lines):
         if not _ERROR_LINE.match(line):
