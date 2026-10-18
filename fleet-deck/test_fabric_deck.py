@@ -24,6 +24,7 @@ from fabric_deck import (
     SAFEGUARD_TELL_ROLE,
     last_turn,
     safeguard_stopped,
+    safeguard_teller,
     tell_in_background,
     tell_safeguard_stop,
     agent_view_command,
@@ -2346,6 +2347,18 @@ class SafeguardScreen(unittest.TestCase):
         quoted = SAFEGUARD_SCREEN.replace("  ⎿  API Error:", "● It said API Error:")
         self.assertFalse(safeguard_stopped(quoted))
 
+    def test_an_agent_message_that_quotes_the_error_on_a_line_of_its_own_is_no_stop(self):
+        quote = "  API Error: 400 safeguards flagged this request"
+        message = "● The last tool call failed with this, verbatim:"
+        for lines in ([message, "", quote, "", RULE, "> ", RULE],
+                      [message, quote, "", RULE, "> ", RULE],
+                      [message, quote]):
+            self.assertFalse(safeguard_stopped("\n".join(lines)), lines)
+
+    def test_the_marks_count_only_within_the_errors_own_block(self):
+        mixed = ["  ⎿  API Error: 529 overloaded", "● Note: safeguards flagged nothing here.", RULE, "> ", RULE]
+        self.assertFalse(safeguard_stopped("\n".join(mixed)))
+
     def test_a_screen_without_the_box_is_judged_by_its_last_lines(self):
         bare = SAFEGUARD_SCREEN.split(RULE)[0]
         self.assertTrue(safeguard_stopped(bare))
@@ -2463,6 +2476,26 @@ class SafeguardReport(unittest.TestCase):
         def run(argv, **_):
             raise ValueError("odd")
         self.assertEqual(self.run_tell(run), ["ui: the safeguard stop was not reported: odd"])
+
+    def test_a_temporary_directory_that_cannot_be_made_is_logged_not_raised(self):
+        logs = []
+        with mock.patch("tempfile.TemporaryDirectory", side_effect=OSError(28, "No space left on device")):
+            tell_safeguard_stop("ui", NOW, logs.append)
+        self.assertEqual(len(logs), 1)
+        self.assertIn("the safeguard stop was not reported", logs[0])
+
+    def test_the_deck_is_given_a_teller_that_returns_at_once(self):
+        release, finished = threading.Event(), threading.Event()
+
+        def slow(login, since, log):
+            release.wait(5)
+            finished.set()
+
+        with mock.patch("fabric_deck.tell_safeguard_stop", slow):
+            safeguard_teller(lambda line: None)("ui", NOW)
+            self.assertFalse(finished.is_set(), "the deck's loop does not wait on the report")
+            release.set()
+            self.assertTrue(finished.wait(5))
 
     def test_the_report_runs_off_the_loop(self):
         release, finished = threading.Event(), threading.Event()

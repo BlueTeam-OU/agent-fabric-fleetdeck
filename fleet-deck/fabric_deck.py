@@ -1832,17 +1832,38 @@ def last_turn(screen: str) -> str:
     return " ".join(" ".join(last_turn_lines(screen)).split())
 
 
+# The harness's own result line: its glyph, then the error's first mark.
+_ERROR_LINE = re.compile(r"\s*⎿\s*" + re.escape(SAFEGUARD_MARKS[0]))
+# A line that starts a turn's next item, so ends the error's wrap.
+_ITEM_GLYPHS = ("⎿", "●", ">")
+
+
 def safeguard_stopped(screen: str) -> bool:
-    """The error is the harness's own line, which begins with its first
-    mark (after the tool-output glyph ⎿, as Claude Code draws a turn's
-    result); both marks may then wrap onto the next lines. An agent's
-    message that quotes them begins with its own glyph (●) and is no stop:
-    the screen's text is the agent's and its model's to write."""
+    """The error is the harness's own block: a line that begins with the
+    result glyph ⎿ and the first mark, and the indented lines it wraps
+    onto, which hold both marks. Text the agent wrote never carries ⎿ (its
+    message begins with ●, and its later lines are only indented), so a
+    message that quotes the error, on its first line or on a line of its
+    own, is no stop: the screen's text is the agent's and its model's to
+    write."""
     lines = last_turn_lines(screen)
-    if not any(line.strip().lstrip("⎿").lstrip().startswith(SAFEGUARD_MARKS[0]) for line in lines):
-        return False
-    turn = " ".join(" ".join(lines).split())
-    return all(mark in turn for mark in SAFEGUARD_MARKS)
+    for i, line in enumerate(lines):
+        if not _ERROR_LINE.match(line):
+            continue
+        block = [line]
+        for wrapped in lines[i + 1:]:
+            if not wrapped.strip() or not wrapped[:1].isspace() or wrapped.lstrip().startswith(_ITEM_GLYPHS):
+                break
+            block.append(wrapped)
+        text = " ".join(" ".join(block).split())
+        if all(mark in text for mark in SAFEGUARD_MARKS):
+            return True
+    return False
+
+
+def safeguard_teller(log: Callable[[str], None]) -> Callable[[str, datetime.datetime], None]:
+    """What main gives the deck as tell_safeguard: the report, off the loop."""
+    return lambda login, since: tell_in_background(lambda: tell_safeguard_stop(login, since, log))
 
 
 def tell_in_background(tell: Callable[[], None]) -> None:
@@ -1861,9 +1882,9 @@ def tell_safeguard_stop(login: str, since: datetime.datetime, log: Callable[[str
     import tempfile
 
     stamp = since.strftime("%Y-%m-%dT%H:%M:%SZ")
-    with tempfile.TemporaryDirectory(prefix="fabric-deck-") as scratch:
-        path = os.path.join(scratch, "info.txt")
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix="fabric-deck-") as scratch:
+            path = os.path.join(scratch, "info.txt")
             subprocess.run(["gzcoord-compose", "INFO", "--to-role", SAFEGUARD_TELL_ROLE, "--subject",
                             f"{login} stopped on a model safeguard refusal at {stamp}", "-o", path],
                            capture_output=True, text=True, timeout=30, check=True)
@@ -1878,12 +1899,12 @@ def tell_safeguard_stop(login: str, since: datetime.datetime, log: Callable[[str
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
             subprocess.run(["gzcoord-send", path], capture_output=True, text=True, timeout=60, check=True)
-        except Exception as error:  # noqa: BLE001 — logged, never raised (above)
-            detail = getattr(error, "stderr", None) or str(error)
-            if isinstance(detail, bytes):
-                # TimeoutExpired carries bytes whatever text= said.
-                detail = detail.decode("utf-8", "replace")
-            log(f"{login}: the safeguard stop was not reported: {printable(str(detail).strip()[:300])}")
+    except Exception as error:  # noqa: BLE001 — logged, never raised (above)
+        detail = getattr(error, "stderr", None) or str(error)
+        if isinstance(detail, bytes):
+            # TimeoutExpired carries bytes whatever text= said.
+            detail = detail.decode("utf-8", "replace")
+        log(f"{login}: the safeguard stop was not reported: {printable(str(detail).strip()[:300])}")
 
 
 def report_command(pane: str, shown: Shown) -> tuple[str, ...]:
@@ -2277,7 +2298,7 @@ def main(argv: list[str] | None = None) -> int:
         log=log,
         fleet_tab=not args.no_fleet_tab,
         booting=lambda: lock_holder(boot_lock_path()) is not None,
-        tell_safeguard=lambda login, since: tell_in_background(lambda: tell_safeguard_stop(login, since, log)),
+        tell_safeguard=safeguard_teller(log),
     )
     return run(deck, Stream(on_line=take, log=log), woken)
 
