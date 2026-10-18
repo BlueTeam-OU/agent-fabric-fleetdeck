@@ -5,7 +5,7 @@ topic: "workflow-carried-2026-10-10"
 description: "Codex was removed from gzapi-org on 2026-10-09: never wait for a Codex review; still check for unresolved threads before calling the gate met"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

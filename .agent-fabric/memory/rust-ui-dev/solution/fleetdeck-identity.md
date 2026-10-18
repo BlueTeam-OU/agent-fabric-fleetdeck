@@ -5,7 +5,7 @@ topic: "fleetdeck-identity"
 description: "The herdr fork is Agent Fabric FleetDeck (agent-fabric-fleetdeck) from 0.10.0: what was renamed, what kept HERDR_* on purpose, the foreign-pane rule, and the release guards against Herdr's tags"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

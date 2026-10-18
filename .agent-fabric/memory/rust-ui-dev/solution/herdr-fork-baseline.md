@@ -5,7 +5,7 @@ topic: "herdr-fork-baseline"
 description: "Where the herdr fork began: upstream 3d9d2b18 (master 2026-10-06, version 0.9.3 = v0.9.3 + 46 unreleased commits); Herdr stable tags are side commits, never ancestors of master"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "fleetdeck-linux-only-keeps-platform-code"
 description: "Why FleetDeck's Debian/Fedora-only rule (2026-10-11) refuses non-Linux at entry points but keeps upstream's macOS/Windows code"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
