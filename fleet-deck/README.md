@@ -399,6 +399,17 @@ blocked`) sounds as any agent that needs attention does.
   [--wait|--resume|--watch]` only in the operator's own bare shell. While
   moveto runs, it never types into a pane, sends a key or closes one. A
   pane a person closes stays closed until the next restore.
+- **A safeguard stop** is shown, never recovered by the deck. When an idle
+  session's screen ends on Claude Code's own error for a turn the model's
+  safeguards refused (both `API Error` and `safeguards flagged` in the
+  last turn above the prompt box) for 60 s, the harness pane shows
+  `blocked`, worded `safeguard stop`, so herdr's red and sound reach you.
+  The deck logs the stop once and reports it once, as a GZCoord INFO to
+  fabric-coordinator naming the agent and the time, never the refused
+  text. It reads an idle pane's screen at most every 15 s, and nothing
+  while the session works. A new stop, after the session moved on, is
+  said and reported again. The stop hands the turn to a person by design:
+  look at the screen, then answer it there.
 - **A pane the deck stops following** gives back what the deck set: the
   agent row, the displayed name and the state labels. That covers a pane
   whose account left `moveto --list`, and one whose tab or label changed.

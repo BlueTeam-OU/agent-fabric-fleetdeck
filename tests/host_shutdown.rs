@@ -28,7 +28,7 @@ impl LoginManager {
         _who: &str,
         _why: &str,
         mode: &str,
-    ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+    ) -> zbus::fdo::Result<zbus::OwnedFd> {
         assert_eq!((what, mode), ("shutdown", "delay"));
         let (lock, peer) = UnixStream::pair().unwrap();
         peer.set_nonblocking(true).unwrap();
@@ -65,11 +65,8 @@ fn private_bus(address: &str) -> ChildGuard {
 
 async fn login_service(address: &str, peer: Arc<Mutex<Option<UnixStream>>>) -> zbus::Connection {
     zbus::connection::Builder::address(address)
-        .unwrap()
         .name("org.freedesktop.login1")
-        .unwrap()
         .serve_at("/org/freedesktop/login1", LoginManager { peer })
-        .unwrap()
         .build()
         .await
         .unwrap()

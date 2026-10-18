@@ -3,9 +3,12 @@ import json
 import os
 import shlex
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
 from fabric_deck import (
@@ -16,6 +19,14 @@ from fabric_deck import (
     NEW_WORKSPACE,
     UNBOUND,
     RESEND_AFTER_S,
+    SAFEGUARD_LOOK_S,
+    SAFEGUARD_SETTLE_S,
+    SAFEGUARD_TELL_ROLE,
+    last_turn,
+    safeguard_stopped,
+    safeguard_teller,
+    tell_in_background,
+    tell_safeguard_stop,
     agent_view_command,
     is_agent_view,
     read_tab,
@@ -254,6 +265,15 @@ class FakeHerdr(Herdr):
         self.plugin_linked = True
         self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
         self.zoom_in_tab = True  # False: a FleetDeck from before pane.zoom_in_tab
+        self.screens = {}  # pane -> what `pane read --source visible` answers
+
+    def text(self, *args):
+        if args[:2] == ("pane", "read"):
+            if self.down:
+                raise ConnectionError("herdr's socket refuses")
+            self.calls.append(args)
+            return self.screens.get(args[2], "")
+        return super().text(*args)
 
     def _id(self, kind):
         # Never one a test named by hand (p0, p1, p2...): a split must not
@@ -2286,6 +2306,214 @@ class UnknownStateTest(unittest.TestCase):
             "address": "h/a", "ts": now.isoformat(),
             "sessions": [{"session": "s1", "state": "working", "since": now.isoformat()}]}))
         self.assertEqual(live_of(row, now).count, 1)
+
+
+RULE = "─" * 60
+# Claude Code's screen after a model's safeguards refused a turn: the error
+# is the last turn, above the empty prompt box (the error's words as the
+# owner quoted them on 2026-10-18, the model's name left out).
+SAFEGUARD_SCREEN = "\n".join((
+    "● Done; the branch is pushed.",
+    "",
+    "> go on with the next job",
+    "",
+    "  ⎿  API Error: the model's safeguards flagged this message as possibly",
+    "     violating the usage policy. Claude Code can't respond to this message",
+    "     with the model. Double press esc to edit your last message, or try a",
+    "     different model with /model.",
+    "",
+    RULE,
+    "> ",
+    RULE,
+    "  ? for shortcuts",
+))
+
+
+class SafeguardScreen(unittest.TestCase):
+    def test_the_error_as_the_last_turn_is_a_stop(self):
+        self.assertTrue(safeguard_stopped(SAFEGUARD_SCREEN))
+        self.assertTrue(last_turn(SAFEGUARD_SCREEN).startswith("⎿ API Error:"), "one line, wraps joined")
+
+    def test_the_error_further_up_is_no_stop(self):
+        later = SAFEGUARD_SCREEN.replace("> \n", "") .split(RULE)[0] + "● Recovered; going on.\n\n" \
+            + RULE + "\n> \n" + RULE + "\n"
+        self.assertFalse(safeguard_stopped(later))
+
+    def test_a_turn_that_mentions_one_word_is_no_stop(self):
+        for words in ("● The API Error was a timeout.", "● Those safeguards flagged nothing."):
+            self.assertFalse(safeguard_stopped("\n".join((words, "", RULE, "> ", RULE))), words)
+
+    def test_an_agent_message_that_quotes_the_error_is_no_stop(self):
+        quoted = SAFEGUARD_SCREEN.replace("  ⎿  API Error:", "● It said API Error:")
+        self.assertFalse(safeguard_stopped(quoted))
+
+    def test_an_agent_message_that_quotes_the_error_on_a_line_of_its_own_is_no_stop(self):
+        quote = "  API Error: 400 safeguards flagged this request"
+        message = "● The last tool call failed with this, verbatim:"
+        for lines in ([message, "", quote, "", RULE, "> ", RULE],
+                      [message, quote, "", RULE, "> ", RULE],
+                      [message, quote]):
+            self.assertFalse(safeguard_stopped("\n".join(lines)), lines)
+
+    def test_the_marks_count_only_within_the_errors_own_block(self):
+        mixed = ["  ⎿  API Error: 529 overloaded", "● Note: safeguards flagged nothing here.", RULE, "> ", RULE]
+        self.assertFalse(safeguard_stopped("\n".join(mixed)))
+
+    def test_a_result_line_the_model_wrote_is_taken_for_the_harnesss(self):
+        # The stated assumption (safeguard_stopped's docstring), pinned so
+        # a change to it is a decision, not a drift.
+        forged = ["● Saw this on the other pane:", "  ⎿  API Error: safeguards flagged it", "", RULE, "> ", RULE]
+        self.assertTrue(safeguard_stopped("\n".join(forged)))
+
+    def test_a_screen_without_the_box_is_judged_by_its_last_lines(self):
+        bare = SAFEGUARD_SCREEN.split(RULE)[0]
+        self.assertTrue(safeguard_stopped(bare))
+        self.assertFalse(safeguard_stopped(bare + "\n".join(f"line {i}" for i in range(7))))
+
+
+class SafeguardStop(unittest.TestCase):
+    def idle(self):
+        """An account whose harness runs a session that is idle."""
+        h, harness = Follow.ready(self)
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "idle")
+        told = []
+        h.deck.tell_safeguard = lambda login, since: told.append((login, since))
+        h.deck.follow(20)
+        return h, harness, told
+
+    def typed(self, h, harness):
+        return [c for c in h.herdr.calls if c[:2] in (("pane", "send-text"), ("pane", "send-keys"),
+                                                       ("pane", "run")) and c[2] == harness]
+
+    def test_a_stop_held_for_the_settle_time_shows_blocked_and_is_reported_once(self):
+        h, harness, told = self.idle()
+        runs = len(self.typed(h, harness))
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        h.deck.follow(40)
+        self.assertEqual(h.herdr.agent_status[harness], "idle", "not before the settle time")
+        h.deck.follow(40 + SAFEGUARD_SETTLE_S)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("safeguard stop", "--state-label", "blocked=safeguard stop"))
+        self.assertEqual(told, [("ui", NOW)])
+        self.assertEqual(sum("stopped on a model safeguard refusal" in line for line in h.logs), 1)
+        for at in range(1, 5):
+            h.deck.follow(40 + SAFEGUARD_SETTLE_S + at * SAFEGUARD_LOOK_S)
+        self.assertEqual(len(told), 1, "one report per stop, however long it lasts")
+        self.assertEqual(len(self.typed(h, harness)), runs, "the deck types nothing into the pane")
+        self.assertFalse([line for line in h.logs if "flagged" in line], "the refused turn stays out of the log")
+
+    def test_a_stop_that_ends_is_said_again_when_the_next_one_comes(self):
+        h, harness, told = self.idle()
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        h.deck.follow(40)
+        h.deck.follow(40 + SAFEGUARD_SETTLE_S)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(200)
+        self.assertEqual(h.herdr.agent_status[harness], "working")
+        h.records["ui"] = record("ui", "idle")
+        h.deck.follow(210)
+        h.deck.follow(210 + SAFEGUARD_SETTLE_S)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        self.assertEqual(len(told), 2)
+
+    def test_a_working_session_is_not_read(self):
+        h, harness, told = self.idle()
+        h.records["ui"] = record("ui", "working")
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        reads = sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        for at in (40, 40 + SAFEGUARD_SETTLE_S, 200):
+            h.deck.follow(at)
+        self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), reads)
+        self.assertEqual((h.herdr.agent_status[harness], told), ("working", []))
+
+    def test_turning_working_and_idle_again_keeps_the_look_pace(self):
+        h, harness, _ = self.idle()
+        reads = lambda: sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        before = reads()
+        for at, state in ((22, "working"), (24, "idle"), (26, "working"), (28, "idle")):
+            h.records["ui"] = record("ui", state)
+            h.deck.follow(at)
+        self.assertEqual(reads(), before, "within SAFEGUARD_LOOK_S of the last read")
+        h.deck.follow(20 + SAFEGUARD_LOOK_S)
+        self.assertEqual(reads(), before + 1)
+
+    def test_an_idle_screen_is_read_once_per_look(self):
+        h, harness, _ = self.idle()
+        before = sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        for at in range(21, 21 + SAFEGUARD_LOOK_S - 1, 2):
+            h.deck.follow(at)
+        self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), before)
+
+
+class SafeguardReport(unittest.TestCase):
+    def run_tell(self, run):
+        logs = []
+        with mock.patch("fabric_deck.subprocess.run", run):
+            tell_safeguard_stop("ui", NOW, logs.append)
+        return logs
+
+    def test_it_goes_to_the_role_and_carries_no_screen_text(self):
+        argvs = []
+
+        def run(argv, **_):
+            argvs.append(argv)
+            if argv[0] == "gzcoord-compose":
+                with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as f:
+                    f.write("[GZCOORD/1] INFO\nSUBJECT: s\n\nCONTEXT:\n\nNOTES:\n\nREFERENCES:\n")
+            else:
+                with open(argv[1], encoding="utf-8") as f:
+                    argvs.append(f.read())
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        self.assertEqual(self.run_tell(run), [])
+        self.assertEqual(argvs[0][1:4], ["INFO", "--to-role", SAFEGUARD_TELL_ROLE])
+        self.assertEqual(argvs[1][0], "gzcoord-send")
+        self.assertIn("ui's session idle", argvs[2])
+        self.assertNotIn("flagged", argvs[2])
+
+    def test_a_timeout_with_bytes_on_stderr_is_logged_not_raised(self):
+        def run(argv, **_):
+            raise subprocess.TimeoutExpired(argv, 30, stderr=b"relay slow\n")
+        logs = self.run_tell(run)
+        self.assertEqual(logs, ["ui: the safeguard stop was not reported: relay slow"])
+
+    def test_any_other_failure_is_logged_not_raised(self):
+        def run(argv, **_):
+            raise ValueError("odd")
+        self.assertEqual(self.run_tell(run), ["ui: the safeguard stop was not reported: odd"])
+
+    def test_a_temporary_directory_that_cannot_be_made_is_logged_not_raised(self):
+        logs = []
+        with mock.patch("tempfile.TemporaryDirectory", side_effect=OSError(28, "No space left on device")):
+            tell_safeguard_stop("ui", NOW, logs.append)
+        self.assertEqual(len(logs), 1)
+        self.assertIn("the safeguard stop was not reported", logs[0])
+
+    def test_the_deck_is_given_a_teller_that_returns_at_once(self):
+        release, finished = threading.Event(), threading.Event()
+
+        def slow(login, since, log):
+            release.wait(5)
+            finished.set()
+
+        with mock.patch("fabric_deck.tell_safeguard_stop", slow):
+            safeguard_teller(lambda line: None)("ui", NOW)
+            self.assertFalse(finished.is_set(), "the deck's loop does not wait on the report")
+            release.set()
+            self.assertTrue(finished.wait(5))
+
+    def test_the_report_runs_off_the_loop(self):
+        release, finished = threading.Event(), threading.Event()
+
+        def tell():
+            release.wait(5)
+            finished.set()
+
+        tell_in_background(tell)
+        self.assertFalse(finished.is_set(), "returned while the report still waits")
+        release.set()
+        self.assertTrue(finished.wait(5))
 
 
 if __name__ == "__main__":
