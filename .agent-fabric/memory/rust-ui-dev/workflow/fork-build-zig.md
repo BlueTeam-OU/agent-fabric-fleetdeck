@@ -5,7 +5,7 @@ topic: "fork-build-zig"
 description: "How to build the FleetDeck fork on develop-qzapp — Zig 0.16 is not on the host; rust-ui-dev-02 keeps one in its home"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

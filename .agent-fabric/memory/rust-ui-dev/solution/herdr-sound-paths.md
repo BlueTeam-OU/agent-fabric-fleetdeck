@@ -5,7 +5,7 @@ topic: "herdr-sound-paths"
 description: "Where herdr decides and plays agent sounds (server vs client, shell vs attach), and how the fork's per-transition sounds hook in"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "pr-status-needs-gate-counts"
 description: "any PR named in a reply (mine or another agent's, any repo) needs \"#N (W work, F fix)\" from fabric-pr gate, or the Stop hook blocks the reply"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

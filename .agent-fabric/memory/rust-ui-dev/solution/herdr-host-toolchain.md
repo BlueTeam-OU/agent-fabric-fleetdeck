@@ -5,7 +5,7 @@ topic: "herdr-host-toolchain"
 description: "What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "herdr-fork-ci-platforms"
 description: "The herdr fork's CI first ran macOS and Windows on PR #14 (2026-10-11): what broke, why Linux can't see it, and which local cross-checks do not work on develop-qzapp"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

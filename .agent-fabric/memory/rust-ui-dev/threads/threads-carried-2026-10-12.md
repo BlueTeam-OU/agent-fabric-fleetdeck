@@ -1,10 +1,11 @@
 ---
 role: "rust-ui-dev"
 class: threads
+topic: "threads-carried-2026-10-12"
 description: "FleetDeck attention s2 (needs-you views) — ownership split, the view rules agreed, and where the contract lives"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
