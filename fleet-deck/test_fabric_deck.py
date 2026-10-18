@@ -3,9 +3,12 @@ import json
 import os
 import shlex
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
 from fabric_deck import (
@@ -18,8 +21,11 @@ from fabric_deck import (
     RESEND_AFTER_S,
     SAFEGUARD_LOOK_S,
     SAFEGUARD_SETTLE_S,
+    SAFEGUARD_TELL_ROLE,
     last_turn,
     safeguard_stopped,
+    tell_in_background,
+    tell_safeguard_stop,
     agent_view_command,
     is_agent_view,
     read_tab,
@@ -2336,6 +2342,10 @@ class SafeguardScreen(unittest.TestCase):
         for words in ("● The API Error was a timeout.", "● Those safeguards flagged nothing."):
             self.assertFalse(safeguard_stopped("\n".join((words, "", RULE, "> ", RULE))), words)
 
+    def test_an_agent_message_that_quotes_the_error_is_no_stop(self):
+        quoted = SAFEGUARD_SCREEN.replace("  ⎿  API Error:", "● It said API Error:")
+        self.assertFalse(safeguard_stopped(quoted))
+
     def test_a_screen_without_the_box_is_judged_by_its_last_lines(self):
         bare = SAFEGUARD_SCREEN.split(RULE)[0]
         self.assertTrue(safeguard_stopped(bare))
@@ -2398,12 +2408,73 @@ class SafeguardStop(unittest.TestCase):
         self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), reads)
         self.assertEqual((h.herdr.agent_status[harness], told), ("working", []))
 
+    def test_turning_working_and_idle_again_keeps_the_look_pace(self):
+        h, harness, _ = self.idle()
+        reads = lambda: sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        before = reads()
+        for at, state in ((22, "working"), (24, "idle"), (26, "working"), (28, "idle")):
+            h.records["ui"] = record("ui", state)
+            h.deck.follow(at)
+        self.assertEqual(reads(), before, "within SAFEGUARD_LOOK_S of the last read")
+        h.deck.follow(20 + SAFEGUARD_LOOK_S)
+        self.assertEqual(reads(), before + 1)
+
     def test_an_idle_screen_is_read_once_per_look(self):
         h, harness, _ = self.idle()
         before = sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
         for at in range(21, 21 + SAFEGUARD_LOOK_S - 1, 2):
             h.deck.follow(at)
         self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), before)
+
+
+class SafeguardReport(unittest.TestCase):
+    def run_tell(self, run):
+        logs = []
+        with mock.patch("fabric_deck.subprocess.run", run):
+            tell_safeguard_stop("ui", NOW, logs.append)
+        return logs
+
+    def test_it_goes_to_the_role_and_carries_no_screen_text(self):
+        argvs = []
+
+        def run(argv, **_):
+            argvs.append(argv)
+            if argv[0] == "gzcoord-compose":
+                with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as f:
+                    f.write("[GZCOORD/1] INFO\nSUBJECT: s\n\nCONTEXT:\n\nNOTES:\n\nREFERENCES:\n")
+            else:
+                with open(argv[1], encoding="utf-8") as f:
+                    argvs.append(f.read())
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        self.assertEqual(self.run_tell(run), [])
+        self.assertEqual(argvs[0][1:4], ["INFO", "--to-role", SAFEGUARD_TELL_ROLE])
+        self.assertEqual(argvs[1][0], "gzcoord-send")
+        self.assertIn("ui's session idle", argvs[2])
+        self.assertNotIn("flagged", argvs[2])
+
+    def test_a_timeout_with_bytes_on_stderr_is_logged_not_raised(self):
+        def run(argv, **_):
+            raise subprocess.TimeoutExpired(argv, 30, stderr=b"relay slow\n")
+        logs = self.run_tell(run)
+        self.assertEqual(logs, ["ui: the safeguard stop was not reported: relay slow"])
+
+    def test_any_other_failure_is_logged_not_raised(self):
+        def run(argv, **_):
+            raise ValueError("odd")
+        self.assertEqual(self.run_tell(run), ["ui: the safeguard stop was not reported: odd"])
+
+    def test_the_report_runs_off_the_loop(self):
+        release, finished = threading.Event(), threading.Event()
+
+        def tell():
+            release.wait(5)
+            finished.set()
+
+        tell_in_background(tell)
+        self.assertFalse(finished.is_set(), "returned while the report still waits")
+        release.set()
+        self.assertTrue(finished.wait(5))
 
 
 if __name__ == "__main__":

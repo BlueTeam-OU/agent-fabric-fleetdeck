@@ -958,8 +958,10 @@ SAFEGUARD_LOOK_S = 15
 # The word in the agent row, beside herdr's blocked (red, and its sound).
 SAFEGUARD_LABEL = "safeguard stop"
 # Who is told of each stop (j27's REQUEST): an INFO naming the agent and
-# the time, never the refused text, which stays on the agent's screen.
-SAFEGUARD_TELL = "develop-qzapp/user"
+# the time, never the refused text, which stays on the agent's screen. The
+# role, not a login: whoever holds it hears, and the deck's own login (the
+# operator's, which may hold the role too) is never the addressee.
+SAFEGUARD_TELL_ROLE = "fabric-coordinator"
 
 
 @dataclass
@@ -1650,7 +1652,9 @@ class Deck:
         reads the screen and types nothing: the stop hands the turn to a
         person by design, and the deck does not take it from them (j27)."""
         if shown != Shown("idle", ""):
-            self._safeguard_clear(login)
+            # The verdict goes, the time of the last read stays: a session
+            # that turns idle again soon is read on the look's own pace.
+            self._safeguard_clear(login, keep_look=True)
             return shown
         looked = self.safeguard_look.get(login)
         if looked is None or now - looked[0] >= SAFEGUARD_LOOK_S:
@@ -1672,13 +1676,17 @@ class Deck:
             self.safeguard_said.add(login)
             self.log(f"{login}: stopped on a model safeguard refusal since "
                      f"{since[1].strftime('%H:%M:%SZ')}; it waits for a person")
+            # Must return at once: it runs inside the loop over every
+            # account (main wires tell_in_background).
             self.tell_safeguard(login, since[1])
         return Shown("blocked", SAFEGUARD_LABEL)
 
-    def _safeguard_clear(self, login: str) -> None:
+    def _safeguard_clear(self, login: str, keep_look: bool = False) -> None:
         self.safeguard_since.pop(login, None)
-        self.safeguard_look.pop(login, None)
         self.safeguard_said.discard(login)
+        looked = self.safeguard_look.pop(login, None)
+        if keep_look and looked is not None:
+            self.safeguard_look[login] = (looked[0], False)
 
     def _read_back(self, login: str, pane: str, shown: Shown) -> None:
         """herdr answers a report it drops (another agent detected in the
@@ -1797,12 +1805,11 @@ def _is_rule(line: str) -> bool:
     return len(body) >= 10 and set(body) <= {"─", "━"}
 
 
-def last_turn(screen: str) -> str:
-    """The text of the screen's last turn: what stands above the prompt box
-    at the bottom, up to the blank line before it, with each run of
-    whitespace made one space so a wrapped line reads as one. A screen with
-    no prompt box (scrolled, or a harness drawn otherwise) gives its last
-    six lines: the marks still have to be at the bottom."""
+def last_turn_lines(screen: str) -> list[str]:
+    """The lines of the screen's last turn: what stands above the prompt box
+    at the bottom, up to the blank line before it. A screen with no prompt
+    box (scrolled, or a harness drawn otherwise) gives its last six lines:
+    the marks still have to be at the bottom."""
     lines = [line.rstrip() for line in screen.splitlines()]
     rules = [i for i, line in enumerate(lines) if _is_rule(line)]
     if len(rules) < 2:
@@ -1816,25 +1823,48 @@ def last_turn(screen: str) -> str:
         while start > 0 and above[start - 1].strip():
             start -= 1
         turn = above[start:]
-    return " ".join(" ".join(turn).split())
+    return turn
+
+
+def last_turn(screen: str) -> str:
+    """The last turn as one line: each run of whitespace made one space, so
+    a wrapped line reads as one."""
+    return " ".join(" ".join(last_turn_lines(screen)).split())
 
 
 def safeguard_stopped(screen: str) -> bool:
-    turn = last_turn(screen)
+    """The error is the harness's own line, which begins with its first
+    mark (after the tool-output glyph ⎿, as Claude Code draws a turn's
+    result); both marks may then wrap onto the next lines. An agent's
+    message that quotes them begins with its own glyph (●) and is no stop:
+    the screen's text is the agent's and its model's to write."""
+    lines = last_turn_lines(screen)
+    if not any(line.strip().lstrip("⎿").lstrip().startswith(SAFEGUARD_MARKS[0]) for line in lines):
+        return False
+    turn = " ".join(" ".join(lines).split())
     return all(mark in turn for mark in SAFEGUARD_MARKS)
 
 
+def tell_in_background(tell: Callable[[], None]) -> None:
+    """A report off the deck's loop: gzcoord-send may wait a minute on a
+    slow relay, and every other account's pane waits on the loop."""
+    import threading
+
+    threading.Thread(target=tell, name="fabric-deck-tell", daemon=True).start()
+
+
 def tell_safeguard_stop(login: str, since: datetime.datetime, log: Callable[[str], None]) -> None:
-    """One INFO to SAFEGUARD_TELL through gzcoord-compose and gzcoord-send,
-    as the deck's login. A failure is logged, never raised: the alert on the
-    pane is the deck's job, the message only its report."""
+    """One INFO to SAFEGUARD_TELL_ROLE through gzcoord-compose and
+    gzcoord-send, as the deck's login. A failure of any kind is logged,
+    never raised: the alert on the pane is the deck's job, the message only
+    its report, and the log is where a lost one is seen."""
     import tempfile
 
     stamp = since.strftime("%Y-%m-%dT%H:%M:%SZ")
     with tempfile.TemporaryDirectory(prefix="fabric-deck-") as scratch:
         path = os.path.join(scratch, "info.txt")
         try:
-            subprocess.run(["gzcoord-compose", "INFO", "--to", SAFEGUARD_TELL, "--subject",
+            subprocess.run(["gzcoord-compose", "INFO", "--to-role", SAFEGUARD_TELL_ROLE, "--subject",
                             f"{login} stopped on a model safeguard refusal at {stamp}", "-o", path],
                            capture_output=True, text=True, timeout=30, check=True)
             with open(path, encoding="utf-8") as f:
@@ -1842,15 +1872,18 @@ def tell_safeguard_stop(login: str, since: datetime.datetime, log: Callable[[str
             text = text.replace("CONTEXT:\n", "CONTEXT:\n"
                                 f"The deck saw {login}'s session idle on Claude Code's safeguard\n"
                                 f"error since {stamp}. It waits for a person; the deck typed\n"
-                                "nothing. Its pane is marked blocked (safeguards).\n", 1)
+                                f"nothing. Its pane is marked blocked ({SAFEGUARD_LABEL}).\n", 1)
             text = text.replace("NOTES:\n", "NOTES:\n"
                                 "- The refused text is not carried; it is on the agent's screen.\n", 1)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
             subprocess.run(["gzcoord-send", path], capture_output=True, text=True, timeout=60, check=True)
-        except (OSError, subprocess.SubprocessError) as error:
+        except Exception as error:  # noqa: BLE001 — logged, never raised (above)
             detail = getattr(error, "stderr", None) or str(error)
-            log(f"{login}: the safeguard stop was not reported: {printable(detail.strip()[:300])}")
+            if isinstance(detail, bytes):
+                # TimeoutExpired carries bytes whatever text= said.
+                detail = detail.decode("utf-8", "replace")
+            log(f"{login}: the safeguard stop was not reported: {printable(str(detail).strip()[:300])}")
 
 
 def report_command(pane: str, shown: Shown) -> tuple[str, ...]:
@@ -2244,7 +2277,7 @@ def main(argv: list[str] | None = None) -> int:
         log=log,
         fleet_tab=not args.no_fleet_tab,
         booting=lambda: lock_holder(boot_lock_path()) is not None,
-        tell_safeguard=lambda login, since: tell_safeguard_stop(login, since, log),
+        tell_safeguard=lambda login, since: tell_in_background(lambda: tell_safeguard_stop(login, since, log)),
     )
     return run(deck, Stream(on_line=take, log=log), woken)
 
