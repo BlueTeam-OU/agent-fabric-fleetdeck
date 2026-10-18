@@ -65,8 +65,12 @@ portable-pty = { path = "vendor/portable-pty" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # logind's delay inhibitor lets the server save before host shutdown kills panes.
-zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The tests stand in for logind, which only the service side can serve.
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "service"] }
 
 [target.'cfg(windows)'.dependencies]
 # UTF-16 SDDL input for interprocess security descriptors.
