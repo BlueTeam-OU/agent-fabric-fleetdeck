@@ -227,33 +227,17 @@ jobs:
           key: ${{ env.LEG }}
           save-if: ${{ env.SAVE_CACHES }}
 
-      # Cargo still rebuilds workspace targets; only rustc's validated query state is retained.
-      - name: Restore incremental compiler state
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target/debug/incremental
-          key: ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
-          restore-keys: |
-            ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-
-
       - name: Run Linux lint
-        run: CARGO_INCREMENTAL=1 just lint
+        run: just lint
 
       - name: Run Linux tests
-        run: CARGO_INCREMENTAL=1 just ci-tests 'all()'
+        run: just ci-tests 'all()'
 
       - name: Check scalar libghostty with runtime safety
         env:
           LIBGHOSTTY_VT_SIMD: "false"
           LIBGHOSTTY_VT_OPTIMIZE: ReleaseSafe
-        run: CARGO_INCREMENTAL=1 cargo nextest run --locked -E 'package(ghostty-vt) | test(ghostty)' --status-level fail --final-status-level fail --failure-output final --success-output never
-
-      - name: Save incremental compiler state
-        if: env.SAVE_CACHES == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target/debug/incremental
-          key: ci-incremental-v1-${{ env.LEG }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ env.CARGO_PROFILE_DEV_DEBUG }}-${{ env.CARGO_PROFILE_TEST_DEBUG }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'build.rs', 'crates/*/Cargo.toml', 'crates/*/build.rs') }}-${{ github.sha }}
+        run: cargo nextest run --locked -E 'package(ghostty-vt) | test(ghostty)' --status-level fail --final-status-level fail --failure-output final --success-output never
 
       - name: Save Zig build cache
         if: env.SAVE_CACHES == 'true' && steps.zig-build.outputs.cache-hit != 'true'
