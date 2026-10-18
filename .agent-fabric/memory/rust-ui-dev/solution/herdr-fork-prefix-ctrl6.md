@@ -5,7 +5,7 @@ topic: "herdr-fork-prefix-ctrl6"
 description: "Why the herdr fork's prefix is ctrl+6, what herdr still takes from a pane, and how fleet-deck runs the deck detached"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

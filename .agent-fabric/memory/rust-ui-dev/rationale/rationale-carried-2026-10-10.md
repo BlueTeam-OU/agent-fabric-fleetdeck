@@ -5,7 +5,7 @@ topic: "rationale-carried-2026-10-10"
 description: "Why herdr's socket switch filters callers instead of unbinding, how a peer is placed inside a pane, and what it means for fabric-deck"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

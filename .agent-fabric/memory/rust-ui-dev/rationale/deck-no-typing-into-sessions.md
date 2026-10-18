@@ -5,7 +5,7 @@ topic: "deck-no-typing-into-sessions"
 description: "Why the Fleet Deck flags an agent with no inbox watch on the board instead of typing a re-arm prompt into its session"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-12"
+distilled_at: "2026-10-18"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"
