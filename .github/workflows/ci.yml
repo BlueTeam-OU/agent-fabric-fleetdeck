@@ -210,13 +210,15 @@ jobs:
       # What Zig builds is decided by the vendored source and the compiler
       # alone, so the key names those and an exact hit saves nothing: a key
       # per run stored ~0.5 GB per leg on every master push and evicted the
-      # cargo caches the next commit reuses.
+      # cargo caches the next commit reuses. hashFiles reads the disk, and
+      # the build fetches zig-pkg/ into the vendored tree: it is excluded,
+      # and the save reuses the restore's key rather than hashing again.
       - name: Restore Zig build cache
         id: zig-build
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**', 'crates/ghostty-vt/build.rs') }}
+          key: zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**', '!vendor/libghostty-vt/zig-pkg/**', 'crates/ghostty-vt/build.rs') }}
           restore-keys: |
             zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-
 
@@ -244,7 +246,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .zig-cache
-          key: zig-build-v2-${{ env.LEG }}-${{ runner.arch }}-0.16.0-${{ hashFiles('vendor/libghostty-vt/**', 'crates/ghostty-vt/build.rs') }}
+          key: ${{ steps.zig-build.outputs.cache-primary-key }}
 
   check-distro:
     name: check (${{ matrix.leg }})
