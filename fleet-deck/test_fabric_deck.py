@@ -16,6 +16,10 @@ from fabric_deck import (
     NEW_WORKSPACE,
     UNBOUND,
     RESEND_AFTER_S,
+    SAFEGUARD_LOOK_S,
+    SAFEGUARD_SETTLE_S,
+    last_turn,
+    safeguard_stopped,
     agent_view_command,
     is_agent_view,
     read_tab,
@@ -254,6 +258,15 @@ class FakeHerdr(Herdr):
         self.plugin_linked = True
         self.tab_move = True  # False: a FleetDeck from before tab.move_to_workspace
         self.zoom_in_tab = True  # False: a FleetDeck from before pane.zoom_in_tab
+        self.screens = {}  # pane -> what `pane read --source visible` answers
+
+    def text(self, *args):
+        if args[:2] == ("pane", "read"):
+            if self.down:
+                raise ConnectionError("herdr's socket refuses")
+            self.calls.append(args)
+            return self.screens.get(args[2], "")
+        return super().text(*args)
 
     def _id(self, kind):
         # Never one a test named by hand (p0, p1, p2...): a split must not
@@ -2286,6 +2299,111 @@ class UnknownStateTest(unittest.TestCase):
             "address": "h/a", "ts": now.isoformat(),
             "sessions": [{"session": "s1", "state": "working", "since": now.isoformat()}]}))
         self.assertEqual(live_of(row, now).count, 1)
+
+
+RULE = "─" * 60
+# Claude Code's screen after a model's safeguards refused a turn: the error
+# is the last turn, above the empty prompt box (the error's words as the
+# owner quoted them on 2026-10-18, the model's name left out).
+SAFEGUARD_SCREEN = "\n".join((
+    "● Done; the branch is pushed.",
+    "",
+    "> go on with the next job",
+    "",
+    "  ⎿  API Error: the model's safeguards flagged this message as possibly",
+    "     violating the usage policy. Claude Code can't respond to this message",
+    "     with the model. Double press esc to edit your last message, or try a",
+    "     different model with /model.",
+    "",
+    RULE,
+    "> ",
+    RULE,
+    "  ? for shortcuts",
+))
+
+
+class SafeguardScreen(unittest.TestCase):
+    def test_the_error_as_the_last_turn_is_a_stop(self):
+        self.assertTrue(safeguard_stopped(SAFEGUARD_SCREEN))
+        self.assertTrue(last_turn(SAFEGUARD_SCREEN).startswith("⎿ API Error:"), "one line, wraps joined")
+
+    def test_the_error_further_up_is_no_stop(self):
+        later = SAFEGUARD_SCREEN.replace("> \n", "") .split(RULE)[0] + "● Recovered; going on.\n\n" \
+            + RULE + "\n> \n" + RULE + "\n"
+        self.assertFalse(safeguard_stopped(later))
+
+    def test_a_turn_that_mentions_one_word_is_no_stop(self):
+        for words in ("● The API Error was a timeout.", "● Those safeguards flagged nothing."):
+            self.assertFalse(safeguard_stopped("\n".join((words, "", RULE, "> ", RULE))), words)
+
+    def test_a_screen_without_the_box_is_judged_by_its_last_lines(self):
+        bare = SAFEGUARD_SCREEN.split(RULE)[0]
+        self.assertTrue(safeguard_stopped(bare))
+        self.assertFalse(safeguard_stopped(bare + "\n".join(f"line {i}" for i in range(7))))
+
+
+class SafeguardStop(unittest.TestCase):
+    def idle(self):
+        """An account whose harness runs a session that is idle."""
+        h, harness = Follow.ready(self)
+        h.harness_runs(harness)
+        h.records["ui"] = record("ui", "idle")
+        told = []
+        h.deck.tell_safeguard = lambda login, since: told.append((login, since))
+        h.deck.follow(20)
+        return h, harness, told
+
+    def typed(self, h, harness):
+        return [c for c in h.herdr.calls if c[:2] in (("pane", "send-text"), ("pane", "send-keys"),
+                                                       ("pane", "run")) and c[2] == harness]
+
+    def test_a_stop_held_for_the_settle_time_shows_blocked_and_is_reported_once(self):
+        h, harness, told = self.idle()
+        runs = len(self.typed(h, harness))
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        h.deck.follow(40)
+        self.assertEqual(h.herdr.agent_status[harness], "idle", "not before the settle time")
+        h.deck.follow(40 + SAFEGUARD_SETTLE_S)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        self.assertEqual(h.herdr.reports(harness)[-1][-3:], ("safeguard stop", "--state-label", "blocked=safeguard stop"))
+        self.assertEqual(told, [("ui", NOW)])
+        self.assertEqual(sum("stopped on a model safeguard refusal" in line for line in h.logs), 1)
+        for at in range(1, 5):
+            h.deck.follow(40 + SAFEGUARD_SETTLE_S + at * SAFEGUARD_LOOK_S)
+        self.assertEqual(len(told), 1, "one report per stop, however long it lasts")
+        self.assertEqual(len(self.typed(h, harness)), runs, "the deck types nothing into the pane")
+        self.assertFalse([line for line in h.logs if "flagged" in line], "the refused turn stays out of the log")
+
+    def test_a_stop_that_ends_is_said_again_when_the_next_one_comes(self):
+        h, harness, told = self.idle()
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        h.deck.follow(40)
+        h.deck.follow(40 + SAFEGUARD_SETTLE_S)
+        h.records["ui"] = record("ui", "working")
+        h.deck.follow(200)
+        self.assertEqual(h.herdr.agent_status[harness], "working")
+        h.records["ui"] = record("ui", "idle")
+        h.deck.follow(210)
+        h.deck.follow(210 + SAFEGUARD_SETTLE_S)
+        self.assertEqual(h.herdr.agent_status[harness], "blocked")
+        self.assertEqual(len(told), 2)
+
+    def test_a_working_session_is_not_read(self):
+        h, harness, told = self.idle()
+        h.records["ui"] = record("ui", "working")
+        h.herdr.screens[harness] = SAFEGUARD_SCREEN
+        reads = sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        for at in (40, 40 + SAFEGUARD_SETTLE_S, 200):
+            h.deck.follow(at)
+        self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), reads)
+        self.assertEqual((h.herdr.agent_status[harness], told), ("working", []))
+
+    def test_an_idle_screen_is_read_once_per_look(self):
+        h, harness, _ = self.idle()
+        before = sum(c[:2] == ("pane", "read") for c in h.herdr.calls)
+        for at in range(21, 21 + SAFEGUARD_LOOK_S - 1, 2):
+            h.deck.follow(at)
+        self.assertEqual(sum(c[:2] == ("pane", "read") for c in h.herdr.calls), before)
 
 
 if __name__ == "__main__":
