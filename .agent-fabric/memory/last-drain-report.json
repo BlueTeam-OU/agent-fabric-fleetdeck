@@ -312,6 +312,11 @@
       "host": "develop-qzapp",
       "observed": "2026-10-11"
     },
+    ".agent-fabric/memory/rust-ui-dev/threads/threads-carried-2026-10-12.md#The SeedCipher seam j53's Android Keystore adapter implements, as p2p-network-dev-02 stated it on InterWeave#256 at e9c8cf3f; verify against main before building": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-10"
+    },
     ".agent-fabric/memory/rust-ui-dev/workflow/codex-review-gateway.md#How the second review engine (Codex) runs from this login, how review rounds are posted so the gate stays honest, and how a re-review brief is derived": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
