@@ -103,7 +103,7 @@ class Versions:
             text = self.manifest_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return {"schema_version": 1, "stable_source": "legacy", "current": None, "versions": []}
-        manifest = json.loads(text)
+        manifest = snapshot.load_json(text)
         if not isinstance(manifest, dict):
             raise DocsError(f"{self.manifest_path} has an unsupported schema")
         return manifest
@@ -114,7 +114,7 @@ class Versions:
         self.manifest_path.write_text(f"{json.dumps(manifest, indent=2, ensure_ascii=False)}\n", encoding="utf-8")
 
     def latest_version(self) -> Any:
-        return json.loads(self.latest_manifest_path.read_text(encoding="utf-8")).get("version")
+        return snapshot.load_json(self.latest_manifest_path.read_text(encoding="utf-8")).get("version")
 
     def release_metadata(self, tag: str) -> dict[str, Any]:
         version = normalize_version(tag)
@@ -218,7 +218,7 @@ class Versions:
 
             # A version may predate the config reference; one it has must parse.
             try:
-                json.loads((version_root / "src/data/config-reference.json").read_text(encoding="utf-8"))
+                snapshot.load_json((version_root / "src/data/config-reference.json").read_text(encoding="utf-8"))
             except FileNotFoundError:
                 pass
 

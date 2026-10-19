@@ -8,13 +8,14 @@ A snapshot holds ordinary files only: a tree entry that is not a 100644 blob
 snapshot that is not a regular file or directory, so a link can never carry
 a published page outside the tree it claims to copy.
 
-Every failure is a DocsError; a git command that fails raises
+Python 3.12 or newer (os.path.isjunction). Every failure is a DocsError; a git command that fails raises
 subprocess.CalledProcessError with git's stderr captured; run() reports
 either as exit 1.
 """
 from __future__ import annotations
 
 import os
+import json
 import posixpath
 import shutil
 import stat
@@ -96,7 +97,7 @@ def extract_git_tree(git: Git, ref: str, source_root: str, destination_root: Pat
     for entry in entries:
         assert_ordinary_file(entry, ref)
         relative_path = snapshot_relative_path(source_root, entry.path)
-        destination = destination_root / relative_path
+        destination = contained_path(destination_root, relative_path, entry.path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(git(["cat-file", "blob", entry.object], binary=True))
 
@@ -117,15 +118,16 @@ def compare_git_tree(git: Git, ref: str, source_root: str, snapshot_root: Path) 
     for relative_path in expected_paths:
         entry = expected[relative_path]
         expected_content = git(["cat-file", "blob", entry.object], binary=True)
-        if (snapshot_root / relative_path).read_bytes() != expected_content:
+        if contained_path(snapshot_root, relative_path, entry.path).read_bytes() != expected_content:
             raise DocsError(f"{relative_path} differs from {ref}:{entry.path}")
 
 
 def list_documentation_paths(root: Path) -> list[str]:
     """Every regular file under root, as a sorted list of /-separated paths.
 
-    lstat does not follow links, so a symlink (or a Windows junction) is
-    neither a directory nor a file here and is refused rather than walked.
+    lstat does not follow links, so a symlink is neither a directory nor a
+    file here and is refused rather than walked. Windows' lstat reports a
+    directory junction as a directory, so a junction is refused by name.
     A missing root raises FileNotFoundError: a published version without its
     documentation directory is a failure, not an empty snapshot.
     """
@@ -135,7 +137,7 @@ def list_documentation_paths(root: Path) -> list[str]:
         for name in os.listdir(directory):
             path = directory / name
             mode = os.lstat(path).st_mode
-            if stat.S_ISDIR(mode):
+            if stat.S_ISDIR(mode) and not os.path.isjunction(path):
                 walk(path, f"{prefix}{name}/")
             elif stat.S_ISREG(mode):
                 paths.append(f"{prefix}{name}")
@@ -152,7 +154,10 @@ def remove_tree(path: Path) -> None:
         mode = os.lstat(path).st_mode
     except FileNotFoundError:
         return
-    if stat.S_ISDIR(mode):
+    if os.path.isjunction(path):
+        # The link itself, never what it points at.
+        os.rmdir(path)
+    elif stat.S_ISDIR(mode):
         shutil.rmtree(path)
     else:
         path.unlink()
@@ -161,6 +166,15 @@ def remove_tree(path: Path) -> None:
 def assert_ordinary_file(entry: GitEntry, ref: str) -> None:
     if entry.type != "blob" or entry.mode != "100644":
         raise DocsError(f"{ref}:{entry.path} is not an ordinary documentation file")
+
+
+def load_json(text: str) -> object:
+    """Parse JSON as JSON.parse did: NaN and Infinity are not JSON."""
+
+    def refuse(constant: str) -> object:
+        raise DocsError(f"{constant} is not valid JSON")
+
+    return json.loads(text, parse_constant=refuse)
 
 
 def is_schema_version_one(value: object) -> bool:
@@ -172,12 +186,16 @@ def repo_root_from_environment(script: Path) -> Path:
     override = os.environ.get("HERDR_DOCS_REPO_ROOT")
     if override:
         return Path(os.path.abspath(override))
-    # abspath, not resolve: like the .mjs, a symlinked checkout keeps its path.
-    return Path(os.path.abspath(script)).parent.parent.parent
+    # Resolved through symlinks, as Node resolved the .mjs's own path.
+    return Path(script).resolve().parent.parent.parent
 
 
 def run(main: Callable[[list[str]], None], argv: list[str]) -> int:
     """Run a command's main, reporting a failure on stderr as exit 1."""
+    # "\n" on every platform, as the .mjs wrote: a caller's $(...) on Windows
+    # would otherwise keep a "\r".
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(newline="\n")
     try:
         main(argv)
     except subprocess.CalledProcessError as error:
@@ -199,3 +217,22 @@ def snapshot_relative_path(source_root: str, path: str) -> str:
     if not relative_path or relative_path == "." or relative_path == ".." or relative_path.startswith("../"):
         raise DocsError(f"unsafe snapshot path {path}")
     return relative_path
+
+
+def contained_path(root: Path, relative_path: str, original_path: str) -> Path:
+    """root joined with relative_path, refused unless it stays under root.
+
+    The join and the check use the host's own path rules, as the .mjs's
+    path.resolve and path.relative did: on Windows a backslash or a drive in
+    a git file name is a separator or a root, and could otherwise escape.
+    """
+    base = os.path.normpath(root)
+    target = os.path.normpath(os.path.join(base, relative_path))
+    try:
+        inside = target != base and os.path.commonpath([base, target]) == base
+    except ValueError:
+        # Different drives on Windows.
+        inside = False
+    if not inside:
+        raise DocsError(f"unsafe snapshot path {original_path}")
+    return Path(target)

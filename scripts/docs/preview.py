@@ -27,7 +27,6 @@ the contract, the trace was not. There is no help flag.
 """
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -54,7 +53,7 @@ def snapshot_preview(repo_root: Path, ref: str) -> None:
 def check_preview(repo_root: Path) -> None:
     git = snapshot.create_git(repo_root)
     manifest_path = repo_root / "distribution/preview.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = snapshot.load_json(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict) or not snapshot.is_schema_version_one(manifest.get("schema_version")) or manifest.get("channel") != "preview":
         raise snapshot.DocsError(f"{manifest_path} has an unsupported schema")
     commit = manifest.get("commit")

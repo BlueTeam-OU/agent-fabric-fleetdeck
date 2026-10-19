@@ -133,6 +133,19 @@ class SnapshotTest(unittest.TestCase):
                 snapshot.snapshot_relative_path("docs", path)
         self.assertEqual(snapshot.snapshot_relative_path("docs", "docs/a/b.md"), "a/b.md")
 
+    def test_a_joined_path_must_stay_under_its_root(self):
+        root = self.root / "out"
+        self.assertEqual(snapshot.contained_path(root, "a/b.md", "x"), root / "a/b.md")
+        for relative_path in ("../x", "a/../../x", ".", "/etc/passwd"):
+            with self.subTest(relative_path=relative_path), self.assertRaisesRegex(snapshot.DocsError, "unsafe snapshot path x"):
+                snapshot.contained_path(root, relative_path, "x")
+
+    def test_json_is_read_as_json_parse_read_it(self):
+        self.assertEqual(snapshot.load_json('{"a": [1, "b"]}'), {"a": [1, "b"]})
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant), self.assertRaisesRegex(snapshot.DocsError, "is not valid JSON"):
+                snapshot.load_json(f'{{"a": {constant}}}')
+
     def test_git_failure_reaches_run_as_exit_one(self):
         def main(argv):
             snapshot.resolve_commit(self.git, "no-such-ref")
