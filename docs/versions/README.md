@@ -7,7 +7,7 @@ Release CI creates each version from the tagged `docs/next` tree after the GitHu
 Validate every published version with:
 
 ```bash
-node scripts/docs/versions.mjs check
+python3 scripts/docs/versions.py check
 ```
 
 The private website renders each maintained version at `/docs/<version>/`, uses the version selected by `manifest.json` for `/docs/`, and renders the active preview snapshot at `/docs/preview/`. The source snapshots in this directory remain public release evidence; the private repository owns only their presentation.

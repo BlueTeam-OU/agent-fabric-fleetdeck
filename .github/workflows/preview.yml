@@ -71,7 +71,7 @@ jobs:
             exit 1
           fi
           current_preview="$(python3 scripts/preview.py current-commit --manifest distribution/preview.json || true)"
-          if [ "$current_preview" = "$commit" ] && node scripts/docs/preview.mjs check; then
+          if [ "$current_preview" = "$commit" ] && python3 scripts/docs/preview.py check; then
             echo "Preview and documentation already point at $commit; skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -365,7 +365,7 @@ jobs:
 
       - name: Update preview documentation and manifest
         run: |
-          node scripts/docs/preview.mjs snapshot '${{ needs.preflight.outputs.commit }}'
+          python3 scripts/docs/preview.py snapshot '${{ needs.preflight.outputs.commit }}'
           python3 scripts/preview.py manifest \
             --output distribution/preview.json \
             --tag '${{ needs.preflight.outputs.tag }}' \
@@ -390,8 +390,8 @@ jobs:
           remote="https://x-access-token:${FLEETDECK_PUBLISH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3; do
             git pull --rebase "$remote" master
-            node scripts/docs/preview.mjs check
-            node scripts/docs/versions.mjs check
+            python3 scripts/docs/preview.py check
+            python3 scripts/docs/versions.py check
             if git push "$remote" HEAD:master; then
               exit 0
             fi

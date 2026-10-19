@@ -34,7 +34,7 @@ describe("official publishing workflow boundaries", () => {
     const steps = release.jobs["update-latest-json"].steps;
     const publish = steps.find((step: any) => step.name === "Publish tagged documentation and update distribution manifest").run;
     const lines = publish.split("\n").map((line: string) => line.trim());
-    const copied = lines.indexOf('node scripts/docs/versions.mjs publish "$GITHUB_REF_NAME"');
+    const copied = lines.indexOf('python3 scripts/docs/versions.py publish "$GITHUB_REF_NAME"');
     expect(copied).toBeGreaterThanOrEqual(0);
     expect(lines.indexOf("git checkout -- README.md README.zh-CN.md")).toBeGreaterThan(copied);
     const commit = steps.find((step: any) => step.name === "Commit release distribution").run;

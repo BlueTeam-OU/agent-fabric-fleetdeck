@@ -134,6 +134,7 @@ bench-release-smoke:
 # Test public documentation snapshot and release lifecycle tooling
 docs-contract-test:
     bun test ./scripts/docs
+    {{python}} -m unittest scripts.docs.test_versions
 
 # Test bundled agent integration assets
 integration-assets-test:
@@ -153,8 +154,8 @@ build-libghostty-vt:
 release-docs-check:
     python3 scripts/agent_detection_manifest_check.py --require-all-published
     python3 scripts/config_reference_check.py
-    node scripts/docs/versions.mjs check
-    node scripts/docs/preview.mjs check
+    {{python}} scripts/docs/versions.py check
+    {{python}} scripts/docs/preview.py check
     just docs-contract-test
     @test -f docs/next/README.md
     @test -f docs/next/README.zh-CN.md

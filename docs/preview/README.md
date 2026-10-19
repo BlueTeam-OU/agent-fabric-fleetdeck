@@ -5,5 +5,5 @@
 Do not edit it manually. Preview CI replaces it from the selected commit's `docs/next/website` tree and commits the snapshot together with `distribution/preview.json`. Validate it with:
 
 ```bash
-node scripts/docs/preview.mjs check
+python3 scripts/docs/preview.py check
 ```

@@ -193,9 +193,10 @@ jobs:
           python3 scripts/changelog.py validate-product-announcement
           python3 scripts/agent_detection_manifest_check.py --require-all-published
           python3 scripts/config_reference_check.py
-          node scripts/docs/versions.mjs check
-          node scripts/docs/preview.mjs check
+          python3 scripts/docs/versions.py check
+          python3 scripts/docs/preview.py check
           bun test scripts/docs/*.test.ts
+          python3 -m unittest scripts.docs.test_versions
           test -f docs/next/README.md
           test -f docs/next/README.zh-CN.md
 
@@ -250,7 +251,7 @@ jobs:
           PREVIEW_COMMIT: ${{ needs.validate-release-source.outputs.preview_commit }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          node scripts/docs/versions.mjs publish "$GITHUB_REF_NAME"
+          python3 scripts/docs/versions.py publish "$GITHUB_REF_NAME"
           # publish copies Herdr's docs/next READMEs over the root ones; the
           # root README is FleetDeck's own (docs/fleetdeck/IDENTITY.md).
           git checkout -- README.md README.zh-CN.md
@@ -262,7 +263,7 @@ jobs:
           RELEASE_PROTOCOL=$(git show "${GITHUB_REF_NAME}:src/protocol/wire.rs" | python3 -c 'import re, sys; match = re.search(r"pub const PROTOCOL_VERSION: u32 = (\d+);", sys.stdin.read()); sys.exit(1) if match is None else print(match.group(1))')
           RELEASE_ENDPOINT_GENERATION=$(git show "${GITHUB_REF_NAME}:src/protocol/endpoint.rs" | python3 -c 'import re, sys; match = re.search(r"pub const ENDPOINT_PROTOCOL_GENERATION: u32 = (\d+);", sys.stdin.read()); sys.exit(1) if match is None else print(match.group(1))')
 
-          DOCS_CURRENT=$(node scripts/docs/versions.mjs current)
+          DOCS_CURRENT=$(python3 scripts/docs/versions.py current)
           if [ "$DOCS_CURRENT" != "$VERSION" ]; then
             echo "Archived v$VERSION documentation without moving current docs backward from v$DOCS_CURRENT"
             exit 0
@@ -294,8 +295,8 @@ jobs:
           git diff --cached --quiet || git commit -m "release: synchronize metadata for v$VERSION"
           for attempt in 1 2 3; do
             git pull --rebase origin master
-            node scripts/docs/versions.mjs check
-            node scripts/docs/preview.mjs check
+            python3 scripts/docs/versions.py check
+            python3 scripts/docs/preview.py check
             if git push origin master; then
               exit 0
             fi
