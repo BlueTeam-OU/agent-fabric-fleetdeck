@@ -4,10 +4,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const script = resolve(import.meta.dir, 'preview.mjs');
+const script = resolve(import.meta.dir, 'preview.py');
 const temporaryDirectories: string[] = [];
 
-// The fixture shells out to node and git many times. A healthy Windows runner
+// The fixture shells out to Python and git many times. A healthy Windows runner
 // finishes in seconds, but a degraded one can run an order of magnitude slower,
 // so keep a generous ceiling instead of making the suite a load-sensitive flake.
 const fixtureTimeoutMs = process.platform === 'win32' ? 120_000 : 30_000;
@@ -90,7 +90,7 @@ function git(root: string, args: string[]) {
 }
 
 function runScript(root: string, args: string[]) {
-  execFileSync('node', [script, ...args], {
+  execFileSync(process.platform === 'win32' ? 'python' : 'python3', [script, ...args], {
     cwd: root,
     env: { ...process.env, HERDR_DOCS_REPO_ROOT: root },
     stdio: 'pipe',
