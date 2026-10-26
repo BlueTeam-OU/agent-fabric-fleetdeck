@@ -52,7 +52,7 @@ import view_render as vr
 from deck_tabs import AGENT, HARNESS, PANE_ROLES
 # OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
 # before the view can hear it.
-from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
+from fabric_deck import (BIN, OPENED_FOCUSED, PAUSED_LINE, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
                          is_overlay_view, start_view, view_lock, view_mark, view_title,
                          wait_ready, DeckError)
 
@@ -63,7 +63,6 @@ TICK_S = 0.25
 # focus report, a key) wakes it at once, so this only bounds how late it
 # notices a resize it is not drawing for anyway.
 PAUSED_S = 5.0
-PAUSED_LINE = "paused: tab not focused"
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
 
@@ -642,7 +641,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             lines = screen_lines(nav, current, placements, store, focused, width, height, ascii_only)
         painter.paint(lines)
 
-        ready, _, _ = select.select([sys.stdin], [], [], PAUSED_S if resting else TICK_S)
+        ready, _, _ = select.select([sys.stdin], [], [], wait_s(resting, agent_view))
         if ready:
             chunk = os.read(sys.stdin.fileno(), 4096)
             if not chunk:
@@ -696,10 +695,16 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
 
 def paused(in_tab: bool, focused: bool | None, view: "View | None") -> bool:
     """An account tab's agent pane rests while its tab is not focused: it
-    draws one line saying so, fetches nothing, and sleeps until input
-    reaches it -- unless a fetch it started is still running, whose answer
-    it takes as it comes. The fleet tab's board is never paused."""
-    return in_tab and focused is not True and view is not None and not view.busy()
+    draws one line saying so and builds no screen. The fleet tab's board
+    and the overlay view are never paused."""
+    return in_tab and focused is not True and view is not None
+
+
+def wait_s(resting: bool, view: "View | None") -> float:
+    """How long the loop waits for input: a resting pane sleeps until input
+    reaches it, unless a fetch it started is still running, whose answer it
+    takes as it comes."""
+    return PAUSED_S if resting and not (view is not None and view.busy()) else TICK_S
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,

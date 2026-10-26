@@ -92,11 +92,14 @@ class Pause(unittest.TestCase):
         # Unknown until herdr answers counts as not focused: a pane opened
         # in the background never had focus.
         for focus in (None, False):
-            self.assertTrue(fv.paused(True, focus, Busy(False)))
+            for busy in (False, True):
+                self.assertTrue(fv.paused(True, focus, Busy(busy)), "draws only the line, fetch or not")
         self.assertFalse(fv.paused(True, True, Busy(False)))
 
-    def test_a_running_fetch_keeps_it_awake_until_its_answer_is_taken(self):
-        self.assertFalse(fv.paused(True, False, Busy(True)))
+    def test_a_resting_pane_sleeps_unless_its_own_fetch_is_still_running(self):
+        self.assertEqual(fv.wait_s(True, Busy(False)), fv.PAUSED_S)
+        self.assertEqual(fv.wait_s(True, Busy(True)), fv.TICK_S, "the answer is taken as it comes")
+        self.assertEqual(fv.wait_s(False, Busy(False)), fv.TICK_S)
 
     def test_the_board_and_an_overlay_never_rest(self):
         for focus in (None, False, True):
@@ -107,7 +110,6 @@ class Pause(unittest.TestCase):
         # select wakes on any byte at once; the sleep only bounds how late a
         # resize is noticed, and it is far above a tick.
         self.assertGreater(fv.PAUSED_S, 10 * fv.TICK_S)
-
 
 # An account tab as `pane list` gives it, and another tab beside it.
 TAB_PANES = [
