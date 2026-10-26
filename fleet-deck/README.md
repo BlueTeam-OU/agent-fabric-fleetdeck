@@ -269,14 +269,18 @@ again whole within 10 s, and is followed in nothing until then.
   prompt, since a pane just created may still be running the operator's
   rc file. One still busy after 120 s is said once, and started whenever
   it reaches its prompt. One already running this account's moveto is
-  left as it is. Both hold their ssh only while their tab is the one a
-  person sees (the focused workspace's active tab, read at each look,
-  every 2 s): when the tab loses focus the deck hangs up their moveto, as
+  left as it is. Both hold their ssh only while their tab is the server's
+  focused tab (the focused workspace's active tab, read at each look,
+  every 2 s; with several clients attached, a tab another client shows is
+  paused): when the tab loses focus the deck hangs up their moveto, as
   closing the pane would, and types `paused: tab not focused` at the
-  shell it leaves; when the tab is focused again they are started again.
-  So a shell pane's work ends with the focus. The harness pane is never
-  touched by focus, and a pane running anything but this account's moveto
-  is left as it is. Focus herdr cannot report changes nothing.
+  shell it leaves, trying again at each look until herdr answers and the
+  hang-up is taken; when the tab is focused again, the line at its
+  prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
+  run) and they are started again. So a shell pane's work ends with the
+  focus. The harness pane is never touched by focus, and a pane running
+  anything but this account's moveto is left as it is. Focus herdr cannot
+  report, or no workspace focused, changes nothing.
 - **The agent pane** is started the same way, with the agent's screen
   typed at the operator's prompt there; FleetDeck restores the pane as a
   shell, never its program. One already showing this account's screen is

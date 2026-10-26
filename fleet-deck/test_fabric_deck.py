@@ -296,6 +296,9 @@ class FakeHerdr(Herdr):
             self.proc[pane] = info
         return tab
 
+    def keys(self, pane):
+        return [c[3] for c in self.calls if c[:2] == ("pane", "send-keys") and c[2] == pane]
+
     def seen_tab(self):
         if self.focused_tab is not None:
             return self.focused_tab
@@ -395,6 +398,8 @@ class FakeHerdr(Herdr):
                 for tab in tabs:
                     if tab["tab_id"] == args[2]:
                         tab["label"] = args[3]
+            return {}
+        if head == ("pane", "send-keys"):
             return {}
         raise AssertionError(f"unexpected herdr call {args}")
 
@@ -2607,6 +2612,95 @@ class Focus(unittest.TestCase):
         self.herdr.proc[self.a[1]] = BARE   # the hang-up ends it now
         self.look(7)
         self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui", "moveto ui"])
+
+    def test_a_pane_paused_and_focused_again_has_its_line_cleared_before_moveto(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.keys(self.a[1]), [], "a restore types into a fresh pane as ever")
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.herdr.focused_tab = self.a_tab
+        self.look(5)
+        sent = [c for c in self.herdr.calls if c[:2] in (("pane", "send-keys"), ("pane", "run"))
+                and c[2] == self.a[1]]
+        self.assertEqual([c[3] for c in sent][-2:], ["ctrl+u", "moveto ui"],
+                         "a half-typed line is dropped, never run with moveto appended")
+
+    def test_a_pause_herdr_did_not_answer_is_tried_again_at_the_next_look(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.fail_once = {("process-info", self.a[1])}
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.assertEqual(self.h.hung, [], "the look failed")
+        self.look(5)
+        self.assertEqual(self.h.hung, [51], "and the next one hangs it up")
+
+    def test_a_refused_hang_up_is_said_and_tried_again(self):
+        refused = []
+        self.h.deck.hang_up = lambda group: refused.append(group) and False
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.look(5)
+        self.assertEqual(refused, [51, 51])
+        self.assertEqual(sum("could not hang up" in line for line in self.h.logs), 1, "said once")
+
+    def test_a_paused_pane_closed_before_its_line_is_forgotten_at_the_map_read(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        del self.herdr.panes[self.a[1]]
+        del self.herdr.proc[self.a[1]]
+        self.look(3 + fabric_deck.PANE_MAP_REFRESH_S)
+        self.assertNotIn(self.a[1], self.h.deck.pausing)
+        logged = len(self.h.logs)
+        for at in range(15, 31, 2):
+            self.look(at)
+        self.assertEqual(self.h.logs[logged:], [], "nothing said again about a pane that is gone")
+
+    def test_a_restarted_server_pauses_the_unfocused_tabs_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+        self.h.instance = OTHER
+        self.look(3)
+        for at in range(5, 5 + RESTORE_WAIT_S, 2):
+            self.look(at)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND] * 2)
+        self.assertEqual(self.herdr.runs(self.b[2]), [fabric_deck.PAUSED_COMMAND] * 2)
+
+    def test_a_focused_tab_of_no_account_reads_the_map_once(self):
+        fleet = self.herdr.add_tab("fleet", [("f0", "board", BOARD)])
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.focused_tab = fleet
+        self.look(3)
+        lists = sum(c[:2] == ("pane", "list") for c in self.herdr.calls)
+        for at in range(5, 1 + fabric_deck.PANE_MAP_REFRESH_S, 2):  # before the next map read
+            self.look(at)
+        self.assertEqual(sum(c[:2] == ("pane", "list") for c in self.herdr.calls), lists)
+
+    def test_no_workspace_focused_changes_nothing(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.focused_tab = "nowhere"   # no workspace reads focused
+        self.look(3)
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.h.deck.focused_login, "ui")
 
     def test_the_harness_and_the_agent_pane_are_never_touched_by_focus(self):
         self.herdr.focused_tab = self.a_tab

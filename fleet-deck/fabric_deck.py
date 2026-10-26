@@ -941,6 +941,8 @@ PAUSED_LINE = "paused: tab not focused"
 PAUSED_COMMAND = f"clear; echo '{PAUSED_LINE}'"
 # The panes that connect only while their tab is focused, and how each runs.
 ON_FOCUS = ((SHELL, PLAIN), (STATUS, WATCH))
+# herdr names no focused tab: nobody is looking, and nothing is changed.
+UNKNOWN = "<no focused tab>"
 # How long a restore waits for the changes the restart caused to reach the
 # stream (one STATE_POLL_MS plus a margin) before it trusts a fresh record.
 RESTORE_SETTLE_S = 5
@@ -1089,6 +1091,15 @@ class Deck:
     # Panes hung up for a lost focus whose tab was focused again before
     # their moveto ended: queued, and that moveto is no person's start.
     ending: set[str] = field(default_factory=set)
+    # Panes a lost focus queued again: re-armed after a line kill, since a
+    # person back on the tab may already be typing at that prompt.
+    resumed: set[str] = field(default_factory=set)
+    # Accounts whose pause did not complete (herdr did not answer, or the
+    # hang-up was refused): tried again at every look while unfocused.
+    to_pause: set[str] = field(default_factory=set)
+    # The focused tab last found to be none of the accounts' (the fleet
+    # tab, an operator's own): the map is not read again for it.
+    foreign_tab: str | None = None
     # Ends a pane's moveto as closing the pane would; a test's records it.
     hang_up: Callable[[int], bool] = lambda group: hang_up_group(group)
 
@@ -1353,6 +1364,10 @@ class Deck:
                     # Dropped once typed: a run that fails stays waiting, and
                     # its retry looks at the pane again first.
                     self.ending.discard(pane)
+                    if pane in self.resumed:
+                        # Whatever a person typed there since is dropped, not run.
+                        self.herdr.call("pane", "send-keys", pane, "ctrl+u")
+                        self.resumed.discard(pane)
                     self._arm(login, pane, mode)
                     del self.waiting[key]
                 elif seen.moveto is True:
@@ -1477,51 +1492,67 @@ class Deck:
         except Exception as error:  # nothing changes until herdr answers
             self.log(f"cannot read which tab is focused: {printable(str(error))}")
             return
+        if focused is UNKNOWN:
+            return    # no workspace focused (no client attached): as it was
         tabs = self.tabs or {}
-        if focused is not None and all(t.tab_id != focused for t in tabs.values()):
+        if (focused is not None and focused != self.foreign_tab
+                and all(t.tab_id != focused for t in tabs.values())):
             # A tab made since the last map read (a restore's), or none of
-            # the deck's: read the map again to tell which.
+            # the deck's: read the map again to tell which, once per tab.
             tabs = self._tabs(set(self.harness_pane) | self.placed, quiet=True) or tabs
         login = next((t.login for t in tabs.values() if t.tab_id == focused), None)
-        if self.focus_read and login == self.focused_login:
-            self._type_paused()
-            return
-        before, self.focused_login = self.focused_login, login
-        for other, tab in tabs.items():
-            if other == login:
-                # Its panes are queued already (by its restore, or by the
-                # pause that closed them); a paused line not yet typed is not
-                # wanted any more, though the moveto it waits on is ending.
-                for role, _ in ON_FOCUS:
-                    pane = tab.panes.get(role)
-                    if pane is not None and self.pausing.pop(pane, None) is not None:
-                        self.ending.add(pane)
-            elif not self.focus_read or other == before:
-                self._pause(other, tab, now)
-        self.focus_read = True
+        self.foreign_tab = focused if login is None else None
+        if not self.focus_read or login != self.focused_login:
+            before, self.focused_login = self.focused_login, login
+            for other, tab in tabs.items():
+                if other == login:
+                    self.to_pause.discard(other)
+                    # Its panes are queued already (by its restore, or by
+                    # the pause that closed them); a paused line not yet
+                    # typed is not wanted any more, though the moveto it
+                    # waits on is ending.
+                    for role, _ in ON_FOCUS:
+                        pane = tab.panes.get(role)
+                        if pane is not None and self.pausing.pop(pane, None) is not None:
+                            self.ending.add(pane)
+                elif not self.focus_read or other == before:
+                    self.to_pause.add(other)
+            self.focus_read = True
+        for other in sorted(self.to_pause):
+            tab = tabs.get(other)
+            if tab is None or other == self.focused_login:
+                self.to_pause.discard(other)
+            elif self._pause(other, tab, now):
+                self.to_pause.discard(other)
         self._type_paused()
 
-    def _focused_tab(self) -> str | None:
+    def _focused_tab(self) -> str:
         """The tab herdr's focused workspace shows: the one a person sees."""
         for workspace in self.herdr.workspaces():
             if workspace.get("focused") is True:
-                return workspace.get("active_tab_id")
-        return None
+                return workspace.get("active_tab_id") or UNKNOWN
+        return UNKNOWN
 
-    def _pause(self, login: str, tab: AccountTab, now: float) -> None:
+    def _pause(self, login: str, tab: AccountTab, now: float) -> bool:
+        """Hang up the tab's shell and status panes' moveto; whether every
+        pane is settled (False: tried again at the next look)."""
+        done = True
         for role, mode in ON_FOCUS:
             pane = tab.panes.get(role)
-            if pane is None:
+            if pane is None or pane in self.pausing:
                 continue
             # Started again when the tab is focused again.
             self.waiting.setdefault((login, pane, mode), now)
+            self.resumed.add(pane)
             try:
                 info = self.herdr.process_info(pane)
-            except Exception as error:  # looked at again at the next change
+            except Exception as error:  # tried again at the next look
                 self.log(f"{login}: {printable(str(error))}")
+                done = False
                 continue
             shell, group = info.get("shell_pid"), info.get("foreground_process_group_id")
             if shell is None or group is None:
+                done = False
                 continue
             if shell == group:
                 self.pausing[pane] = login
@@ -1534,6 +1565,11 @@ class Deck:
                 self.ending.discard(pane)
                 self.pausing[pane] = login
                 self.log(f"{login}: closed {role} in {pane}: its tab is not focused")
+            else:
+                self._say(f"{pane}:hang-up", f"{login}: could not hang up {role} in {pane} "
+                          f"(group {group}); tried again at the next look")
+                done = False
+        return done
 
     def _type_paused(self) -> None:
         """The paused line, in each hung-up pane once its shell is back."""
@@ -1566,11 +1602,12 @@ class Deck:
             self.lost = False
             self._say("restoring", "herdr's server answers: restoring")
             for kept in (self.tracks, self.harness_pane, self.pending, self.waiting, self.sent,
-                         self.agent_pane, self.view_seen, self.harness_shown, self.pausing, self.ending):
+                         self.agent_pane, self.view_seen, self.harness_shown, self.pausing, self.ending,
+                         self.resumed, self.to_pause):
                 kept.clear()
             # The new server's panes: every tab but the focused one is paused
             # again at the first read.
-            self.focus_read, self.focused_login = False, None
+            self.focus_read, self.focused_login, self.foreign_tab = False, None, None
             self.restore(now)
             return not self.lost
         newly = {a.login for a in accounts} - self.placed
@@ -1583,6 +1620,10 @@ class Deck:
         listed = {pane for tab in tabs.values() for pane in tab.panes.values()}
         for key in [k for k in self.waiting if k[1] not in listed]:
             del self.waiting[key]  # closed by a person: re-created only at a restore
+        for pane in [p for p in self.pausing if p not in listed]:
+            del self.pausing[pane]
+        self.ending &= listed
+        self.resumed &= listed
         for login in list(self.harness_pane):
             tab = tabs.get(login)
             if tab is None or tab.panes.get(HARNESS) != self.harness_pane[login]:
@@ -1617,6 +1658,9 @@ class Deck:
         self._safeguard_clear(login)
         for key in [k for k in self.waiting if k[0] == login]:
             del self.waiting[key]
+        for pane in [p for p, owner in self.pausing.items() if owner == login]:
+            del self.pausing[pane]
+        self.to_pause.discard(login)
         # Its agent screen is the deck's no more either: never started again
         # in a pane the deck no longer follows.
         self._drop_agent_pane(login)
