@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
+import fabric_deck
 from fabric_deck import (
     StreamRecords,
     live_of,
@@ -259,6 +260,9 @@ class FakeHerdr(Herdr):
         self.n = 0
         self.new_pane = BARE
         self.workspace_lists_ok = None  # after this many, `workspace list` fails
+        # The tab a person sees; None: the first labelled tab that is not
+        # the fleet's, as when one account tab is all there is.
+        self.focused_tab = None
         self.fail_once = set()  # (subcommand, pane) pairs whose next call fails
         self.agent_status = {}  # pane -> the state herdr holds from the deck's reports
         self.drops_reports = set()  # panes whose reports herdr answers but does not apply
@@ -292,6 +296,17 @@ class FakeHerdr(Herdr):
             self.proc[pane] = info
         return tab
 
+    def seen_tab(self):
+        if self.focused_tab is not None:
+            return self.focused_tab
+        return next((t["tab_id"] for tabs in self.tabs.values() for t in tabs
+                     if t.get("label") not in (None, "fleet")), None)
+
+    def _with_focus(self, workspace):
+        seen = self.seen_tab()
+        holds = any(t["tab_id"] == seen for t in self.tabs.get(workspace["workspace_id"], []))
+        return {**workspace, "focused": holds, **({"active_tab_id": seen} if holds else {})}
+
     def runs(self, pane=None):
         return [c[3] for c in self.calls if c[:2] == ("pane", "run") and (pane is None or c[2] == pane)]
 
@@ -312,7 +327,7 @@ class FakeHerdr(Herdr):
                 if self.workspace_lists_ok == 0:
                     raise RuntimeError("herdr workspace list: exit 1: not ready")
                 self.workspace_lists_ok -= 1
-            return {"workspaces": list(self.workspace_list)}
+            return {"workspaces": [self._with_focus(w) for w in self.workspace_list]}
         if head == ("workspace", "create"):
             # Its own prefix: a seeded workspace is w1, and a created one
             # sharing the counter would collide with it.
@@ -400,6 +415,8 @@ class Harness:
         self.sockets = {}
         self.store = None if befores is None else dict(befores)
         self.logs = []
+        # The foreground groups the deck hung up: never a real signal here.
+        self.hung = []
         self.logins = list(logins)
         # moveto --list's role per login: rust-ui-dev unless a test says.
         self.roles = dict(roles or {})
@@ -429,6 +446,7 @@ class Harness:
             fleet_tab=fleet_tab,
             lock_dir=LOCK_DIR.name,
             sleep=lambda s: None,
+            hang_up=lambda group: self.hung.append(group) is None,
         )
 
     def at(self, deck_s):
@@ -2514,6 +2532,119 @@ class SafeguardReport(unittest.TestCase):
         self.assertFalse(finished.is_set(), "returned while the report still waits")
         release.set()
         self.assertTrue(finished.wait(5))
+
+
+def account_tab(herdr, login, shell=None, status=None, workspace="w1"):
+    """A restored account tab: its harness waiting, its agent's screen up,
+    its shell and status as given (bare when not)."""
+    n = len(herdr.panes)
+    names = [f"{login}{i}" for i in range(4)]
+    return herdr.add_tab(login, [
+        (names[0], "harness", in_moveto(login, WAIT, pid=100 + n)),
+        (names[1], "shell", shell or BARE),
+        (names[2], "status", status or BARE),
+        (names[3], "agent", in_view(login, pid=300 + n)),
+    ], workspace), names
+
+
+class Focus(unittest.TestCase):
+    """An account tab's shell and status panes hold their ssh only while the
+    tab is focused (the owner, 2026-10-26)."""
+
+    def setUp(self):
+        self.herdr = FakeHerdr()
+        self.a_tab, self.a = account_tab(self.herdr, "ui")
+        self.b_tab, self.b = account_tab(self.herdr, "qa")
+        self.h = Harness(self.herdr, logins=("ui", "qa"))
+        for login in ("ui", "qa"):
+            self.h.records[login] = record(login)
+
+    def look(self, at):
+        self.h.deck.follow(self.h.at(at))
+
+    def test_only_the_focused_tab_connects_and_the_others_say_they_are_paused(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"])
+        self.assertEqual(self.herdr.runs(self.a[2]), ["moveto ui --watch"])
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+        self.assertEqual(self.herdr.runs(self.b[2]), [fabric_deck.PAUSED_COMMAND])
+        for at in range(3, RESTORE_WAIT_S + 10, 2):
+            self.look(at)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND], "said once, never armed")
+        self.assertFalse(any("busy" in line for line in self.h.logs), "a paused pane is not a busy one")
+
+    def test_focus_moving_away_hangs_up_and_coming_back_connects_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.proc[self.a[2]] = in_moveto("ui", WATCH, pid=52)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.assertEqual(sorted(self.h.hung), [51, 52], "the shell's and the status's groups")
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND, "moveto qa"])
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"], "the line waits for the shell")
+        self.herdr.proc[self.a[1]] = BARE
+        self.herdr.proc[self.a[2]] = BARE
+        self.look(5)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui", fabric_deck.PAUSED_COMMAND])
+        self.herdr.focused_tab = self.a_tab
+        self.look(7)
+        self.assertEqual(self.herdr.runs(self.a[1])[-1], "moveto ui")
+        self.assertEqual(self.herdr.runs(self.a[2])[-1], "moveto ui --watch")
+
+    def test_focus_back_before_the_hang_up_lands_types_no_paused_line(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.herdr.focused_tab = self.a_tab
+        self.look(5)
+        self.herdr.proc[self.a[1]] = BARE   # the hang-up ends it now
+        self.look(7)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui", "moveto ui"])
+
+    def test_the_harness_and_the_agent_pane_are_never_touched_by_focus(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        for at, tab in ((3, self.b_tab), (5, self.a_tab), (7, self.b_tab)):
+            self.herdr.focused_tab = tab
+            self.look(at)
+        harness_groups = {self.herdr.proc[p]["foreground_process_group_id"] for p in (self.a[0], self.b[0])}
+        self.assertFalse(harness_groups & set(self.h.hung))
+        for pane in (self.a[0], self.b[0]):
+            self.assertNotIn(fabric_deck.PAUSED_COMMAND, self.herdr.runs(pane))
+
+    def test_an_operators_own_program_in_a_shell_pane_is_left_running(self):
+        self.herdr.proc[self.b[1]] = BUSY
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.herdr.runs(self.b[1]), [])
+
+    def test_the_fleet_tab_focused_pauses_every_account_tab(self):
+        fleet = self.herdr.add_tab("fleet", [("f0", "board", BOARD)])
+        self.herdr.focused_tab = fleet
+        self.h.deck.restore(0)
+        self.look(1)
+        for pane in (self.a[1], self.a[2], self.b[1], self.b[2]):
+            self.assertEqual(self.herdr.runs(pane), [fabric_deck.PAUSED_COMMAND], pane)
+
+    def test_a_focus_herdr_cannot_say_changes_nothing(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.workspace_lists_ok = 0
+        self.look(3)
+        self.assertEqual(self.h.hung, [])
+        self.assertTrue(any("which tab is focused" in line for line in self.h.logs))
 
 
 if __name__ == "__main__":
