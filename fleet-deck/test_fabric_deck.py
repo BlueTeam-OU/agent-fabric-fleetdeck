@@ -2764,6 +2764,29 @@ class Focus(unittest.TestCase):
         self.assertEqual(self.h.hung, [], "an undetermined tab is the operator's")
         self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"])
 
+    def test_a_forgotten_tab_that_still_has_a_harness_is_not_touched_by_focus(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        # Its harness closed, and another pane of the tab labelled harness:
+        # the tab reads whole, but the deck follows it no more.
+        del self.herdr.panes[self.a[0]]
+        self.herdr.panes["ui9"] = {"pane_id": "ui9", "tab_id": self.a_tab, "label": "harness"}
+        self.herdr.proc["ui9"] = BARE
+        self.look(1 + fabric_deck.PANE_MAP_REFRESH_S)
+        self.assertNotIn("ui", self.h.deck.harness_pane, "forgotten until a restore")
+        self.assertFalse(self.h.deck.tabs["ui"].undetermined)
+        runs, keys = self.herdr.runs(self.a[1]), self.herdr.keys(self.a[1])
+        at = 3 + fabric_deck.PANE_MAP_REFRESH_S
+        for tab in (self.b_tab, self.a_tab, self.b_tab, self.a_tab):
+            self.herdr.focused_tab = tab
+            self.look(at)
+            at += 2
+        self.assertEqual(self.h.hung, [], "its moveto is the operator's now")
+        self.assertEqual(self.herdr.runs(self.a[1]), runs)
+        self.assertEqual(self.herdr.keys(self.a[1]), keys)
+
     def test_a_forgotten_accounts_panes_lose_their_focus_marks(self):
         self.herdr.focused_tab = self.a_tab
         self.h.deck.restore(0)
