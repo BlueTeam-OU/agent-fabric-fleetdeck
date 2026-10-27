@@ -279,7 +279,9 @@ again whole within 10 s, and is followed in nothing until then.
   prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
   run) and they are started again. So a shell pane's work ends with the
   focus. The harness pane is never touched by focus, and a pane running
-  anything but this account's moveto is left as it is. Focus herdr cannot
+  anything but this account's moveto or a bare shell is left as it is (a
+  bare shell is the deck's, as at a restore: its moveto starts there when
+  the tab is focused). Focus herdr cannot
   report, or no workspace focused, changes nothing.
 - **The agent pane** is started the same way, with the agent's screen
   typed at the operator's prompt there; FleetDeck restores the pane as a
@@ -529,8 +531,8 @@ account tabs as before.
   does not read the fleet once per tab. While it is not the focused pane it
   rests: it draws only `paused: pane not focused`, and wakes on a focus
   report or a key rather than four times a second. In a tab shown one pane
-  at a time that is whenever the tab is not focused; in a tab that shows
-  every pane, also while another pane of it has focus. A pane cannot call FleetDeck's
+  at a time it is seen only when it is the focused pane; a tab that shows
+  every pane shows the line while another pane of it has focus. A pane cannot call FleetDeck's
   socket (`outside_panes`), so the screen cannot leave itself: `q` and Esc
   do nothing there, and its footer names the chord. If its view has ended,
   `prefix+a` starts it again before showing it. In a tab with no agent

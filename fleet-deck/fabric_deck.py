@@ -1668,6 +1668,11 @@ class Deck:
                     self.herdr.call(*command)
                 except Exception:  # a pane that is gone has nothing to give back
                     break
+        # Focus's marks on its panes go too: a later restore starts them afresh.
+        tab = (self.tabs or {}).get(login)
+        for pane in (tab.panes.values() if tab is not None else ()):
+            self.ending.discard(pane)
+            self.resumed.discard(pane)
         self.harness_pane.pop(login, None)
         self.pending.pop(login, None)
         self.tracks.pop(login, None)

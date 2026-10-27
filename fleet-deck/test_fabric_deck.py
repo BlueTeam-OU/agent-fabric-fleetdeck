@@ -2751,6 +2751,35 @@ class Focus(unittest.TestCase):
         self.assertEqual(self.herdr.runs(self.a[1]), runs)
         self.assertEqual(self.herdr.keys(self.a[1]), keys)
 
+    def test_a_tab_split_by_hand_since_the_map_read_is_not_touched_by_focus(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.panes[self.a[0]]["label"] = None   # its harness label taken off
+        other = self.herdr.add_tab("notes", [("n0", None, BARE)])
+        self.herdr.focused_tab = other       # a tab the map has not seen: read again
+        self.look(3)
+        self.assertIn("ui", self.h.deck.harness_pane, "before the next map refresh")
+        self.assertEqual(self.h.hung, [], "an undetermined tab is the operator's")
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"])
+
+    def test_a_forgotten_accounts_panes_lose_their_focus_marks(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.herdr.focused_tab = self.a_tab
+        self.look(5)                          # back before the hang-up lands
+        self.assertIn(self.a[1], self.h.deck.ending)
+        del self.herdr.panes[self.a[0]]
+        self.look(1 + fabric_deck.PANE_MAP_REFRESH_S)
+        self.assertNotIn("ui", self.h.deck.harness_pane)
+        self.assertNotIn(self.a[1], self.h.deck.ending)
+        self.assertNotIn(self.a[1], self.h.deck.resumed)
+
     def test_the_paused_line_clears_a_half_typed_line_first(self):
         self.herdr.focused_tab = self.a_tab
         self.h.deck.restore(0)

@@ -64,9 +64,9 @@ TICK_S = 0.25
 # notices a resize it is not drawing for anyway.
 PAUSED_S = 5.0
 # What a resting agent pane draws. It keys on its own pane's focus, not its
-# tab's: in a tab shown one pane at a time the two are the same, but a tab
-# that shows every pane (a hand-added pane, a zoom herdr refused) has its
-# agent pane visible, and resting, while the person works in another pane.
+# tab's: it rests whenever it is not the focused pane, and a tab that shows
+# every pane (a hand-added pane, a zoom herdr refused) has it visible, and
+# resting, while the person works in another pane of that tab.
 PAUSED_LINE = "paused: pane not focused"
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
