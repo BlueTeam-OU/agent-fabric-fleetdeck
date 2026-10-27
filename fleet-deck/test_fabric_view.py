@@ -77,6 +77,43 @@ class Refresh(unittest.TestCase):
         self.assertEqual(r.refetch(), ["proc"])
 
 
+class Busy:
+    """A view as `paused` reads it: whether a fetch of its is running."""
+
+    def __init__(self, running: bool) -> None:
+        self.running = running
+
+    def busy(self) -> bool:
+        return self.running
+
+
+class Pause(unittest.TestCase):
+    def test_an_agent_pane_rests_while_its_tab_is_not_focused(self):
+        # Unknown until herdr answers counts as not focused: a pane opened
+        # in the background never had focus.
+        for focus in (None, False):
+            for busy in (False, True):
+                self.assertTrue(fv.paused(True, focus, Busy(busy)), "draws only the line, fetch or not")
+        self.assertFalse(fv.paused(True, True, Busy(False)))
+
+    def test_a_resting_pane_sleeps_unless_its_own_fetch_is_still_running(self):
+        self.assertEqual(fv.wait_s(True, Busy(False)), fv.PAUSED_S)
+        self.assertEqual(fv.wait_s(True, Busy(True)), fv.TICK_S, "the answer is taken as it comes")
+        self.assertEqual(fv.wait_s(False, Busy(False)), fv.TICK_S)
+
+    def test_the_board_and_an_overlay_never_rest(self):
+        for focus in (None, False, True):
+            self.assertFalse(fv.paused(False, focus, Busy(False)), "the overlay agent view")
+            self.assertFalse(fv.paused(True, focus, None), "the board: no agent view")
+
+    def test_a_resting_pane_sleeps_far_longer_than_a_tick(self):
+        self.assertGreater(fv.PAUSED_S, 10 * fv.TICK_S)
+
+    def test_the_paused_line_names_the_pane_not_the_tab(self):
+        # The line is seen only where every pane of a tab is shown, and
+        # there the tab is focused while this pane is not.
+        self.assertEqual(fv.PAUSED_LINE, "paused: pane not focused")
+
 # An account tab as `pane list` gives it, and another tab beside it.
 TAB_PANES = [
     {"pane_id": "h", "tab_id": "t1", "label": "harness"},

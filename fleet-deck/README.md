@@ -15,8 +15,8 @@ labels shows no second row, and the deck leaves all its panes in sight.
 | pane | runs | for |
 |---|---|---|
 | **harness** (left, 65 %, focused) | `moveto <account> --wait` | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session |
-| **shell** (top right) | `moveto <account>` | a shell as the account |
-| **status** (right) | `moveto <account> --watch` | the account's status, read-only |
+| **shell** (top right) | `moveto <account>`, while the tab is focused | a shell as the account; `paused: tab not focused` otherwise |
+| **status** (right) | `moveto <account> --watch`, while the tab is focused | the account's status, read-only; `paused: tab not focused` otherwise |
 | **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it, and `prefix+a` again shows the harness (see Views) |
 
 This directory exists only in gzapi-org's fork; upstream merges never
@@ -269,7 +269,20 @@ again whole within 10 s, and is followed in nothing until then.
   prompt, since a pane just created may still be running the operator's
   rc file. One still busy after 120 s is said once, and started whenever
   it reaches its prompt. One already running this account's moveto is
-  left as it is.
+  left as it is. Both hold their ssh only while their tab is the server's
+  focused tab (the focused workspace's active tab, read at each look,
+  every 2 s; with several clients attached, a tab another client shows is
+  paused): when the tab loses focus the deck hangs up their moveto, as
+  closing the pane would, and types `paused: tab not focused` at the
+  shell it leaves, trying again at each look until herdr answers and the
+  hang-up is taken; when the tab is focused again, the line at its
+  prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
+  run) and they are started again. So a shell pane's work ends with the
+  focus. The harness pane is never touched by focus, and a pane running
+  anything but this account's moveto or a bare shell is left as it is (a
+  bare shell is the deck's, as at a restore: its moveto starts there when
+  the tab is focused). Focus herdr cannot
+  report, or no workspace focused, changes nothing.
 - **The agent pane** is started the same way, with the agent's screen
   typed at the operator's prompt there; FleetDeck restores the pane as a
   shell, never its program. One already showing this account's screen is
@@ -515,7 +528,11 @@ account tabs as before.
   the focus change: the harness's session runs on in its pane, and no second
   screen is ever opened. The screen fetches nothing until it is first
   focused, then refreshes only while focused, as every view: a deck start
-  does not read the fleet once per tab. A pane cannot call FleetDeck's
+  does not read the fleet once per tab. While it is not the focused pane it
+  rests: it draws only `paused: pane not focused`, and wakes on a focus
+  report or a key rather than four times a second. In a tab shown one pane
+  at a time it is seen only when it is the focused pane; a tab that shows
+  every pane shows the line while another pane of it has focus. A pane cannot call FleetDeck's
   socket (`outside_panes`), so the screen cannot leave itself: `q` and Esc
   do nothing there, and its footer names the chord. If its view has ended,
   `prefix+a` starts it again before showing it. In a tab with no agent

@@ -59,6 +59,15 @@ from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_
 FOCUS_ON = "\x1b[?1004h"
 FOCUS_OFF = "\x1b[?1004l"
 TICK_S = 0.25
+# How long a paused agent pane sleeps when nothing reaches it: input (a
+# focus report, a key) wakes it at once, so this only bounds how late it
+# notices a resize it is not drawing for anyway.
+PAUSED_S = 5.0
+# What a resting agent pane draws. It keys on its own pane's focus, not its
+# tab's: it rests whenever it is not the focused pane, and a tab that shows
+# every pane (a hand-added pane, a zoom herdr refused) has it visible, and
+# resting, while the person works in another pane of that tab.
+PAUSED_LINE = "paused: pane not focused"
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
 
@@ -322,6 +331,10 @@ class View:
         for s in self.refresher.refetch():
             self.refresher.started(s)
             self.fetcher.start(s, force=True)
+
+    def busy(self) -> bool:
+        """A fetch of this view's is still running: its answer is waited for."""
+        return bool(self.refresher.running)
 
     def owns(self, result: Result) -> bool:
         return result.asker is self
@@ -618,7 +631,12 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             size = now_size
             curses.resizeterm(size.lines, size.columns)
         height, width = screen.getmaxyx()
-        if agent_view is not None:
+        # Not the agent's screen while resting: a person glancing at a pane
+        # not focused reads no stale view as live, and nothing is built.
+        resting = paused(in_tab, focused, agent_view)
+        if resting:
+            lines = [[(PAUSED_LINE, vr.DIM)]]
+        elif agent_view is not None:
             a = agents_of({agent_view.agent: placements[agent_view.agent]}, store, agent_view.sections,
                           agent_view.whys, fleet)[0]
             keys = vr.TAB_KEYS if in_tab else vr.OVERLAY_KEYS if mode == "agent" else vr.AGENT_KEYS
@@ -628,7 +646,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             lines = screen_lines(nav, current, placements, store, focused, width, height, ascii_only)
         painter.paint(lines)
 
-        ready, _, _ = select.select([sys.stdin], [], [], TICK_S)
+        ready, _, _ = select.select([sys.stdin], [], [], wait_s(resting, agent_view))
         if ready:
             chunk = os.read(sys.stdin.fileno(), 4096)
             if not chunk:
@@ -678,6 +696,20 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             refetch_asked.refetch()
             refetch_asked = None
         (agent_view or view_of(nav.screen)).tick(focused)
+
+
+def paused(in_tab: bool, focused: bool | None, view: "View | None") -> bool:
+    """An account tab's agent pane rests while it is not the focused pane: it
+    draws one line saying so and builds no screen. The fleet tab's board
+    and the overlay view are never paused."""
+    return in_tab and focused is not True and view is not None
+
+
+def wait_s(resting: bool, view: "View | None") -> float:
+    """How long the loop waits for input: a resting pane sleeps until input
+    reaches it, unless a fetch it started is still running, whose answer it
+    takes as it comes."""
+    return PAUSED_S if resting and not (view is not None and view.busy()) else TICK_S
 
 
 def screen_lines(nav: Nav, view: View, placements, store: Store, focused: bool | None,
