@@ -526,9 +526,11 @@ account tabs as before.
   the focus change: the harness's session runs on in its pane, and no second
   screen is ever opened. The screen fetches nothing until it is first
   focused, then refreshes only while focused, as every view: a deck start
-  does not read the fleet once per tab. While its tab is not focused it
-  rests: it draws only `paused: tab not focused`, and wakes on a focus
-  report or a key rather than four times a second. A pane cannot call FleetDeck's
+  does not read the fleet once per tab. While it is not the focused pane it
+  rests: it draws only `paused: pane not focused`, and wakes on a focus
+  report or a key rather than four times a second. In a tab shown one pane
+  at a time that is whenever the tab is not focused; in a tab that shows
+  every pane, also while another pane of it has focus. A pane cannot call FleetDeck's
   socket (`outside_panes`), so the screen cannot leave itself: `q` and Esc
   do nothing there, and its footer names the chord. If its view has ended,
   `prefix+a` starts it again before showing it. In a tab with no agent

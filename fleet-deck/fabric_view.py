@@ -52,7 +52,7 @@ import view_render as vr
 from deck_tabs import AGENT, HARNESS, PANE_ROLES
 # OPENED_FOCUSED: set by `open` for an overlay, which FleetDeck focuses
 # before the view can hear it.
-from fabric_deck import (BIN, OPENED_FOCUSED, PAUSED_LINE, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
+from fabric_deck import (BIN, OPENED_FOCUSED, SAFE_LOGIN, VIEW_START, Herdr, at_bare_shell, is_agent_view,
                          is_overlay_view, start_view, view_lock, view_mark, view_title,
                          wait_ready, DeckError)
 
@@ -63,6 +63,11 @@ TICK_S = 0.25
 # focus report, a key) wakes it at once, so this only bounds how late it
 # notices a resize it is not drawing for anyway.
 PAUSED_S = 5.0
+# What a resting agent pane draws. It keys on its own pane's focus, not its
+# tab's: in a tab shown one pane at a time the two are the same, but a tab
+# that shows every pane (a hand-added pane, a zoom herdr refused) has its
+# agent pane visible, and resting, while the person works in another pane.
+PAUSED_LINE = "paused: pane not focused"
 TOKENS_DAYS = 7
 PLUGIN_ID = "fabric.fleet"
 
@@ -626,7 +631,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
             size = now_size
             curses.resizeterm(size.lines, size.columns)
         height, width = screen.getmaxyx()
-        # Not the agent's screen while resting: a person glancing at a tab
+        # Not the agent's screen while resting: a person glancing at a pane
         # not focused reads no stale view as live, and nothing is built.
         resting = paused(in_tab, focused, agent_view)
         if resting:
@@ -694,7 +699,7 @@ def run(curses, screen, fleet, mode: str, login: str | None, in_tab: bool = Fals
 
 
 def paused(in_tab: bool, focused: bool | None, view: "View | None") -> bool:
-    """An account tab's agent pane rests while its tab is not focused: it
+    """An account tab's agent pane rests while it is not the focused pane: it
     draws one line saying so and builds no screen. The fleet tab's board
     and the overlay view are never paused."""
     return in_tab and focused is not True and view is not None

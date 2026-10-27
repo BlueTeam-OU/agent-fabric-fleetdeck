@@ -106,10 +106,13 @@ class Pause(unittest.TestCase):
             self.assertFalse(fv.paused(False, focus, Busy(False)), "the overlay agent view")
             self.assertFalse(fv.paused(True, focus, None), "the board: no agent view")
 
-    def test_a_resting_pane_wakes_on_input_and_bounds_a_late_resize(self):
-        # select wakes on any byte at once; the sleep only bounds how late a
-        # resize is noticed, and it is far above a tick.
+    def test_a_resting_pane_sleeps_far_longer_than_a_tick(self):
         self.assertGreater(fv.PAUSED_S, 10 * fv.TICK_S)
+
+    def test_the_paused_line_names_the_pane_not_the_tab(self):
+        # The line is seen only where every pane of a tab is shown, and
+        # there the tab is focused while this pane is not.
+        self.assertEqual(fv.PAUSED_LINE, "paused: pane not focused")
 
 # An account tab as `pane list` gives it, and another tab beside it.
 TAB_PANES = [

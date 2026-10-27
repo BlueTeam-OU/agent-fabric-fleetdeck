@@ -975,6 +975,8 @@ SAFEGUARD_TELL_ROLE = "fabric-coordinator"
 
 def hang_up_group(group: int) -> bool:
     """SIGHUP to a pane's foreground group, as closing the pane would."""
+    # killpg(0) is the caller's own group, the deck itself, and 1 is init's;
+    # neither is ever a pane's foreground group.
     if group <= 1:
         return False
     try:
@@ -1502,6 +1504,11 @@ class Deck:
             tabs = self._tabs(set(self.harness_pane) | self.placed, quiet=True) or tabs
         login = next((t.login for t in tabs.values() if t.tab_id == focused), None)
         self.foreign_tab = focused if login is None else None
+        # Focus acts only on tabs the deck follows: a tab it forgot (its
+        # harness closed, its restore failed) or split by hand is the
+        # operator's until the next restore.
+        tabs = {other: tab for other, tab in tabs.items()
+                if other in self.harness_pane and not tab.undetermined}
         if not self.focus_read or login != self.focused_login:
             before, self.focused_login = self.focused_login, login
             for other, tab in tabs.items():
@@ -1541,9 +1548,6 @@ class Deck:
             pane = tab.panes.get(role)
             if pane is None or pane in self.pausing:
                 continue
-            # Started again when the tab is focused again.
-            self.waiting.setdefault((login, pane, mode), now)
-            self.resumed.add(pane)
             try:
                 info = self.herdr.process_info(pane)
             except Exception as error:  # tried again at the next look
@@ -1555,15 +1559,17 @@ class Deck:
                 done = False
                 continue
             if shell == group:
-                self.pausing[pane] = login
+                self._paused(login, pane, mode, now)
                 continue
             foreground = [(p["pid"], p.get("argv") or []) for p in info.get("foreground_processes", [])
                           if isinstance(p.get("pid"), int)]
             if moveto_in(foreground, login) is None:
-                continue    # the operator's own program: not the deck's to end
+                # The operator's own program: not the deck's to end, nor to
+                # start a moveto in once it ends.
+                continue
             if self.hang_up(group):
                 self.ending.discard(pane)
-                self.pausing[pane] = login
+                self._paused(login, pane, mode, now)
                 self.log(f"{login}: closed {role} in {pane}: its tab is not focused")
             else:
                 self._say(f"{pane}:hang-up", f"{login}: could not hang up {role} in {pane} "
@@ -1571,12 +1577,23 @@ class Deck:
                 done = False
         return done
 
+    def _paused(self, login: str, pane: str, mode: str, now: float) -> None:
+        """A pane the deck holds (a bare shell, or its moveto hung up): the
+        paused line is typed once the shell is back, and the moveto started
+        again when the tab is focused again."""
+        self.pausing[pane] = login
+        self.waiting.setdefault((login, pane, mode), now)
+        self.resumed.add(pane)
+
     def _type_paused(self) -> None:
         """The paused line, in each hung-up pane once its shell is back."""
         for pane, login in list(self.pausing.items()):
             try:
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
+                    # A half-typed line at the prompt is dropped, never run
+                    # with the paused line appended.
+                    self.herdr.call("pane", "send-keys", pane, "ctrl+u")
                     self.herdr.call("pane", "run", pane, PAUSED_COMMAND)
                     del self.pausing[pane]
                 elif seen.moveto is None and seen.present:

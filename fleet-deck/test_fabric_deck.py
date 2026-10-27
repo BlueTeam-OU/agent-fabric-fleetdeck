@@ -2702,7 +2702,7 @@ class Focus(unittest.TestCase):
         self.assertEqual(self.h.hung, [])
         self.assertEqual(self.h.deck.focused_login, "ui")
 
-    def test_the_harness_and_the_agent_pane_are_never_touched_by_focus(self):
+    def test_the_harness_is_never_touched_by_focus(self):
         self.herdr.focused_tab = self.a_tab
         self.h.deck.restore(0)
         self.look(1)
@@ -2713,6 +2713,69 @@ class Focus(unittest.TestCase):
         self.assertFalse(harness_groups & set(self.h.hung))
         for pane in (self.a[0], self.b[0]):
             self.assertNotIn(fabric_deck.PAUSED_COMMAND, self.herdr.runs(pane))
+
+    def test_the_agent_panes_get_nothing_typed_by_focus(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        # A view that ended leaves a bare shell, as a paused shell pane does.
+        self.herdr.proc[self.a[3]] = BARE
+        self.herdr.proc[self.b[3]] = BARE
+        runs = {p: self.herdr.runs(p) for p in (self.a[3], self.b[3])}
+        for at, tab in ((3, self.b_tab), (5, self.a_tab), (7, self.b_tab)):
+            self.herdr.focused_tab = tab
+            self.look(at)
+        for pane in (self.a[3], self.b[3]):
+            self.assertEqual(self.herdr.runs(pane), runs[pane], pane)
+            self.assertEqual(self.herdr.keys(pane), [], pane)
+
+    def test_a_tab_whose_harness_was_closed_is_not_touched_by_focus(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[1]] = in_moveto("ui", pid=51)
+        del self.herdr.panes[self.a[0]]
+        self.look(1 + fabric_deck.PANE_MAP_REFRESH_S)
+        self.assertNotIn("ui", self.h.deck.harness_pane, "forgotten until a restore")
+        runs, keys = self.herdr.runs(self.a[1]), self.herdr.keys(self.a[1])
+        at = 3 + fabric_deck.PANE_MAP_REFRESH_S
+        for tab in (self.b_tab, self.a_tab, self.b_tab, self.a_tab):
+            self.herdr.focused_tab = tab
+            self.look(at)
+            at += 2
+        self.herdr.proc[self.a[1]] = BARE
+        for _ in range(3):
+            self.look(at)
+            at += 2
+        self.assertEqual(self.h.hung, [], "its moveto is the operator's now")
+        self.assertEqual(self.herdr.runs(self.a[1]), runs)
+        self.assertEqual(self.herdr.keys(self.a[1]), keys)
+
+    def test_the_paused_line_clears_a_half_typed_line_first(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        sent = [c[3] for c in self.herdr.calls if c[:2] in (("pane", "send-keys"), ("pane", "run"))
+                and c[2] == self.b[1]]
+        self.assertEqual(sent, ["ctrl+u", fabric_deck.PAUSED_COMMAND],
+                         "a half-typed line is dropped, never run with the paused line appended")
+
+    def test_a_program_the_operator_started_after_moveto_gets_no_moveto_when_it_ends(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"])
+        self.herdr.proc[self.a[1]] = BUSY      # moveto left, their own program run
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.herdr.focused_tab = self.a_tab
+        self.look(5)
+        self.herdr.proc[self.a[1]] = BARE      # and ended
+        for at in range(7, 7 + RESTORE_WAIT_S + 4, 2):
+            self.look(at)
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"], "nothing typed after its program")
+        self.assertEqual(self.herdr.keys(self.a[1]), [])
 
     def test_an_operators_own_program_in_a_shell_pane_is_left_running(self):
         self.herdr.proc[self.b[1]] = BUSY
@@ -2739,6 +2802,14 @@ class Focus(unittest.TestCase):
         self.look(3)
         self.assertEqual(self.h.hung, [])
         self.assertTrue(any("which tab is focused" in line for line in self.h.logs))
+
+
+class HangUpGroup(unittest.TestCase):
+    def test_the_decks_own_group_and_inits_are_never_signalled(self):
+        with mock.patch.object(fabric_deck.os, "killpg") as killpg:
+            for group in (0, 1, -1):
+                self.assertFalse(fabric_deck.hang_up_group(group), group)
+        killpg.assert_not_called()
 
 
 if __name__ == "__main__":
