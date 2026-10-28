@@ -14,7 +14,7 @@ labels shows no second row, and the deck leaves all its panes in sight.
 
 | pane | runs | for |
 |---|---|---|
-| **harness** (left, 65 %, focused) | `moveto <account> --wait` | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session |
+| **harness** (left, 65 %, focused) | `moveto <account> --wait`; with `--attach` in moveto, `moveto <account> --attach` while the tab is focused | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session. Attached, the account's own terminal, `detached: tab not focused; the agent keeps running` otherwise (see Attach) |
 | **shell** (top right) | `moveto <account>`, while the tab is focused | a shell as the account; `paused: tab not focused` otherwise |
 | **status** (right) | `moveto <account> --watch`, while the tab is focused | the account's status, read-only; `paused: tab not focused` otherwise |
 | **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it, and `prefix+a` again shows the harness (see Views) |
@@ -94,16 +94,18 @@ restart the server: `stop --all`, then `start --auto`.
      pane never shows the prompt, is named and skipped.
 
 The boot presses the Enter that `moveto <account> --wait` asks for, and
-nothing else. After the Enter, the prompt stays on screen while moveto
+nothing else (with `--attach` it also starts an attach to reach it, see
+Attach). After the Enter, the prompt stays on screen while moveto
 refreshes the account. So only a new moveto at the prompt (the deck armed
 `--wait` again) counts as a failure, never the prompt alone. Over ssh the
 prompt line is the account's own output, so the boot also needs the state
 stream's fresh word that no session runs there. While that is unknown, it
 does not press. It checks again just before each press, after the 4 s gap.
 The boot presses only when the pane's foreground is that account's
-`moveto --wait` and its last line is "<account> - Enter to activate". A
-pane at a passphrase prompt, at a shell or running a harness is never
-typed into. Without `--auto`, panes wait for your Enter as before.
+`moveto --wait` (or, with `--attach`, the attach to it) and its last line
+is "<account> - Enter to activate". A pane at a passphrase prompt, at a
+shell or running a harness is never typed into, except that with
+`--attach` an attach is started at a bare shell (see Attach). Without `--auto`, panes wait for your Enter as before.
 
 While a boot runs, it holds `$XDG_STATE_HOME/fabric-deck/boot.lock`, and
 no controller resumes a session on its own. This holds even across a
@@ -114,7 +116,9 @@ boot ends, restores resume as before.
 **`stop --all`** is the reverse:
 1. Stops the controller, first, so that it does not arm the panes again.
 2. Ends each pane's session, last tier first (SIGHUP to the pane's moveto,
-   as closing the pane would), waiting up to 30 s per tier.
+   as closing the pane would), waiting up to 30 s per tier. With
+   `--attach`, an attach is left alone: its session runs in the account's
+   own server (see Attach).
 3. Stops the server and the ssh-agent holder.
 4. Stops the control agents, once `fabric-ctl` has `control-stop`.
 
@@ -278,7 +282,12 @@ again whole within 10 s, and is followed in nothing until then.
   hang-up is taken; when the tab is focused again, the line at its
   prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
   run) and they are started again. So a shell pane's work ends with the
-  focus. The harness pane is never touched by focus, and a pane running
+  focus. The harness pane is touched by focus only in attach mode (see
+  Attach). No pane holding this account's `moveto --wait` or `--resume`
+  is hung up, with or without `--attach`, since its hang-up would end the
+  agent; a moveto the deck typed less than 5 s ago that the shell has not
+  started yet is waited for, and hung up once it runs, so nothing is
+  typed after it. A pane running
   anything but this account's moveto or a bare shell is left as it is (a
   bare shell is the deck's, as at a restore: its moveto starts there when
   the tab is focused). Focus herdr cannot
@@ -438,6 +447,56 @@ Until agent-fabric's activation PR puts `--wait`, `--watch` and
 `fabric-resume`'s second-session refusal on main, `moveto --help` does not
 list them. The deck then arms no pane with them, says so once, and shows
 those harness panes as FleetDeck's `unknown`.
+
+## Attach
+
+When `moveto --help` lists `--attach`, the account's harness runs in a
+terminal server of the account's own, a user unit outside the deck
+(agent-fabric's part of j167: the unit, enter-ssh's `attach` word and
+moveto `--attach`). The deck's harness pane only attaches to it, and
+connects only while its tab is focused, like the shell and status panes.
+Ending the attach (a lost focus, a dropped ssh, a deck restart) ends no
+agent. Until moveto lists `--attach`, everything above holds unchanged.
+
+- **Focus.** The focused tab's harness pane runs `moveto <account>
+  --attach` at the operator's bare shell. A tab that loses focus has the
+  attach hung up and shows `detached: tab not focused; the agent keeps
+  running`. An attach that ends while its tab is focused is started again.
+  One that ends within 15 s twice in a row is not, until the tab is
+  focused again, and the deck says so.
+- **What the row shows** is the account's stream, focused or not: no
+  process under the pane is the harness. A session up is the harness
+  running, none is `dormant`, and a stale record is `stale`.
+- **A restore** takes no `--resume` decision: whether the agent resumes is
+  the unit's. A pane that still holds a harness of its own, entered
+  before the unit, is followed and shown as before, and is never hung up,
+  by focus or by `stop --all`, until it ends.
+- **`start --auto`** attaches each account itself, for its activation
+  only, at most twice per boot. It presses the Enter at the
+  prompt the attach shows, as above, and hangs up the attach once the
+  account's session is seen up and its tab is not focused, looking at
+  the focus again just before the hang-up and before the line. An account
+  that does not come up keeps its attach open, so its pane shows why, and
+  is reported as skipped or not up. The focused tab's attach is kept.
+  While the boot runs the controller types nothing into the harness pane
+  of an account that is not up, neither an attach nor a line, so only the
+  boot types there. An account whose session is already up the boot
+  leaves alone, so its focused tab attaches as ever. Once the boot ends,
+  the controller attaches the focused tab as before; an attach the boot
+  left open stays open until its tab has been focused and left. The two
+  are separate processes that read the stream at different moments, so
+  each types a line at a harness pane's shell only under one lock of the
+  operator's, looking at the shell (and the boot at the focus) again
+  there; whoever typed an attach holds the lock until it runs (up to
+  5 s), and the other then types nothing. The boot's Enter is pressed at
+  the prompt its own attach shows, never at a shell.
+- **`stop --all`** never hangs up an attach: that ends no session. The
+  harness sessions are stopped through their units, which is
+  agent-fabric's part, and the deck says so, naming the sessions left
+  running in their accounts' own servers apart from any the stream may
+  still show after their end.
+- **Limits.** A safeguard stop is read from the pane's screen, so it is
+  seen only while that tab is attached.
 
 ## What the deck keeps
 

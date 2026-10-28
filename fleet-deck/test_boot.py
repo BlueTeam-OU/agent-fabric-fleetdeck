@@ -97,10 +97,11 @@ class Sim:
         self.pid: dict[str, int] = {}
         self.rearm: dict[str, float] = {}
         self.next_pid = 100
+        self.done: list[str] = []
 
     def fleet(self):
         return Fleet(up=self.up, waiting=self.waiting, press=self.press, sleep=self.sleep,
-                     now=lambda: self.t, say=self.lines.append)
+                     now=lambda: self.t, say=self.lines.append, done=self.done.append)
 
     def up(self, login):
         return login in self.up_at and self.t >= self.up_at[login]
@@ -131,6 +132,14 @@ class Sim:
 
 
 class ActivationTest(unittest.TestCase):
+    def test_only_a_login_seen_up_after_its_activation_is_done(self):
+        # done ends the attach the boot opened: never for a login it did not
+        # reach, nor for one that did not come up, whose pane shows why.
+        sim = Sim(already_up={"a"}, never_up={"slow"}, prompt_at={"late": 1e9})
+        tiers = [(DEVELOPERS, ["a", "b", "slow", "late"])]
+        boot.activate(sim.fleet(), tiers)
+        self.assertEqual(sim.done, ["b"])
+
     def test_tier_order_and_four_seconds_between_presses(self):
         sim = Sim()
         tiers = [(COORDINATOR, ["user"]), ("C-Level", ["a", "b"]), (DEVELOPERS, ["c", "d", "e"])]

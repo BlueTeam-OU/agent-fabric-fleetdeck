@@ -40,7 +40,9 @@ from typing import Callable, Iterable
 
 from deck_tabs import (
     AGENT,
+    ATTACH,
     HARNESS,
+    HARNESS_MODES,
     HARNESS_RATIO,
     MODES,
     PANE_ROLES,
@@ -59,7 +61,11 @@ from deck_tabs import (
     Seen,
     Shown,
     State,
+    ENTRY_GRACE_S,
+    QUICK_ENDS_TO_HALT,
+    QUICK_EXIT_S,
     Track,
+    attached,
     at_start,
     before_live,
     classify,
@@ -422,12 +428,54 @@ def view_lock(directory: str | None = None):
     The directory is fixed by the uid, never by the caller's environment,
     which the deck and a plugin action do not share: /tmp where the uid
     has no /run/user directory, never tempfile's TMPDIR."""
+    with open(uid_lock_path("views", directory), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def uid_lock_path(name: str, directory: str | None = None) -> str:
     uid = os.getuid()
     run_dir = f"/run/user/{uid}"
     base = directory or (run_dir if os.path.isdir(run_dir) else "/tmp")
-    with open(os.path.join(base, f"fabric-deck-views.{uid}.lock"), "a") as handle:
+    return os.path.join(base, f"fabric-deck-{name}.{uid}.lock")
+
+
+@contextlib.contextmanager
+def harness_lock(directory: str | None = None):
+    """One typist at a time into an attach-mode harness pane, for this OS
+    user: the controller and `start --auto` are two processes, each finding
+    the pane bare by its own look, and a line typed after an attach that has
+    not started yet is read by that attach and reaches the agent. Taken
+    as view_lock is, by the uid's own directory."""
+    with open(uid_lock_path("harness", directory), "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield
+
+
+# How long a typist holds harness_lock for the attach it typed to start:
+# the shell's ENTRY_GRACE_S, polled.
+HARNESS_START_POLLS = 40
+HARNESS_POLL_S = ENTRY_GRACE_S / HARNESS_START_POLLS
+
+
+def typed_at_bare_shell(info_of: Callable[[], dict], act: Callable[[], None],
+                        sleep: Callable[[float], None], wait: bool,
+                        directory: str | None = None) -> bool:
+    """Run `act` (what is typed) only if the pane is at a bare shell when
+    looked at again under harness_lock; whether it ran. With `wait` (an
+    attach was typed), the lock is held until the pane is no longer bare
+    or ENTRY_GRACE_S has passed, so the other typist's look finds the
+    attach running, not the shell it has not left yet."""
+    with harness_lock(directory):
+        if not at_bare_shell(info_of()):
+            return False
+        act()
+        if wait:
+            for _ in range(HARNESS_START_POLLS):
+                if not at_bare_shell(info_of()):
+                    break
+                sleep(HARNESS_POLL_S)
+        return True
 
 
 # How long a start waits for the view it typed, polled: Python's start and
@@ -941,6 +989,12 @@ PAUSED_LINE = "paused: tab not focused"
 PAUSED_COMMAND = f"clear; echo '{PAUSED_LINE}'"
 # The panes that connect only while their tab is focused, and how each runs.
 ON_FOCUS = ((SHELL, PLAIN), (STATUS, WATCH))
+# With moveto's --attach the harness pane is one of them: its agent runs on
+# in the account's own terminal server, so its line says that, not "paused",
+# which would read as the agent stopped.
+ATTACHED_FOCUS = ON_FOCUS + ((HARNESS, ATTACH),)
+DETACHED_LINE = "detached: tab not focused; the agent keeps running"
+DETACHED_COMMAND = f"clear; echo '{DETACHED_LINE}'"
 # herdr names no focused tab: nobody is looking, and nothing is changed.
 UNKNOWN = "<no focused tab>"
 # How long a restore waits for the changes the restart caused to reach the
@@ -1104,6 +1158,41 @@ class Deck:
     foreign_tab: str | None = None
     # Ends a pane's moveto as closing the pane would; a test's records it.
     hang_up: Callable[[int], bool] = lambda group: hang_up_group(group)
+    # login -> when the deck last started its harness pane's --attach
+    attached_at: dict[str, float] = field(default_factory=dict)
+    # pane -> when the deck last typed a moveto at its shell: a pane still
+    # bare this soon after may yet start it, so a lost focus waits to see.
+    typed_at: dict[str, float] = field(default_factory=dict)
+    # login -> the deck's attaches in a row that ended within QUICK_EXIT_S
+    attach_quick: dict[str, int] = field(default_factory=dict)
+    # Accounts whose attach the deck stopped starting after those, until
+    # their tab is focused again.
+    attach_halted: set[str] = field(default_factory=set)
+
+    @property
+    def attach(self) -> bool:
+        """Whether the harness runs in each account's own terminal server
+        and the harness pane only attaches to it: moveto has --attach once
+        agent-fabric's unit and enter-ssh word are there (j167 part 2).
+        Before that the deck runs as it did, the harness in the pane."""
+        return ATTACH in self.modes
+
+    def _boot_holds(self, login: str) -> bool:
+        """Whether a running boot may type into this account's harness pane:
+        it attaches every account it activates, the focused tab's too, each
+        after its own look at the shell, so the controller types nothing
+        there meanwhile. The boot never activates an account whose fresh
+        record shows a session up (fleet_deck.DeckFleet.waiting), so that
+        one stays the controller's: its focused tab attaches as ever. The
+        two read the stream at different times, so this divides the work
+        and harness_lock, not this, keeps them from typing into one pane."""
+        if not self.booting():
+            return False
+        live = self.live(login)
+        return not (live is not None and live.fresh and live.count >= 1)
+
+    def _on_focus(self) -> tuple[tuple[str, str], ...]:
+        return ATTACHED_FOCUS if self.attach else ON_FOCUS
 
     # ------------------------------------------------------------ restore
 
@@ -1272,17 +1361,26 @@ class Deck:
         # be started at theirs; decide_pending drops whichever turns out to run
         # this account's moveto already.
         self.harness_pane[login] = harness
-        self.pending[login] = now
-        self.unsettled.add(login)
         self.tracks[login] = Track(State.IDLE)
-        for role, mode in ((SHELL, PLAIN), (STATUS, WATCH), (AGENT, VIEW)):
+        roles = ((SHELL, PLAIN), (STATUS, WATCH), (AGENT, VIEW))
+        if self.attach:
+            # No restore decision: whether the agent resumes is its unit's
+            # (agent-fabric), and the pane attaches once its tab is focused.
+            roles += ((HARNESS, ATTACH),)
+        else:
+            self.pending[login] = now
+            self.unsettled.add(login)
+        for role, mode in roles:
             self.waiting[(login, panes[role], mode)] = now
         seen = self.observe(login, harness)
         if seen.moveto is True:
             # The account's moveto holds the pane: classified, never re-armed.
-            del self.pending[login]
+            self.pending.pop(login, None)
             self.unsettled.discard(login)
-            self.tracks[login] = classify(seen, self.live(login)) or Track(State.IDLE)
+            if self.attach and seen.mode == ATTACH:
+                self.tracks[login] = attached(self.live(login))
+            else:
+                self.tracks[login] = classify(seen, self.live(login)) or Track(State.IDLE)
         return True
 
     def _to_role_workspace(self, account, tab: AccountTab, workspace_labels) -> AccountTab:
@@ -1357,6 +1455,8 @@ class Deck:
             login, pane, mode = key
             if mode != VIEW and login != self.focused_login:
                 continue    # connects once its tab is focused (_follow_focus)
+            if mode == ATTACH and self._boot_holds(login):
+                continue
             try:
                 if mode == VIEW:
                     self._start_view(key, since, now)
@@ -1366,12 +1466,22 @@ class Deck:
                     # Dropped once typed: a run that fails stays waiting, and
                     # its retry looks at the pane again first.
                     self.ending.discard(pane)
-                    if pane in self.resumed:
-                        # Whatever a person typed there since is dropped, not run.
-                        self.herdr.call("pane", "send-keys", pane, "ctrl+u")
-                        self.resumed.discard(pane)
-                    self._arm(login, pane, mode)
+
+                    def arm(pane=pane, login=login, mode=mode):
+                        if pane in self.resumed:
+                            # Whatever a person typed there since is dropped, not run.
+                            self.herdr.call("pane", "send-keys", pane, "ctrl+u")
+                            self.resumed.discard(pane)
+                        self._arm(login, pane, mode)
+                    if mode != ATTACH:
+                        arm()
+                    elif not typed_at_bare_shell(lambda: self.herdr.process_info(pane), arm,
+                                                 self.sleep, wait=True, directory=self.lock_dir):
+                        continue   # the boot typed there first: seen at the next look
                     del self.waiting[key]
+                    self.typed_at[pane] = now
+                    if mode == ATTACH:
+                        self.attached_at[login] = now
                 elif seen.moveto is True:
                     if pane in self.ending:
                         continue   # the one a lost focus hung up, still ending
@@ -1444,6 +1554,11 @@ class Deck:
             try:
                 seen = self.observe(login, pane, parents)
                 live = self.live(login)
+                if self.attach and (seen.moveto is not True or seen.mode == ATTACH):
+                    # A pane still holding a harness of its own (entered
+                    # before the unit) is followed as ever until it ends.
+                    self._follow_attached(login, pane, seen, live, now)
+                    continue
                 track, arm = step(self.tracks.get(login, Track(State.IDLE)), seen, live, now)
                 self.tracks[login] = track
                 if track.state is not State.RUNNING:
@@ -1483,6 +1598,44 @@ class Deck:
                 self.log(f"{login}: {printable(str(error))}")
                 self.mapped_at = None
 
+    def _follow_attached(self, login: str, pane: str, seen: Seen, live: Live | None,
+                         now: float) -> None:
+        """A harness pane that attaches to the account's own terminal
+        server: what it shows is the stream's, focused or not, and an
+        attach that ended in the focused tab (a dropped ssh, a person's
+        detach) is started again."""
+        self.tracks[login] = track = attached(live)
+        # Every session on the account is the unit's harness: none is an
+        # earlier one's to keep out (not_running_at), as in a pane of its own.
+        self.not_running_at.pop(login, None)
+        if seen.moveto is False:
+            self._attach_ended(login, pane, now)
+        shown = display(track, live, blocked_since(self.records.listed.get(login), None))
+        self._show(login, pane, self._safeguard(login, pane, shown, now), now)
+
+    def _attach_ended(self, login: str, pane: str, now: float) -> None:
+        key = (login, pane, ATTACH)
+        # Queued (a lost focus's detach queues it too), it is started once
+        # its tab is focused (decide_pending).
+        if key in self.waiting:
+            return
+        at = self.attached_at.get(login)
+        if login in self.attach_halted or (at is not None and now - at < ENTRY_GRACE_S):
+            return
+        quick = at is not None and now - at < QUICK_EXIT_S
+        ends = self.attach_quick.get(login, 0) + 1 if quick else 0
+        self.attach_quick[login] = ends
+        if ends >= QUICK_ENDS_TO_HALT:
+            # Typing the same failing attach every few seconds helps nobody:
+            # the pane's last lines say why (no unit, sshd refused).
+            self.attach_halted.add(login)
+            self._say(f"{login}:attach-halted", f"{login}: its attach ended at once twice in a row "
+                      "and is not started again until its tab is focused again; the pane's last "
+                      "lines say why")
+            return
+        self.attached_at.pop(login, None)
+        self.waiting[key] = now
+
     def _follow_focus(self, now: float) -> None:
         """An account tab's shell and status panes hold their ssh only while
         the tab is focused: decide_pending starts the focused tab's at their
@@ -1518,7 +1671,11 @@ class Deck:
                     # the pause that closed them); a paused line not yet
                     # typed is not wanted any more, though the moveto it
                     # waits on is ending.
-                    for role, _ in ON_FOCUS:
+                    # A halted attach is tried again: the person is back.
+                    self.attach_halted.discard(other)
+                    self.attach_quick.pop(other, None)
+                    self.said.discard(f"{other}:attach-halted")
+                    for role, _ in self._on_focus():
                         pane = tab.panes.get(role)
                         if pane is not None and self.pausing.pop(pane, None) is not None:
                             self.ending.add(pane)
@@ -1544,7 +1701,7 @@ class Deck:
         """Hang up the tab's shell and status panes' moveto; whether every
         pane is settled (False: tried again at the next look)."""
         done = True
-        for role, mode in ON_FOCUS:
+        for role, mode in self._on_focus():
             pane = tab.panes.get(role)
             if pane is None or pane in self.pausing:
                 continue
@@ -1559,13 +1716,22 @@ class Deck:
                 done = False
                 continue
             if shell == group:
+                if now - self.typed_at.get(pane, -ENTRY_GRACE_S) < ENTRY_GRACE_S:
+                    # The moveto typed there may not have started yet: a line
+                    # typed now would be read by it, and it would stay
+                    # connected. Looked at again, and hung up once it runs.
+                    done = False
+                    continue
                 self._paused(login, pane, mode, now)
                 continue
             foreground = [(p["pid"], p.get("argv") or []) for p in info.get("foreground_processes", [])
                           if isinstance(p.get("pid"), int)]
-            if moveto_in(foreground, login) is None:
+            found = moveto_in(foreground, login)
+            if found is None or found.mode in HARNESS_MODES:
                 # The operator's own program: not the deck's to end, nor to
-                # start a moveto in once it ends.
+                # start a moveto in once it ends. A moveto with a harness of
+                # its own (one entered before the account's unit) is the
+                # agent itself, which a hang-up would end.
                 continue
             if self.hang_up(group):
                 self.ending.discard(pane)
@@ -1588,13 +1754,22 @@ class Deck:
     def _type_paused(self) -> None:
         """The paused line, in each hung-up pane once its shell is back."""
         for pane, login in list(self.pausing.items()):
+            harness = pane == self.harness_pane.get(login)
+            if harness and self._boot_holds(login):
+                continue
             try:
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
-                    # A half-typed line at the prompt is dropped, never run
-                    # with the paused line appended.
-                    self.herdr.call("pane", "send-keys", pane, "ctrl+u")
-                    self.herdr.call("pane", "run", pane, PAUSED_COMMAND)
+                    def line(pane=pane, harness=harness):
+                        # A half-typed line at the prompt is dropped, never run
+                        # with the paused line appended.
+                        self.herdr.call("pane", "send-keys", pane, "ctrl+u")
+                        self.herdr.call("pane", "run", pane, DETACHED_COMMAND if harness else PAUSED_COMMAND)
+                    if not (harness and self.attach):
+                        line()
+                    elif not typed_at_bare_shell(lambda: self.herdr.process_info(pane), line,
+                                                 self.sleep, wait=False, directory=self.lock_dir):
+                        continue   # an attach is starting there: looked at again
                     del self.pausing[pane]
                 elif seen.moveto is None and seen.present:
                     del self.pausing[pane]   # something else holds it now
@@ -1620,7 +1795,7 @@ class Deck:
             self._say("restoring", "herdr's server answers: restoring")
             for kept in (self.tracks, self.harness_pane, self.pending, self.waiting, self.sent,
                          self.agent_pane, self.view_seen, self.harness_shown, self.pausing, self.ending,
-                         self.resumed, self.to_pause):
+                         self.resumed, self.to_pause, self.typed_at):
                 kept.clear()
             # The new server's panes: every tab but the focused one is paused
             # again at the first read.
@@ -1641,6 +1816,7 @@ class Deck:
             del self.pausing[pane]
         self.ending &= listed
         self.resumed &= listed
+        self.typed_at = {pane: at for pane, at in self.typed_at.items() if pane in listed}
         for login in list(self.harness_pane):
             tab = tabs.get(login)
             if tab is None or tab.panes.get(HARNESS) != self.harness_pane[login]:
@@ -1674,6 +1850,9 @@ class Deck:
             self.ending.discard(pane)
             self.resumed.discard(pane)
         self.harness_pane.pop(login, None)
+        self.attached_at.pop(login, None)
+        self.attach_quick.pop(login, None)
+        self.attach_halted.discard(login)
         self.pending.pop(login, None)
         self.tracks.pop(login, None)
         self.sent.pop(login, None)
@@ -2248,7 +2427,7 @@ def modes_in(help_text: str) -> frozenset[str]:
     """The modes a `moveto --help` lists, each as a whole option token, so
     neither "--waitfor" nor "--wait-x" reads as --wait; --resume only with
     --wait."""
-    modes = {mode for mode in (WAIT, WATCH, RESUME)
+    modes = {mode for mode in (WAIT, WATCH, RESUME, ATTACH)
              if re.search(rf"(?<![\w-]){re.escape(mode)}(?![\w-])", help_text)}
     if WAIT not in modes:
         modes.discard(RESUME)
@@ -2478,6 +2657,8 @@ def main(argv: list[str] | None = None) -> int:
     missing = sorted({WAIT, WATCH, RESUME} - modes)
     if missing:
         log(f"moveto has no {', '.join(missing)} yet: no pane is armed with it")
+    log("harness: attached to each account's own server, only while its tab is focused"
+        if ATTACH in modes else "harness: in its pane (moveto has no --attach)")
     deck = Deck(
         herdr=Herdr(),
         accounts=lambda: parse_moveto_list(moveto_list(), exclude=exclude),
