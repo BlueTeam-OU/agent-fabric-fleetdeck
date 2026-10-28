@@ -328,11 +328,13 @@ class DeckFleet:
     state stream's snapshot.
 
     With `attach`, an account's moveto prompt is in its own terminal server,
-    reached by `moveto <login> --attach` in its harness pane. The deck's
-    controller attaches only the focused tab, so the boot attaches each
-    other account itself, for its activation alone, and ends that attach
-    once the account's session is seen up. One that never comes up keeps
-    its attach open, its pane showing why."""
+    reached by `moveto <login> --attach` in its harness pane. The boot
+    attaches each account it activates itself, the focused tab's too, for
+    its activation alone, and ends that attach once the account's session
+    is seen up, unless its tab is focused. While it runs the controller
+    types nothing into the harness pane of an account that is not up
+    (fabric_deck.Deck._boot_holds). One that never comes up keeps its
+    attach open, its pane showing why."""
 
     def __init__(self, say: Callable[[str], None], exclude: Iterable[str] = (),
                  attach: bool = False):
@@ -466,7 +468,8 @@ class DeckFleet:
         """The login's session is up: the attach the boot opened for it ends,
         unless a person is looking at its tab, and its pane says the agent
         runs on. Focus is read just before each act, as a person may open
-        the tab at any moment, and the controller attaches it then."""
+        the tab at any moment; the controller attaches it then, the
+        account being up."""
         if login not in self.attached:
             return
         try:

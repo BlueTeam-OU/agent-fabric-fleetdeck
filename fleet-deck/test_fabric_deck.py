@@ -3028,6 +3028,17 @@ class AttachFocus(unittest.TestCase):
         self.look(5)
         self.assertEqual(self.herdr.runs(self.b[0]), ["moveto qa --attach"])
 
+    def test_while_a_boot_runs_a_focused_account_already_up_attaches_as_ever(self):
+        # The boot leaves an account whose session is up alone, so the
+        # person looking at its tab is not left at a bare shell for the boot.
+        self.h.deck.booting = lambda: True
+        self.h.records["ui"] = record("ui", "working")
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"])
+        self.assertEqual(self.herdr.runs(self.b[0]), [], "qa is not up: the boot's to attach")
+
     def test_while_a_boot_runs_the_harness_panes_line_waits_for_it(self):
         self.h.deck.booting = lambda: True
         self.herdr.focused_tab = self.a_tab

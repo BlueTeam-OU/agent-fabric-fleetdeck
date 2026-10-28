@@ -1135,6 +1135,18 @@ class Deck:
         Before that the deck runs as it did, the harness in the pane."""
         return ATTACH in self.modes
 
+    def _boot_holds(self, login: str) -> bool:
+        """Whether a running boot may type into this account's harness pane:
+        it attaches every account it activates, the focused tab's too, each
+        after its own look at the shell, so the controller types nothing
+        there meanwhile. The boot never activates an account whose fresh
+        record shows a session up (fleet_deck.DeckFleet.waiting), so that
+        one stays the controller's: its focused tab attaches as ever."""
+        if not self.booting():
+            return False
+        live = self.live(login)
+        return not (live is not None and live.fresh and live.count >= 1)
+
     def _on_focus(self) -> tuple[tuple[str, str], ...]:
         return ATTACHED_FOCUS if self.attach else ON_FOCUS
 
@@ -1399,9 +1411,7 @@ class Deck:
             login, pane, mode = key
             if mode != VIEW and login != self.focused_login:
                 continue    # connects once its tab is focused (_follow_focus)
-            if mode == ATTACH and self.booting():
-                # The boot attaches every harness pane it activates, the
-                # focused tab's too: one typist per harness pane while it runs.
+            if mode == ATTACH and self._boot_holds(login):
                 continue
             try:
                 if mode == VIEW:
@@ -1694,10 +1704,7 @@ class Deck:
         """The paused line, in each hung-up pane once its shell is back."""
         for pane, login in list(self.pausing.items()):
             harness = pane == self.harness_pane.get(login)
-            if harness and self.booting():
-                # The boot attaches harness panes to activate them, each after
-                # its own look at the shell: one typist per harness pane while
-                # it runs (decide_pending too), and the line waits for its end.
+            if harness and self._boot_holds(login):
                 continue
             try:
                 seen = self.observe(login, pane)

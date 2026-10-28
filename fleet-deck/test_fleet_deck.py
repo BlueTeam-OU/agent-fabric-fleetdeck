@@ -592,7 +592,7 @@ class FleetDeckTest(unittest.TestCase):
         with mock.patch.object(fleet_deck.boot, "hang_up", return_value=True):
             fleet.done("a")
         self.assertNotIn(mock.call("pane", "run", "p1", fleet_deck.DETACHED_COMMAND),
-                         fleet.herdr.text.call_args_list, "the controller attaches it now")
+                         fleet.herdr.text.call_args_list, "the controller attaches it, the account being up")
 
     def test_done_leaves_a_focused_tab_and_a_pane_the_boot_did_not_attach(self):
         focused, not_ours = self.attach_fleet(focused=True), self.attach_fleet()
