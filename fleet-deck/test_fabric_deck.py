@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest import mock
 
-from deck_tabs import RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
+from deck_tabs import ATTACH, RESTORE_WAIT_S, RESUME, SAME_SESSION_S, SETTLE_S, STALE_AFTER_S, WAIT, WATCH, Before, Shown, State, endpoint
 import fabric_deck
 from fabric_deck import (
     StreamRecords,
@@ -46,6 +46,8 @@ from fabric_deck import (
     label_commands,
     load_befores,
     modes_in,
+    ATTACHED_FOCUS,
+    DETACHED_COMMAND,
     next_backoff,
     parse_moveto_list,
     parse_state_line,
@@ -2866,3 +2868,138 @@ class HangUpGroup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def attach_tab(herdr, login, harness=None):
+    """An account tab in attach mode: its harness pane at the operator's
+    shell (or as given), the rest as account_tab leaves them."""
+    tab, names = account_tab(herdr, login)
+    herdr.proc[names[0]] = harness or BARE
+    return tab, names
+
+
+class AttachFocus(unittest.TestCase):
+    """With moveto's --attach, the harness runs in the account's own
+    terminal server and its pane attaches only while its tab is focused
+    (j167 part 2, the owner, 2026-10-26)."""
+
+    def setUp(self):
+        self.herdr = FakeHerdr()
+        self.a_tab, self.a = attach_tab(self.herdr, "ui")
+        self.b_tab, self.b = attach_tab(self.herdr, "qa")
+        self.h = Harness(self.herdr, logins=("ui", "qa"), modes=ALL_MODES | {ATTACH})
+        for login in ("ui", "qa"):
+            self.h.records[login] = record(login)
+
+    def look(self, at):
+        self.h.deck.follow(self.h.at(at))
+
+    def test_only_the_focused_tab_attaches_and_the_others_say_their_agent_keeps_running(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[0]] = in_moveto("ui", ATTACH, pid=50)
+        for at in range(3, RESTORE_WAIT_S + 10, 2):
+            self.look(at)
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"])
+        self.assertEqual(self.herdr.runs(self.b[0]), [DETACHED_COMMAND], "never --wait or --resume")
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+
+    def test_focus_moving_away_detaches_and_coming_back_attaches_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[0]] = in_moveto("ui", ATTACH, pid=50)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.assertIn(50, self.h.hung)
+        self.assertEqual(self.herdr.runs(self.b[0])[-1], "moveto qa --attach")
+        self.herdr.proc[self.a[0]] = BARE
+        self.look(5)
+        self.assertEqual(self.herdr.runs(self.a[0])[-1], DETACHED_COMMAND)
+        self.herdr.focused_tab = self.a_tab
+        self.look(7)
+        self.assertEqual(self.herdr.runs(self.a[0])[-1], "moveto ui --attach")
+
+    def test_a_harness_entered_before_the_unit_is_never_hung_up(self):
+        # A --wait whose agent runs in the pane: the hang-up would end it.
+        self.herdr.proc[self.b[0]] = in_moveto("qa", WAIT, pid=60)
+        self.herdr.proc[self.b[1]] = in_moveto("qa", pid=61)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertNotIn(60, self.h.hung)
+        self.assertIn(61, self.h.hung, "its shell pane is closed as ever")
+        self.assertEqual(self.herdr.runs(self.b[0]), [])
+
+    def test_the_agent_row_follows_the_stream_while_detached(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.records["qa"] = record("qa", "working")
+        self.h.deck.restore(0)
+        self.look(1)
+        self.look(3)
+        self.assertEqual(self.herdr.agent_status.get(self.b[0]), "working")
+        self.h.records["qa"] = record("qa")
+        self.look(5)
+        self.assertEqual(self.herdr.agent_status.get(self.b[0]), "idle")
+
+    def test_an_attach_that_ends_in_the_focused_tab_is_started_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.proc[self.a[0]] = in_moveto("ui", ATTACH, pid=50)
+        self.look(30)
+        self.herdr.proc[self.a[0]] = BARE      # the ssh dropped
+        self.look(32)
+        self.look(34)
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"] * 2)
+
+    def test_an_attach_ending_at_once_twice_is_halted_until_its_tab_is_focused_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        for at in range(1, 60, 2):
+            self.look(at)   # each attach ends at once: the pane stays bare
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"] * 2)
+        self.assertTrue(any("attach ended at once twice" in line for line in self.h.logs))
+        self.herdr.focused_tab = self.b_tab
+        self.look(61)
+        self.herdr.focused_tab = self.a_tab
+        self.look(63)
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"] * 2 + [DETACHED_COMMAND,
+                         "moveto ui --attach"], "tried once more, the person being back")
+        self.herdr.proc[self.a[0]] = in_moveto("ui", ATTACH, pid=50)
+        self.look(65)
+        self.herdr.proc[self.a[0]] = BARE      # a drop long after: started again
+        self.look(95)
+        self.look(97)
+        self.assertEqual(self.herdr.runs(self.a[0])[-1:], ["moveto ui --attach"])
+        self.assertEqual(self.herdr.runs(self.a[0]).count("moveto ui --attach"), 4)
+
+    def test_a_shell_slow_to_start_the_attach_is_not_typed_into_again(self):
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.look(3)   # the operator's rc file still runs: the pane looks bare
+        self.look(5)
+        self.herdr.proc[self.a[0]] = in_moveto("ui", ATTACH, pid=50)
+        self.look(7)
+        self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"])
+
+    def test_a_restore_takes_no_resume_decision(self):
+        self.h.store = {"ui": Before(running=True)}
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.assertEqual(self.h.deck.pending, {})
+        for at in range(1, RESTORE_WAIT_S + 10, 2):
+            self.look(at)
+        self.assertNotIn("moveto ui --resume", self.herdr.runs())
+        self.assertNotIn("moveto ui --wait", self.herdr.runs())
+
+    def test_without_attach_in_moveto_the_harness_pane_is_as_before(self):
+        h = Harness(FakeHerdr(), modes=ALL_MODES)
+        self.assertNotIn((fabric_deck.HARNESS, ATTACH), h.deck._on_focus())
+        self.assertIn((fabric_deck.HARNESS, ATTACH), ATTACHED_FOCUS)
+
+    def test_moveto_help_listing_attach_turns_it_on(self):
+        self.assertIn(ATTACH, modes_in("usage: moveto <login> [--wait|--watch|--resume|--attach]"))
+        self.assertNotIn(ATTACH, modes_in("usage: moveto <login> [--attached-x]"))

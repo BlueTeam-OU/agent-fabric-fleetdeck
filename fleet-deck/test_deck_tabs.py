@@ -5,6 +5,9 @@ import unittest
 
 from deck_tabs import (
     AGENT,
+    ATTACH,
+    HARNESS_MODES,
+    attached,
     HARNESS,
     PANE_ROLES,
     ENTRY_GRACE_S,
@@ -306,6 +309,23 @@ class Display(unittest.TestCase):
                          Shown("working", ""), "a fresh record decides")
 
 
+class Attached(unittest.TestCase):
+    """A harness in the account's own terminal server: the stream alone
+    says whether it runs, whatever the pane attached to it shows."""
+
+    def test_a_session_up_is_the_harness_running_and_none_is_dormant(self):
+        self.assertIs(attached(ONE).state, State.RUNNING)
+        self.assertEqual(display(attached(ONE), ONE), Shown("working", ""))
+        self.assertIs(attached(NONE).state, State.IDLE)
+        self.assertEqual(display(attached(NONE), NONE), Shown("idle", "dormant"))
+
+    def test_no_record_or_a_stale_one_is_shown_stale(self):
+        stale = Live(count=1, state="working", fresh=False)
+        self.assertIs(attached(None).state, State.IDLE)
+        self.assertEqual(display(attached(stale), stale), Shown("unknown", "stale"))
+        self.assertEqual(display(attached(None), None), Shown("unknown", "stale"))
+
+
 ENTER = "/usr/local/share/moveto/enter"
 
 
@@ -345,7 +365,8 @@ class Foreground(unittest.TestCase):
                      ["ssh", "ui@h"],                              # no word: enter-ssh refuses it
                      ["ssh", "ui@h", "--wait"],                    # ssh refuses --wait as an option
                      ["ssh", "ui@h", "--", "--wait", "x"],         # not the whole command
-                     ["ssh", "ui@h", "bash"],                      # not one of the four words
+                     ["ssh", "ui@h", "bash"],                      # not one of the five words
+                     ["ssh", "ui@h", "--", "--attach"],             # the option, not enter-ssh's word
                      ["ssh", "-p", "ui@h", "h2", "--", "--wait"],  # ui@h is -p's value; h2 has no user
                      ["ssh", "-l", "other", "h", "--", "--wait"],
                      # The first user set is the one ssh connects as (ssh -G).
@@ -359,6 +380,14 @@ class Foreground(unittest.TestCase):
                      ["ssh", "-o", 'User="other"', "ui@h", "--", "--wait"],
                      ["ssh", "ui@h", "-l"]):                       # an option without its value
             self.assertIsNone(moveto_in([(9, argv)], "ui"), argv)
+
+    def test_an_attach_is_this_accounts_moveto_and_carries_no_harness_of_its_own(self):
+        self.assertEqual(moveto_in([(9, ["ssh", "-t", "ui@h", "--", "attach"])], "ui"), Moveto(9, ATTACH, SSH))
+        script = ["/bin/bash", "/usr/local/bin/moveto", "ui", "--attach"]
+        self.assertEqual(moveto_in([(7, script)], "ui"), Moveto(7, ATTACH))
+        # Ending an attach ends no agent; ending a --wait or --resume does.
+        self.assertNotIn(ATTACH, HARNESS_MODES)
+        self.assertEqual(HARNESS_MODES, {WAIT, RESUME})
 
     def test_a_python_option_and_its_value_are_not_the_script(self):
         launch = "/home/ui/projects/agent-fabric/tools/fabric/launch.py"

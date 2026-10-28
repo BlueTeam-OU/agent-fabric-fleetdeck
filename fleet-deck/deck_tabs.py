@@ -50,8 +50,14 @@ def known_reason(value) -> str | None:
     return value if isinstance(value, str) and value in REASONS else None
 
 # moveto's modes, as the last argument of its `sudo ... enter` hand-off.
-WAIT, RESUME, WATCH, PLAIN = "--wait", "--resume", "--watch", ""
-MODES = frozenset({WAIT, RESUME, WATCH})
+# ATTACH is not an enter mode: `moveto <login> --attach` reaches the
+# account's harness, which runs in a terminal server of the account's own
+# (a user unit, j167 part 2), and ending it ends only the attach.
+WAIT, RESUME, WATCH, ATTACH, PLAIN = "--wait", "--resume", "--watch", "--attach", ""
+MODES = frozenset({WAIT, RESUME, WATCH, ATTACH})
+# The modes whose moveto carries a harness of its own: a pane holding one is
+# never hung up for a lost focus, as that would end the agent.
+HARNESS_MODES = frozenset({WAIT, RESUME})
 
 HARNESS, SHELL, STATUS, AGENT = "harness", "shell", "status", "agent"
 PANE_ROLES = (HARNESS, SHELL, STATUS, AGENT)
@@ -288,6 +294,16 @@ def classify(seen: Seen, live: Live | None) -> Track | None:
     return Track(State.IDLE, armed_mode=seen.mode, ended_here=seen.mode == PLAIN)
 
 
+def attached(live: Live | None) -> Track:
+    """An account whose harness runs in its own terminal server, which the
+    deck's pane only attaches to: whether a harness runs is the stream's to
+    say, as no process under the pane is the harness. A session up is the
+    harness's; none is its pane at moveto's prompt, or the unit stopped."""
+    if live is not None and live.count >= 1:
+        return Track(State.RUNNING, armed_mode=ATTACH, harness_seen=True)
+    return Track(State.IDLE, armed_mode=ATTACH)
+
+
 # ----------------------------------------------------------------- before
 
 # A fall of `before` settles only on an answer from the same herdr server
@@ -456,7 +472,7 @@ def _mode(argv: list[str]) -> str:
 # ssh's options that take the next argument as their value (OpenSSH 9).
 _SSH_VALUE_OPTIONS = frozenset("BbcDEeFIiJLlmOoPpQRSWw")
 # What enter-ssh accepts as the whole remote command, and the mode each is.
-_SSH_WORDS = {WAIT: WAIT, WATCH: WATCH, RESUME: RESUME, "shell": PLAIN}
+_SSH_WORDS = {WAIT: WAIT, WATCH: WATCH, RESUME: RESUME, "shell": PLAIN, "attach": ATTACH}
 
 
 def _ssh_mode(args: list[str], login: str) -> str | None:
@@ -465,7 +481,7 @@ def _ssh_mode(args: list[str], login: str) -> str | None:
     before and after the destination, up to `--` or the first other word;
     the user is the first one set, by `-l`, `-o User=` or the destination's
     `<user>@`; the rest is the remote command, which must be exactly one of
-    enter-ssh's four words. A word like `--wait` straight after the
+    enter-ssh's five words. A word like `--wait` straight after the
     destination is an option to ssh, which refuses it."""
     user: str | None = None
     destination: str | None = None
