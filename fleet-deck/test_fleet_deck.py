@@ -534,8 +534,9 @@ class FleetDeckTest(unittest.TestCase):
         self.assertEqual(fleet.waiting("a"), 7, "the prompt the attach mirrors is pressed")
 
     def test_an_attach_mode_boot_starts_an_attach_at_most_twice_the_focused_tabs_too(self):
-        # While the boot runs the controller attaches no harness pane, so the
-        # boot reaches the focused tab's prompt itself.
+        # While the boot runs the controller attaches no harness pane of an
+        # account that is not up, so the boot reaches the focused tab's
+        # prompt itself.
         bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5,
                          "foreground_processes": [{"pid": 5, "argv": ["bash"]}]})
         focused = self.attach_fleet(focused=True)
@@ -586,6 +587,15 @@ class FleetDeckTest(unittest.TestCase):
         self.assertFalse([c for c in fleet.herdr.text.call_args_list if c.args[:2] in
                           (("pane", "run"), ("pane", "send-keys"))], "nothing typed past a refusal")
         self.assertNotIn("a", fleet.attached, "a start refused is not counted")
+        fleet.attached = {"a": (1, 0.0)}
+        attach = (mock.Mock(pid=7, mode=fleet_deck.ATTACH), {"foreground_process_group_id": 7})
+        fleet.moveto = mock.Mock(side_effect=[attach, bare])
+        with mock.patch.object(fleet_deck, "typed_at_bare_shell", return_value=False) as locked, \
+             mock.patch.object(fleet_deck.boot, "hang_up", return_value=True):
+            fleet.done("a")
+        self.assertEqual(locked.call_args.kwargs.get("wait"), False, "the line, after the hang-up")
+        self.assertNotIn(mock.call("pane", "run", "p1", fleet_deck.DETACHED_COMMAND),
+                         fleet.herdr.text.call_args_list)
 
     def test_done_ends_the_boots_attach_and_says_the_agent_runs_on(self):
         fleet = self.attach_fleet()
@@ -605,7 +615,7 @@ class FleetDeckTest(unittest.TestCase):
         attach = (mock.Mock(pid=7, mode=fleet_deck.ATTACH), {"foreground_process_group_id": 7})
         bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5,
                          "foreground_processes": [{"pid": 5, "argv": ["bash"]}]})
-        fleet.moveto = mock.Mock(side_effect=[attach, bare])
+        fleet.moveto = mock.Mock(side_effect=[attach, bare, bare])
         fleet._focused = mock.Mock(side_effect=[False, True])   # opened after the hang-up
         with mock.patch.object(fleet_deck.boot, "hang_up", return_value=True):
             fleet.done("a")

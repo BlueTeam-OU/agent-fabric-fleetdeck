@@ -485,9 +485,11 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
   the controller attaches the focused tab as before; an attach the boot
   left open stays open until its tab has been focused and left. The two
   are separate processes that read the stream at different moments, so
-  each types into a harness pane only under one lock of the operator's,
-  looking at the shell again there; whoever typed an attach holds the
-  lock until it runs (up to 5 s), and the other then types nothing.
+  each types a line at a harness pane's shell only under one lock of the
+  operator's, looking at the shell (and the boot at the focus) again
+  there; whoever typed an attach holds the lock until it runs (up to
+  5 s), and the other then types nothing. The boot's Enter is pressed at
+  the prompt its own attach shows, never at a shell.
 - **`stop --all`** never hangs up an attach: that ends no session. The
   harness sessions are stopped through their units, which is
   agent-fabric's part, and the deck says so, naming the sessions left

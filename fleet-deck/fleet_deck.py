@@ -494,11 +494,13 @@ class DeckFleet:
             while time.monotonic() < deadline:
                 found, info = self.moveto(login)
                 if found is None and info.get("shell_pid") == info.get("foreground_process_group_id"):
-                    if not self._focused(login):
-                        typed_at_bare_shell(
-                            lambda: self.moveto(login)[1],
-                            lambda: self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND),
-                            self.sleep, wait=False, directory=self.lock_dir)
+                    # Focus is read under the lock, right before the line:
+                    # the wait for it may be the controller's attach of
+                    # another tab, and a person may open this one meanwhile.
+                    typed_at_bare_shell(
+                        lambda: {} if self._focused(login) else self.moveto(login)[1],
+                        lambda: self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND),
+                        self.sleep, wait=False, directory=self.lock_dir)
                     return
                 time.sleep(0.2)
         except Exception as error:  # the session is up; only the pane's line is missing
