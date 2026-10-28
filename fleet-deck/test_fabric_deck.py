@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -3039,6 +3040,28 @@ class AttachFocus(unittest.TestCase):
         self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach"])
         self.assertEqual(self.herdr.runs(self.b[0]), [], "qa is not up: the boot's to attach")
 
+    def test_every_write_into_a_harness_pane_goes_through_the_lock(self):
+        # Refused under the lock (the other typist got there first): the
+        # attach and the detached line are both left untyped.
+        looks = []
+        refuse = lambda info_of, act, sleep, wait, directory=None: looks.append(wait) or False
+        with mock.patch.object(fabric_deck, "typed_at_bare_shell", refuse):
+            self.herdr.focused_tab = self.a_tab
+            self.h.deck.restore(0)
+            self.look(1)
+        self.assertEqual(self.herdr.runs(self.a[0]), [], "the attach")
+        self.assertEqual(self.herdr.runs(self.b[0]), [], "the detached line")
+        self.assertEqual(sorted(looks), [False, True])
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND], "a shell pane's line as ever")
+
+    def test_while_a_boot_runs_an_unfocused_account_already_up_gets_its_line(self):
+        self.h.deck.booting = lambda: True
+        self.h.records["qa"] = record("qa", "working")
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.b[0]), [DETACHED_COMMAND], "the boot leaves qa alone")
+
     def test_while_a_boot_runs_the_harness_panes_line_waits_for_it(self):
         self.h.deck.booting = lambda: True
         self.herdr.focused_tab = self.a_tab
@@ -3063,6 +3086,39 @@ class AttachFocus(unittest.TestCase):
         h.deck.restore(0)
         h.deck.follow(h.at(1))
         self.assertNotIn(61, h.hung)
+
+
+class TypedAtBareShell(unittest.TestCase):
+    """The one way into an attach-mode harness pane, for the controller and
+    the boot alike: under harness_lock, after a second look at the shell."""
+
+    def test_a_pane_no_longer_bare_at_the_second_look_is_not_typed_into(self):
+        acted = []
+        self.assertFalse(fabric_deck.typed_at_bare_shell(lambda: in_moveto("ui", ATTACH), lambda: acted.append(1),
+                                                         lambda s: None, wait=True, directory=LOCK_DIR.name))
+        self.assertEqual(acted, [])
+
+    def test_a_second_typist_waits_for_the_first_attach_to_start_and_then_types_nothing(self):
+        pane = {"info": BARE}
+        started, second = threading.Event(), []
+
+        def first_act():
+            started.set()          # typed; the shell has not run it yet
+        def first_sleep(_s):
+            # The other typist is blocked on the lock by now; then the
+            # attach starts.
+            time.sleep(0.05)
+            pane["info"] = in_moveto("ui", ATTACH)
+
+        first = threading.Thread(target=fabric_deck.typed_at_bare_shell,
+                                 args=(lambda: pane["info"], first_act, first_sleep, True, LOCK_DIR.name))
+        first.start()
+        started.wait(5)
+        typed = fabric_deck.typed_at_bare_shell(lambda: pane["info"], lambda: second.append(1),
+                                                lambda s: None, wait=False, directory=LOCK_DIR.name)
+        first.join(5)
+        self.assertFalse(typed)
+        self.assertEqual(second, [], "nothing typed after the attach")
 
 
 if __name__ == "__main__":

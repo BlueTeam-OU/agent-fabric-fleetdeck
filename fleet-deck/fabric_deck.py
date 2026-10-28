@@ -428,12 +428,54 @@ def view_lock(directory: str | None = None):
     The directory is fixed by the uid, never by the caller's environment,
     which the deck and a plugin action do not share: /tmp where the uid
     has no /run/user directory, never tempfile's TMPDIR."""
+    with open(uid_lock_path("views", directory), "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def uid_lock_path(name: str, directory: str | None = None) -> str:
     uid = os.getuid()
     run_dir = f"/run/user/{uid}"
     base = directory or (run_dir if os.path.isdir(run_dir) else "/tmp")
-    with open(os.path.join(base, f"fabric-deck-views.{uid}.lock"), "a") as handle:
+    return os.path.join(base, f"fabric-deck-{name}.{uid}.lock")
+
+
+@contextlib.contextmanager
+def harness_lock(directory: str | None = None):
+    """One typist at a time into an attach-mode harness pane, for this OS
+    user: the controller and `start --auto` are two processes, each finding
+    the pane bare by its own look, and a line typed after an attach that has
+    not started yet is read by that attach and reaches the agent. Taken
+    as view_lock is, by the uid's own directory."""
+    with open(uid_lock_path("harness", directory), "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield
+
+
+# How long a typist holds harness_lock for the attach it typed to start:
+# the shell's ENTRY_GRACE_S, polled.
+HARNESS_START_POLLS = 40
+HARNESS_POLL_S = ENTRY_GRACE_S / HARNESS_START_POLLS
+
+
+def typed_at_bare_shell(info_of: Callable[[], dict], act: Callable[[], None],
+                        sleep: Callable[[float], None], wait: bool,
+                        directory: str | None = None) -> bool:
+    """Run `act` (what is typed) only if the pane is at a bare shell when
+    looked at again under harness_lock; whether it ran. With `wait` (an
+    attach was typed), the lock is held until the pane is no longer bare
+    or ENTRY_GRACE_S has passed, so the other typist's look finds the
+    attach running, not the shell it has not left yet."""
+    with harness_lock(directory):
+        if not at_bare_shell(info_of()):
+            return False
+        act()
+        if wait:
+            for _ in range(HARNESS_START_POLLS):
+                if not at_bare_shell(info_of()):
+                    break
+                sleep(HARNESS_POLL_S)
+        return True
 
 
 # How long a start waits for the view it typed, polled: Python's start and
@@ -1141,7 +1183,9 @@ class Deck:
         after its own look at the shell, so the controller types nothing
         there meanwhile. The boot never activates an account whose fresh
         record shows a session up (fleet_deck.DeckFleet.waiting), so that
-        one stays the controller's: its focused tab attaches as ever."""
+        one stays the controller's: its focused tab attaches as ever. The
+        two read the stream at different times, so this divides the work
+        and harness_lock, not this, keeps them from typing into one pane."""
         if not self.booting():
             return False
         live = self.live(login)
@@ -1422,11 +1466,18 @@ class Deck:
                     # Dropped once typed: a run that fails stays waiting, and
                     # its retry looks at the pane again first.
                     self.ending.discard(pane)
-                    if pane in self.resumed:
-                        # Whatever a person typed there since is dropped, not run.
-                        self.herdr.call("pane", "send-keys", pane, "ctrl+u")
-                        self.resumed.discard(pane)
-                    self._arm(login, pane, mode)
+
+                    def arm(pane=pane, login=login, mode=mode):
+                        if pane in self.resumed:
+                            # Whatever a person typed there since is dropped, not run.
+                            self.herdr.call("pane", "send-keys", pane, "ctrl+u")
+                            self.resumed.discard(pane)
+                        self._arm(login, pane, mode)
+                    if mode != ATTACH:
+                        arm()
+                    elif not typed_at_bare_shell(lambda: self.herdr.process_info(pane), arm,
+                                                 self.sleep, wait=True, directory=self.lock_dir):
+                        continue   # the boot typed there first: seen at the next look
                     del self.waiting[key]
                     self.typed_at[pane] = now
                     if mode == ATTACH:
@@ -1709,10 +1760,16 @@ class Deck:
             try:
                 seen = self.observe(login, pane)
                 if seen.moveto is False:
-                    # A half-typed line at the prompt is dropped, never run
-                    # with the paused line appended.
-                    self.herdr.call("pane", "send-keys", pane, "ctrl+u")
-                    self.herdr.call("pane", "run", pane, DETACHED_COMMAND if harness else PAUSED_COMMAND)
+                    def line(pane=pane, harness=harness):
+                        # A half-typed line at the prompt is dropped, never run
+                        # with the paused line appended.
+                        self.herdr.call("pane", "send-keys", pane, "ctrl+u")
+                        self.herdr.call("pane", "run", pane, DETACHED_COMMAND if harness else PAUSED_COMMAND)
+                    if not (harness and self.attach):
+                        line()
+                    elif not typed_at_bare_shell(lambda: self.herdr.process_info(pane), line,
+                                                 self.sleep, wait=False, directory=self.lock_dir):
+                        continue   # an attach is starting there: looked at again
                     del self.pausing[pane]
                 elif seen.moveto is None and seen.present:
                     del self.pausing[pane]   # something else holds it now

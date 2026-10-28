@@ -38,6 +38,7 @@ from fabric_deck import (
     BIN,
     BOARD_DIR,
     DETACHED_COMMAND,
+    typed_at_bare_shell,
     PANE_MARKER,
     Herdr,
     fleetdeck_env,
@@ -339,6 +340,9 @@ class DeckFleet:
     def __init__(self, say: Callable[[str], None], exclude: Iterable[str] = (),
                  attach: bool = False):
         self.attach = attach
+        self.sleep: Callable[[float], None] = time.sleep
+        # harness_lock's directory (None: the uid's own, the controller's too).
+        self.lock_dir: str | None = None
         # login -> (the boot's attach starts, when it last started one)
         self.attached: dict[str, tuple[int, float]] = {}
         self.tab_id: dict[str, str] = {}
@@ -449,20 +453,23 @@ class DeckFleet:
     def _attach(self, login: str, info: dict) -> None:
         """Start the login's attach in its harness pane, at the operator's
         bare shell only, ATTACH_STARTS times at most per boot. The focused
-        tab's too: while the boot runs the controller attaches none, so the
-        two never type into one pane."""
+        tab's too. While the boot runs the controller attaches only an
+        account already up, which the boot never activates
+        (Deck._boot_holds); and both type into a harness pane only under
+        harness_lock, each looking at the shell again there."""
         starts, at = self.attached.get(login, (0, 0.0))
         now = time.monotonic()
         if starts >= ATTACH_STARTS or (starts and now - at < ENTRY_GRACE_S):
             return
-        shell = info.get("shell_pid")
-        if shell is None or shell != info.get("foreground_process_group_id"):
-            return
         pane = self.harness[login]
-        # The detached line, or a half-typed one, is cleared, never run with it.
-        self.herdr.text("pane", "send-keys", pane, "ctrl+u")
-        self.herdr.text("pane", "run", pane, f"moveto {login} {ATTACH}")
-        self.attached[login] = (starts + 1, now)
+
+        def attach():
+            # The detached line, or a half-typed one, is cleared, never run with it.
+            self.herdr.text("pane", "send-keys", pane, "ctrl+u")
+            self.herdr.text("pane", "run", pane, f"moveto {login} {ATTACH}")
+        if typed_at_bare_shell(lambda: self.moveto(login)[1], attach, self.sleep, wait=True,
+                               directory=self.lock_dir):
+            self.attached[login] = (starts + 1, now)
 
     def done(self, login: str) -> None:
         """The login's session is up: the attach the boot opened for it ends,
@@ -488,7 +495,10 @@ class DeckFleet:
                 found, info = self.moveto(login)
                 if found is None and info.get("shell_pid") == info.get("foreground_process_group_id"):
                     if not self._focused(login):
-                        self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND)
+                        typed_at_bare_shell(
+                            lambda: self.moveto(login)[1],
+                            lambda: self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND),
+                            self.sleep, wait=False, directory=self.lock_dir)
                     return
                 time.sleep(0.2)
         except Exception as error:  # the session is up; only the pane's line is missing
