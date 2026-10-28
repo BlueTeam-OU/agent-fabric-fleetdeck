@@ -14,7 +14,7 @@ labels shows no second row, and the deck leaves all its panes in sight.
 
 | pane | runs | for |
 |---|---|---|
-| **harness** (left, 65 %, focused) | `moveto <account> --wait` | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session |
+| **harness** (left, 65 %, focused) | `moveto <account> --wait`; with `--attach` in moveto, `moveto <account> --attach` while the tab is focused | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session. Attached, the account's own terminal, `detached: tab not focused; the agent keeps running` otherwise (see Attach) |
 | **shell** (top right) | `moveto <account>`, while the tab is focused | a shell as the account; `paused: tab not focused` otherwise |
 | **status** (right) | `moveto <account> --watch`, while the tab is focused | the account's status, read-only; `paused: tab not focused` otherwise |
 | **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it, and `prefix+a` again shows the harness (see Views) |
@@ -278,7 +278,9 @@ again whole within 10 s, and is followed in nothing until then.
   hang-up is taken; when the tab is focused again, the line at its
   prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
   run) and they are started again. So a shell pane's work ends with the
-  focus. The harness pane is never touched by focus, and a pane running
+  focus. The harness pane is touched by focus only in attach mode (see
+  Attach), and never while it holds a `--wait` or `--resume` of its own,
+  whose hang-up would end the agent; a pane running
   anything but this account's moveto or a bare shell is left as it is (a
   bare shell is the deck's, as at a restore: its moveto starts there when
   the tab is focused). Focus herdr cannot
@@ -438,6 +440,41 @@ Until agent-fabric's activation PR puts `--wait`, `--watch` and
 `fabric-resume`'s second-session refusal on main, `moveto --help` does not
 list them. The deck then arms no pane with them, says so once, and shows
 those harness panes as FleetDeck's `unknown`.
+
+## Attach
+
+When `moveto --help` lists `--attach`, the account's harness runs in a
+terminal server of the account's own, a user unit outside the deck
+(agent-fabric's part of j167: the unit, enter-ssh's `attach` word and
+moveto `--attach`). The deck's harness pane only attaches to it, and
+connects only while its tab is focused, like the shell and status panes.
+Ending the attach (a lost focus, a dropped ssh, a deck restart) ends no
+agent. Until moveto lists `--attach`, everything above holds unchanged.
+
+- **Focus.** The focused tab's harness pane runs `moveto <account>
+  --attach` at the operator's bare shell. A tab that loses focus has the
+  attach hung up and shows `detached: tab not focused; the agent keeps
+  running`. An attach that ends while its tab is focused is started again.
+  One that ends within 15 s twice in a row is not, until the tab is
+  focused again, and the deck says so.
+- **What the row shows** is the account's stream, focused or not: no
+  process under the pane is the harness. A session up is the harness
+  running, none is `dormant`, and a stale record is `stale`.
+- **A restore** takes no `--resume` decision: whether the agent resumes is
+  the unit's. A pane that still holds a harness of its own, entered
+  before the unit, is followed and shown as before, and is never hung up,
+  by focus or by `stop --all`, until it ends.
+- **`start --auto`** attaches each unfocused account itself, for its
+  activation only, at most twice per boot. It presses the Enter at the
+  prompt the attach shows, as above, and hangs up the attach once the
+  account's session is seen up. An account that does not come up keeps
+  its attach open, so its pane shows why, and is reported as skipped or
+  not up. The focused tab is the controller's to attach.
+- **`stop --all`** never hangs up an attach: that ends no session. The
+  harness sessions are stopped through their units, which is
+  agent-fabric's part, and the deck says so.
+- **Limits.** A safeguard stop is read from the pane's screen, so it is
+  seen only while that tab is attached.
 
 ## What the deck keeps
 
