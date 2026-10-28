@@ -94,16 +94,18 @@ restart the server: `stop --all`, then `start --auto`.
      pane never shows the prompt, is named and skipped.
 
 The boot presses the Enter that `moveto <account> --wait` asks for, and
-nothing else. After the Enter, the prompt stays on screen while moveto
+nothing else (with `--attach` it also starts an attach to reach it, see
+Attach). After the Enter, the prompt stays on screen while moveto
 refreshes the account. So only a new moveto at the prompt (the deck armed
 `--wait` again) counts as a failure, never the prompt alone. Over ssh the
 prompt line is the account's own output, so the boot also needs the state
 stream's fresh word that no session runs there. While that is unknown, it
 does not press. It checks again just before each press, after the 4 s gap.
 The boot presses only when the pane's foreground is that account's
-`moveto --wait` and its last line is "<account> - Enter to activate". A
-pane at a passphrase prompt, at a shell or running a harness is never
-typed into. Without `--auto`, panes wait for your Enter as before.
+`moveto --wait` (or, with `--attach`, the attach to it) and its last line
+is "<account> - Enter to activate". A pane at a passphrase prompt, at a
+shell or running a harness is never typed into, except that with
+`--attach` an attach is started at a bare shell (see Attach). Without `--auto`, panes wait for your Enter as before.
 
 While a boot runs, it holds `$XDG_STATE_HOME/fabric-deck/boot.lock`, and
 no controller resumes a session on its own. This holds even across a
@@ -114,7 +116,9 @@ boot ends, restores resume as before.
 **`stop --all`** is the reverse:
 1. Stops the controller, first, so that it does not arm the panes again.
 2. Ends each pane's session, last tier first (SIGHUP to the pane's moveto,
-   as closing the pane would), waiting up to 30 s per tier.
+   as closing the pane would), waiting up to 30 s per tier. With
+   `--attach`, an attach is left alone: its session runs in the account's
+   own server (see Attach).
 3. Stops the server and the ssh-agent holder.
 4. Stops the control agents, once `fabric-ctl` has `control-stop`.
 
@@ -279,8 +283,11 @@ again whole within 10 s, and is followed in nothing until then.
   prompt is cleared (`ctrl+u`, so a half-typed command is dropped, never
   run) and they are started again. So a shell pane's work ends with the
   focus. The harness pane is touched by focus only in attach mode (see
-  Attach), and never while it holds a `--wait` or `--resume` of its own,
-  whose hang-up would end the agent; a pane running
+  Attach). No pane holding this account's `moveto --wait` or `--resume`
+  is hung up, with or without `--attach`, since its hang-up would end the
+  agent; a moveto the deck typed less than 5 s ago that the shell has not
+  started yet is waited for, and hung up once it runs, so nothing is
+  typed after it. A pane running
   anything but this account's moveto or a bare shell is left as it is (a
   bare shell is the deck's, as at a restore: its moveto starts there when
   the tab is focused). Focus herdr cannot
@@ -467,12 +474,17 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
 - **`start --auto`** attaches each unfocused account itself, for its
   activation only, at most twice per boot. It presses the Enter at the
   prompt the attach shows, as above, and hangs up the attach once the
-  account's session is seen up. An account that does not come up keeps
-  its attach open, so its pane shows why, and is reported as skipped or
-  not up. The focused tab is the controller's to attach.
+  account's session is seen up and its tab is not focused, looking at
+  the focus again just before the hang-up and before the line. An account
+  that does not come up keeps its attach open, so its pane shows why, and
+  is reported as skipped or not up. The focused tab is the controller's
+  to attach. While the boot runs the controller types no line into a
+  harness pane, so only one of them types there.
 - **`stop --all`** never hangs up an attach: that ends no session. The
   harness sessions are stopped through their units, which is
-  agent-fabric's part, and the deck says so.
+  agent-fabric's part, and the deck says so, naming the sessions left
+  running in their accounts' own servers apart from any the stream may
+  still show after their end.
 - **Limits.** A safeguard stop is read from the pane's screen, so it is
   seen only while that tab is attached.
 

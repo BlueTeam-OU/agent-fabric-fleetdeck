@@ -463,15 +463,16 @@ class DeckFleet:
     def done(self, login: str) -> None:
         """The login's session is up: the attach the boot opened for it ends,
         unless a person is looking at its tab, and its pane says the agent
-        runs on."""
+        runs on. Focus is read just before each act, as a person may open
+        the tab at any moment, and the controller attaches it then."""
         if login not in self.attached:
             return
         try:
-            if self._focused(login):
-                return
             found, info = self.moveto(login)
             group = info.get("foreground_process_group_id")
             if found is None or found.mode != ATTACH or not isinstance(group, int):
+                return
+            if self._focused(login):
                 return
             if not boot.hang_up(group):
                 self.say(f"{login}: up, but its attach could not be ended; the controller "
@@ -481,7 +482,8 @@ class DeckFleet:
             while time.monotonic() < deadline:
                 found, info = self.moveto(login)
                 if found is None and info.get("shell_pid") == info.get("foreground_process_group_id"):
-                    self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND)
+                    if not self._focused(login):
+                        self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND)
                     return
                 time.sleep(0.2)
         except Exception as error:  # the session is up; only the pane's line is missing
@@ -553,9 +555,10 @@ def boot_fleet(say: Callable[[str], None], exclude: Iterable[str]) -> int:
     return 0 if not outcome.skipped and not outcome.late else 1
 
 
-def stop_sessions(say: Callable[[str], None]) -> set[str]:
+def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
     """Every deck pane's session, in reverse boot order, tier by tier. The
-    logins the deck has a harness pane for."""
+    logins the deck has a harness pane for, and of those the ones whose
+    session runs in the account's own server, which this does not stop."""
     fleet = DeckFleet(say, attach=attach_mode())
     if fleet.attach:
         # Stopping them is their units' (agent-fabric's stop --all through
@@ -566,8 +569,9 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
         fleet.read_map()
     except Exception as error:  # no map: herdr's stop below ends the panes anyway
         say(f"cannot read the deck's panes ({error}); herdr's stop ends them")
-        return set()
+        return set(), set()
     attached = []
+    hung_any: set[str] = set()
     for tier, logins in reversed(boot.plan_tiers(fleet.workspace, fleet.role)):
         hung = []
         for login in logins:
@@ -576,7 +580,7 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
             except Exception as error:  # one pane must not stop the rest; herdr's stop ends it
                 say(f"{login}: cannot read its pane ({boot.shown(str(error))}); herdr's stop ends it")
                 continue
-            if found is not None and found.mode == ATTACH:
+            if fleet.attach and found is not None and found.mode == ATTACH:
                 # Its agent runs in the account's own terminal server: a
                 # hang-up ends the attach, not the session.
                 attached.append(login)
@@ -584,6 +588,7 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
             group = info.get("foreground_process_group_id")
             if found is not None and isinstance(group, int) and boot.hang_up(group):
                 hung.append(login)
+        hung_any.update(hung)
         if not hung:
             continue
         say(f"{tier}: ending {', '.join(hung)}")
@@ -592,7 +597,9 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
             time.sleep(boot.POLL_S)
     if attached:
         say(f"attached, so not stopped here: {', '.join(attached)}")
-    return set(fleet.harness)
+    # In attach mode every session the deck did not end itself (a harness of
+    # its own, entered before the unit) is its unit's.
+    return set(fleet.harness), (set(fleet.harness) - hung_any if fleet.attach else set())
 
 
 def stop_all(say: Callable[[str], None]) -> int:
@@ -601,8 +608,9 @@ def stop_all(say: Callable[[str], None]) -> int:
     pane whose moveto ends."""
     ok = stop_controller(say)
     deck: set[str] = set()
+    in_units: set[str] = set()
     if server_up():
-        deck = stop_sessions(say)
+        deck, in_units = stop_sessions(say)
         try:
             subprocess.run([BIN, "server", "stop"], capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.SubprocessError) as error:  # the steps after still run
@@ -619,9 +627,13 @@ def stop_all(say: Callable[[str], None]) -> int:
     # Logins come from other accounts' state records: printable before shown.
     live = {boot.shown(login) for login, count in DeckFleet(say).live_counts().items() if count}
     deck = {boot.shown(login) for login in deck}
+    in_units = {boot.shown(login) for login in in_units}
     ok = control_agents("control-stop", say) and ok
-    if live & deck:
-        say(f"the state stream still shows {', '.join(sorted(live & deck))} running; it can "
+    if live & in_units:
+        say(f"left running in their accounts' own servers: {', '.join(sorted(live & in_units))}")
+    lagging = live & deck - in_units
+    if lagging:
+        say(f"the state stream still shows {', '.join(sorted(lagging))} running; it can "
             "lag a session that just ended (fabric-ctl all presence answers from the hosts)")
     if live - deck:
         say(f"sessions outside the deck, left running: {', '.join(sorted(live - deck))}")

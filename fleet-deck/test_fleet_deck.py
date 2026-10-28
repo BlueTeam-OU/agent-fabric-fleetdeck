@@ -487,8 +487,7 @@ class FleetDeckTest(unittest.TestCase):
         with mock.patch.object(fleet_deck, "moveto_list", return_value=listed), \
              mock.patch.object(fleet_deck, "Herdr", return_value=herdr), \
              mock.patch.object(fleet_deck.DeckFleet, "moveto",
-                               lambda self, login: (mock.Mock(mode=fleet_deck.WAIT),
-                                                    {"foreground_process_group_id": group[login]})), \
+                               lambda self, login: (object(), {"foreground_process_group_id": group[login]})), \
              mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
              mock.patch.object(fleet_deck.boot, "hang_up",
                                side_effect=lambda g: ended.append({v: k for k, v in group.items()}[g]) or True):
@@ -560,6 +559,18 @@ class FleetDeckTest(unittest.TestCase):
         hang_up.assert_called_once_with(7)
         fleet.herdr.text.assert_called_with("pane", "run", "p1", fleet_deck.DETACHED_COMMAND)
 
+    def test_done_types_no_line_into_a_tab_a_person_opened_meanwhile(self):
+        fleet = self.attach_fleet()
+        fleet.attached = {"a": (1, 0.0)}
+        attach = (mock.Mock(pid=7, mode=fleet_deck.ATTACH), {"foreground_process_group_id": 7})
+        bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5})
+        fleet.moveto = mock.Mock(side_effect=[attach, bare])
+        fleet._focused = mock.Mock(side_effect=[False, True])   # opened after the hang-up
+        with mock.patch.object(fleet_deck.boot, "hang_up", return_value=True):
+            fleet.done("a")
+        self.assertNotIn(mock.call("pane", "run", "p1", fleet_deck.DETACHED_COMMAND),
+                         fleet.herdr.text.call_args_list, "the controller attaches it now")
+
     def test_done_leaves_a_focused_tab_and_a_pane_the_boot_did_not_attach(self):
         focused, not_ours = self.attach_fleet(focused=True), self.attach_fleet()
         focused.attached = {"a": (1, 0.0)}
@@ -584,10 +595,29 @@ class FleetDeckTest(unittest.TestCase):
                                                     {"foreground_process_group_id": 3})), \
              mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
              mock.patch.object(fleet_deck.boot, "hang_up", return_value=True) as hang_up:
-            fleet_deck.stop_sessions(self.say)
+            deck, in_units = fleet_deck.stop_sessions(self.say)
         hang_up.assert_called_once_with(3)   # qa's --wait, its agent in the pane
+        self.assertEqual((deck, in_units), ({"ui", "qa"}, {"ui"}), "qa's was ended here, ui's runs on")
         self.assertTrue(any("attached, so not stopped here: ui" in line for line in self.said))
         self.assertTrue(any("accounts' own servers" in line for line in self.said))
+
+    def test_stop_all_in_attach_mode_says_the_units_sessions_run_on_not_that_the_stream_lags(self):
+        with mock.patch.object(fleet_deck, "stop_controller", return_value=True), \
+             mock.patch.object(fleet_deck, "server_up", return_value=None), \
+             mock.patch.object(fleet_deck, "stop_holder"), \
+             mock.patch.object(fleet_deck, "control_agents", return_value=True), \
+             mock.patch.object(fleet_deck.DeckFleet, "live_counts", return_value={"ui": 1, "qa": 1}), \
+             mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            fleet_deck.server_up.side_effect = [object(), None]
+            with mock.patch.object(fleet_deck, "stop_sessions", return_value=({"ui", "qa"}, {"ui"})), \
+                 mock.patch.object(fleet_deck.subprocess, "run"), \
+                 mock.patch.object(fleet_deck, "wait_for", return_value=True):
+                fleet_deck.stop_all(self.say)
+        self.assertTrue(any(line == "left running in their accounts' own servers: ui" for line in self.said))
+        lag = [line for line in self.said if "can lag" in line]
+        self.assertEqual(len(lag), 1)
+        self.assertIn("qa", lag[0])
+        self.assertNotIn("ui", lag[0])
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
@@ -598,7 +628,7 @@ class FleetDeckTest(unittest.TestCase):
                 raise subprocess.TimeoutExpired(argv, 60)
             return real_run(argv, **kw)
 
-        with mock.patch.object(fleet_deck, "stop_sessions", return_value=set()), \
+        with mock.patch.object(fleet_deck, "stop_sessions", return_value=(set(), set())), \
              mock.patch.object(fleet_deck.subprocess, "run", side_effect=failing_stop), \
              mock.patch.object(fleet_deck, "SERVER_STOP_S", 0), \
              mock.patch.object(fleet_deck, "stop_holder") as holder, \
@@ -652,7 +682,7 @@ class FleetDeckTest(unittest.TestCase):
             os.kill(server, signal.SIGKILL)
             return subprocess.CompletedProcess(argv, 0, "", "")
 
-        with mock.patch.object(fleet_deck, "stop_sessions") as sessions, \
+        with mock.patch.object(fleet_deck, "stop_sessions", return_value=(set(), set())) as sessions, \
              mock.patch.object(fleet_deck.subprocess, "run", side_effect=server_stop), \
              mock.patch.object(fleet_deck, "control_agents", return_value=True) as control, \
              mock.patch.object(fleet_deck.DeckFleet, "live_counts", return_value={}), \
