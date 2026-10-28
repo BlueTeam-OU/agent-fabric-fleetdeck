@@ -33,7 +33,7 @@ import time
 from typing import Callable, Iterable
 
 import boot
-from deck_tabs import ATTACH, ENTRY_GRACE_S, HARNESS, WAIT, moveto_in
+from deck_tabs import ATTACH, ENTRY_GRACE_S, HARNESS, HARNESS_MODES, WAIT, moveto_in
 from fabric_deck import (
     BIN,
     BOARD_DIR,
@@ -446,13 +446,15 @@ class DeckFleet:
 
     def _attach(self, login: str, info: dict) -> None:
         """Start the login's attach in its harness pane, at the operator's
-        bare shell only, ATTACH_STARTS times at most per boot."""
+        bare shell only, ATTACH_STARTS times at most per boot. The focused
+        tab's too: while the boot runs the controller attaches none, so the
+        two never type into one pane."""
         starts, at = self.attached.get(login, (0, 0.0))
         now = time.monotonic()
         if starts >= ATTACH_STARTS or (starts and now - at < ENTRY_GRACE_S):
             return
         shell = info.get("shell_pid")
-        if shell is None or shell != info.get("foreground_process_group_id") or self._focused(login):
+        if shell is None or shell != info.get("foreground_process_group_id"):
             return
         pane = self.harness[login]
         # The detached line, or a half-typed one, is cleared, never run with it.
@@ -571,7 +573,9 @@ def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
         say(f"cannot read the deck's panes ({error}); herdr's stop ends them")
         return set(), set()
     attached = []
-    hung_any: set[str] = set()
+    # The logins whose pane held a harness of its own (or could not be read):
+    # their session was the pane's, never a unit's.
+    own: set[str] = set()
     for tier, logins in reversed(boot.plan_tiers(fleet.workspace, fleet.role)):
         hung = []
         for login in logins:
@@ -579,7 +583,10 @@ def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
                 found, info = fleet.moveto(login)
             except Exception as error:  # one pane must not stop the rest; herdr's stop ends it
                 say(f"{login}: cannot read its pane ({boot.shown(str(error))}); herdr's stop ends it")
+                own.add(login)
                 continue
+            if fleet.attach and found is not None and found.mode in HARNESS_MODES:
+                own.add(login)
             if fleet.attach and found is not None and found.mode == ATTACH:
                 # Its agent runs in the account's own terminal server: a
                 # hang-up ends the attach, not the session.
@@ -588,7 +595,6 @@ def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
             group = info.get("foreground_process_group_id")
             if found is not None and isinstance(group, int) and boot.hang_up(group):
                 hung.append(login)
-        hung_any.update(hung)
         if not hung:
             continue
         say(f"{tier}: ending {', '.join(hung)}")
@@ -597,9 +603,9 @@ def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
             time.sleep(boot.POLL_S)
     if attached:
         say(f"attached, so not stopped here: {', '.join(attached)}")
-    # In attach mode every session the deck did not end itself (a harness of
-    # its own, entered before the unit) is its unit's.
-    return set(fleet.harness), (set(fleet.harness) - hung_any if fleet.attach else set())
+    # In attach mode every session but a pane's own is its unit's, whether or
+    # not this stopped the pane's.
+    return set(fleet.harness), (set(fleet.harness) - own if fleet.attach else set())
 
 
 def stop_all(say: Callable[[str], None]) -> int:

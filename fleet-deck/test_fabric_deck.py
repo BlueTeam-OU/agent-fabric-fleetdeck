@@ -3014,6 +3014,20 @@ class AttachFocus(unittest.TestCase):
         self.look(7)
         self.assertEqual(self.herdr.runs(self.a[0]), ["moveto ui --attach", DETACHED_COMMAND])
 
+    def test_while_a_boot_runs_the_controller_attaches_no_harness_pane_even_a_focused_one(self):
+        self.h.deck.booting = lambda: True
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        for pane in (self.a[0], self.b[0]):
+            self.assertEqual(self.herdr.runs(pane), [], pane)
+        self.assertEqual(self.herdr.runs(self.b[1])[-1], "moveto qa", "the shell pane connects as ever")
+        self.h.deck.booting = lambda: False
+        self.look(5)
+        self.assertEqual(self.herdr.runs(self.b[0]), ["moveto qa --attach"])
+
     def test_while_a_boot_runs_the_harness_panes_line_waits_for_it(self):
         self.h.deck.booting = lambda: True
         self.herdr.focused_tab = self.a_tab

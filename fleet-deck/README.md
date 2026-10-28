@@ -471,15 +471,16 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
   the unit's. A pane that still holds a harness of its own, entered
   before the unit, is followed and shown as before, and is never hung up,
   by focus or by `stop --all`, until it ends.
-- **`start --auto`** attaches each unfocused account itself, for its
-  activation only, at most twice per boot. It presses the Enter at the
+- **`start --auto`** attaches each account itself, for its activation
+  only, at most twice per boot. It presses the Enter at the
   prompt the attach shows, as above, and hangs up the attach once the
   account's session is seen up and its tab is not focused, looking at
   the focus again just before the hang-up and before the line. An account
   that does not come up keeps its attach open, so its pane shows why, and
-  is reported as skipped or not up. The focused tab is the controller's
-  to attach. While the boot runs the controller types no line into a
-  harness pane, so only one of them types there.
+  is reported as skipped or not up. The focused tab's attach is kept.
+  While the boot runs the controller types nothing into a harness pane,
+  neither an attach nor a line, so only the boot types there; once it
+  ends, the controller attaches the focused tab and detaches the rest.
 - **`stop --all`** never hangs up an attach: that ends no session. The
   harness sessions are stopped through their units, which is
   agent-fabric's part, and the deck says so, naming the sessions left

@@ -530,13 +530,15 @@ class FleetDeckTest(unittest.TestCase):
         fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.ATTACH), {}))
         self.assertEqual(fleet.waiting("a"), 7, "the prompt the attach mirrors is pressed")
 
-    def test_an_attach_mode_boot_starts_an_attach_at_most_twice_and_never_in_the_focused_tab(self):
+    def test_an_attach_mode_boot_starts_an_attach_at_most_twice_the_focused_tabs_too(self):
+        # While the boot runs the controller attaches no harness pane, so the
+        # boot reaches the focused tab's prompt itself.
         bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5})
         focused = self.attach_fleet(focused=True)
         focused.moveto = mock.Mock(return_value=bare)
         focused.waiting("a")
-        self.assertFalse([c for c in focused.herdr.text.call_args_list if c.args[:2] == ("pane", "run")],
-                         "the controller attaches the focused tab")
+        self.assertEqual([c.args for c in focused.herdr.text.call_args_list if c.args[:2] == ("pane", "run")],
+                         [("pane", "run", "p1", "moveto a --attach")])
         fleet = self.attach_fleet()
         fleet.moveto = mock.Mock(return_value=bare)
         clock = [0.0]
@@ -547,6 +549,27 @@ class FleetDeckTest(unittest.TestCase):
                 fleet.waiting("a")
         runs = [c for c in fleet.herdr.text.call_args_list if c.args[:2] == ("pane", "run")]
         self.assertEqual(len(runs), fleet_deck.ATTACH_STARTS)
+
+    def test_stop_all_counts_a_harness_of_its_own_as_the_panes_even_when_its_hang_up_failed(self):
+        listed = "ui rust-ui-dev x\nqa rust-ui-dev x\nox rust-ui-dev x\n"
+        tab = lambda ws: mock.Mock(workspace_id=ws, panes={fleet_deck.HARNESS: "p"})
+        herdr = mock.Mock(workspaces=mock.Mock(return_value=[{"workspace_id": "w1", "label": "Rust"}]),
+                          account_tabs=mock.Mock(return_value={"ui": tab("w1"), "qa": tab("w1"),
+                                                               "ox": tab("w1")}))
+
+        def moveto(self, login):
+            if login == "ox":
+                raise RuntimeError("herdr busy")
+            return (mock.Mock(mode=fleet_deck.ATTACH if login == "ui" else fleet_deck.WAIT),
+                    {"foreground_process_group_id": 3})
+        with mock.patch.object(fleet_deck, "moveto_list", return_value=listed), \
+             mock.patch.object(fleet_deck, "Herdr", return_value=herdr), \
+             mock.patch.object(fleet_deck, "attach_mode", return_value=True), \
+             mock.patch.object(fleet_deck.DeckFleet, "moveto", moveto), \
+             mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
+             mock.patch.object(fleet_deck.boot, "hang_up", return_value=False):
+            deck, in_units = fleet_deck.stop_sessions(self.say)
+        self.assertEqual(in_units, {"ui"}, "qa's --wait and the unread ox were their panes'")
 
     def test_done_ends_the_boots_attach_and_says_the_agent_runs_on(self):
         fleet = self.attach_fleet()

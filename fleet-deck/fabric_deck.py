@@ -1399,6 +1399,10 @@ class Deck:
             login, pane, mode = key
             if mode != VIEW and login != self.focused_login:
                 continue    # connects once its tab is focused (_follow_focus)
+            if mode == ATTACH and self.booting():
+                # The boot attaches every harness pane it activates, the
+                # focused tab's too: one typist per harness pane while it runs.
+                continue
             try:
                 if mode == VIEW:
                     self._start_view(key, since, now)
@@ -1691,9 +1695,9 @@ class Deck:
         for pane, login in list(self.pausing.items()):
             harness = pane == self.harness_pane.get(login)
             if harness and self.booting():
-                # The boot attaches unfocused harness panes to activate them,
-                # each after its own look at the shell: one typist per pane
-                # while it runs, and the line waits for it to end.
+                # The boot attaches harness panes to activate them, each after
+                # its own look at the shell: one typist per harness pane while
+                # it runs (decide_pending too), and the line waits for its end.
                 continue
             try:
                 seen = self.observe(login, pane)
