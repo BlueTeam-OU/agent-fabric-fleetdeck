@@ -120,7 +120,9 @@ def at_prompt(text: str, login: str) -> bool:
 class Fleet:
     """What activation needs of the deck, injected: whether a login's
     session is up; the pid of the `moveto --wait` its harness pane waits on
-    at moveto's prompt, or None; the press; the clock and the terminal."""
+    at moveto's prompt, or None; the press; the clock and the terminal.
+    `done` is told of a login seen up once activation reached its pane: the
+    deck then ends what it opened to reach the prompt (an attach)."""
 
     up: Callable[[str], bool]
     waiting: Callable[[str], int | None]
@@ -128,6 +130,7 @@ class Fleet:
     sleep: Callable[[float], None]
     now: Callable[[], float]
     say: Callable[[str], None]
+    done: Callable[[str], None] = lambda login: None
 
 
 @dataclass
@@ -182,6 +185,7 @@ def activate(fleet: Fleet, tiers: list[tuple[str, list[str]]]) -> Outcome:
             pressed_now = _press_when_waiting(run, login)
             if pressed_now is None:
                 run.outcome.up.append(login)  # activated meanwhile, by someone else
+                fleet.done(login)
             elif pressed_now:
                 pressed.append(login)
             else:
@@ -221,6 +225,7 @@ def _await_tier(run: _Run, tier: str, pressed: list[str]) -> None:
             if fleet.up(login):
                 waiting.remove(login)
                 run.outcome.up.append(login)
+                fleet.done(login)
                 continue
             pid = fleet.waiting(login)
             if pid is None or pid == run.pressed_pid[login]:

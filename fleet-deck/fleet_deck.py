@@ -33,10 +33,11 @@ import time
 from typing import Callable, Iterable
 
 import boot
-from deck_tabs import HARNESS, WAIT, moveto_in
+from deck_tabs import ATTACH, ENTRY_GRACE_S, HARNESS, WAIT, moveto_in
 from fabric_deck import (
     BIN,
     BOARD_DIR,
+    DETACHED_COMMAND,
     PANE_MARKER,
     Herdr,
     fleetdeck_env,
@@ -49,6 +50,7 @@ from fabric_deck import (
     lock_holder,
     lock_path,
     moveto_list,
+    moveto_modes,
     parse_moveto_list,
     parse_state_line,
     server_instance,
@@ -308,11 +310,36 @@ TIER_STOP_S = 30
 SERVER_STOP_S = 15
 
 
+# How many times one boot starts an account's attach to reach its prompt.
+ATTACH_STARTS = 2
+# How long a hung-up attach has to give the operator's shell back before the
+# detached line is typed there.
+DETACH_WAIT_S = 5
+
+
+def attach_mode() -> bool:
+    """Whether the harness runs in each account's own terminal server
+    (fabric_deck.Deck.attach): moveto has --attach."""
+    return ATTACH in moveto_modes()
+
+
 class DeckFleet:
     """boot.Fleet's facts and press, from herdr's CLI, moveto --list and the
-    state stream's snapshot."""
+    state stream's snapshot.
 
-    def __init__(self, say: Callable[[str], None], exclude: Iterable[str] = ()):
+    With `attach`, an account's moveto prompt is in its own terminal server,
+    reached by `moveto <login> --attach` in its harness pane. The deck's
+    controller attaches only the focused tab, so the boot attaches each
+    other account itself, for its activation alone, and ends that attach
+    once the account's session is seen up. One that never comes up keeps
+    its attach open, its pane showing why."""
+
+    def __init__(self, say: Callable[[str], None], exclude: Iterable[str] = (),
+                 attach: bool = False):
+        self.attach = attach
+        # login -> (the boot's attach starts, when it last started one)
+        self.attached: dict[str, tuple[int, float]] = {}
+        self.tab_id: dict[str, str] = {}
         self.herdr = Herdr()
         self.say = say
         self.host = local_host()
@@ -334,6 +361,7 @@ class DeckFleet:
         labels = {w["workspace_id"]: w.get("label") for w in self.herdr.workspaces()}
         tabs = self.herdr.account_tabs(set(self.logins))
         self.harness = {login: tab.panes[HARNESS] for login, tab in tabs.items() if HARNESS in tab.panes}
+        self.tab_id = {login: tabs[login].tab_id for login in self.harness}
         self.workspace = {login: labels.get(tabs[login].workspace_id) for login in self.harness}
         self.mapped = True
 
@@ -396,14 +424,68 @@ class DeckFleet:
                          "while that is unknown")
             return None
         try:
-            found, _ = self.moveto(login)
-            if found is None or found.mode != WAIT:
+            found, info = self.moveto(login)
+            if self.attach and found is None:
+                self._attach(login, info)
+                return None
+            if found is None or found.mode not in ((WAIT, ATTACH) if self.attach else (WAIT,)):
                 return None
             text = self.herdr.text("pane", "read", self.harness[login], "--source", "recent",
                                    "--lines", "5")
         except Exception:  # herdr busy or the pane gone: not waiting, asked again
             return None
         return found.pid if boot.at_prompt(text, login) else None
+
+    def _focused(self, login: str) -> bool:
+        """Whether the login's tab is the one a person sees: the controller
+        attaches that one, and keeps it attached."""
+        for workspace in self.herdr.workspaces():
+            if workspace.get("focused") is True:
+                return workspace.get("active_tab_id") == self.tab_id.get(login)
+        return False
+
+    def _attach(self, login: str, info: dict) -> None:
+        """Start the login's attach in its harness pane, at the operator's
+        bare shell only, ATTACH_STARTS times at most per boot."""
+        starts, at = self.attached.get(login, (0, 0.0))
+        now = time.monotonic()
+        if starts >= ATTACH_STARTS or (starts and now - at < ENTRY_GRACE_S):
+            return
+        shell = info.get("shell_pid")
+        if shell is None or shell != info.get("foreground_process_group_id") or self._focused(login):
+            return
+        pane = self.harness[login]
+        # The detached line, or a half-typed one, is cleared, never run with it.
+        self.herdr.text("pane", "send-keys", pane, "ctrl+u")
+        self.herdr.text("pane", "run", pane, f"moveto {login} {ATTACH}")
+        self.attached[login] = (starts + 1, now)
+
+    def done(self, login: str) -> None:
+        """The login's session is up: the attach the boot opened for it ends,
+        unless a person is looking at its tab, and its pane says the agent
+        runs on."""
+        if login not in self.attached:
+            return
+        try:
+            if self._focused(login):
+                return
+            found, info = self.moveto(login)
+            group = info.get("foreground_process_group_id")
+            if found is None or found.mode != ATTACH or not isinstance(group, int):
+                return
+            if not boot.hang_up(group):
+                self.say(f"{login}: up, but its attach could not be ended; the controller "
+                         "ends it when its tab loses focus")
+                return
+            deadline = time.monotonic() + DETACH_WAIT_S
+            while time.monotonic() < deadline:
+                found, info = self.moveto(login)
+                if found is None and info.get("shell_pid") == info.get("foreground_process_group_id"):
+                    self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND)
+                    return
+                time.sleep(0.2)
+        except Exception as error:  # the session is up; only the pane's line is missing
+            self.say(f"{login}: up; its pane was not detached ({boot.shown(str(error))})")
 
     def press(self, login: str) -> None:
         try:
@@ -413,7 +495,7 @@ class DeckFleet:
 
     def fleet(self) -> boot.Fleet:
         return boot.Fleet(up=self.up, waiting=self.waiting, press=self.press,
-                          sleep=time.sleep, now=time.monotonic, say=self.say)
+                          sleep=time.sleep, now=time.monotonic, say=self.say, done=self.done)
 
 
 def probe_line(login: str | None) -> str | None:
@@ -458,7 +540,7 @@ def control_agents(op: str, say: Callable[[str], None]) -> bool:
 
 
 def boot_fleet(say: Callable[[str], None], exclude: Iterable[str]) -> int:
-    fleet = DeckFleet(say, exclude)
+    fleet = DeckFleet(say, exclude, attach=attach_mode())
     fleet.await_tabs(TABS_READY_S)
     if not fleet.mapped:
         say(f"the deck's tabs could not be read within {TABS_READY_S}s: nothing was activated")
@@ -474,12 +556,18 @@ def boot_fleet(say: Callable[[str], None], exclude: Iterable[str]) -> int:
 def stop_sessions(say: Callable[[str], None]) -> set[str]:
     """Every deck pane's session, in reverse boot order, tier by tier. The
     logins the deck has a harness pane for."""
-    fleet = DeckFleet(say)
+    fleet = DeckFleet(say, attach=attach_mode())
+    if fleet.attach:
+        # Stopping them is their units' (agent-fabric's stop --all through
+        # the unit), never an attach's hang-up, which ends only the attach.
+        say("the harness sessions run in their accounts' own servers: stopped there, not by "
+            "ending the deck's panes")
     try:
         fleet.read_map()
     except Exception as error:  # no map: herdr's stop below ends the panes anyway
         say(f"cannot read the deck's panes ({error}); herdr's stop ends them")
         return set()
+    attached = []
     for tier, logins in reversed(boot.plan_tiers(fleet.workspace, fleet.role)):
         hung = []
         for login in logins:
@@ -487,6 +575,11 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
                 found, info = fleet.moveto(login)
             except Exception as error:  # one pane must not stop the rest; herdr's stop ends it
                 say(f"{login}: cannot read its pane ({boot.shown(str(error))}); herdr's stop ends it")
+                continue
+            if found is not None and found.mode == ATTACH:
+                # Its agent runs in the account's own terminal server: a
+                # hang-up ends the attach, not the session.
+                attached.append(login)
                 continue
             group = info.get("foreground_process_group_id")
             if found is not None and isinstance(group, int) and boot.hang_up(group):
@@ -497,6 +590,8 @@ def stop_sessions(say: Callable[[str], None]) -> set[str]:
         deadline = time.monotonic() + TIER_STOP_S
         while any(fleet.up(login) for login in hung) and time.monotonic() < deadline:
             time.sleep(boot.POLL_S)
+    if attached:
+        say(f"attached, so not stopped here: {', '.join(attached)}")
     return set(fleet.harness)
 
 

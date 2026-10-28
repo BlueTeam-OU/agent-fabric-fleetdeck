@@ -102,6 +102,10 @@ class FleetDeckTest(unittest.TestCase):
         patch = mock.patch.dict(os.environ, env)
         patch.start()
         self.addCleanup(patch.stop)
+        # This host's moveto decides attach mode in a real boot; a test's is fixed.
+        attach = mock.patch.object(fleet_deck, "attach_mode", return_value=False)
+        attach.start()
+        self.addCleanup(attach.stop)
         for name in ("HERDR_ENV", "HERDR_POPUP", "HERDR_SOCKET_PATH", "HERDR_SESSION",
                      "AGENT_FABRIC_FLEETDECK"):
             os.environ.pop(name, None)
@@ -483,7 +487,8 @@ class FleetDeckTest(unittest.TestCase):
         with mock.patch.object(fleet_deck, "moveto_list", return_value=listed), \
              mock.patch.object(fleet_deck, "Herdr", return_value=herdr), \
              mock.patch.object(fleet_deck.DeckFleet, "moveto",
-                               lambda self, login: (object(), {"foreground_process_group_id": group[login]})), \
+                               lambda self, login: (mock.Mock(mode=fleet_deck.WAIT),
+                                                    {"foreground_process_group_id": group[login]})), \
              mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
              mock.patch.object(fleet_deck.boot, "hang_up",
                                side_effect=lambda g: ended.append({v: k for k, v in group.items()}[g]) or True):
@@ -505,6 +510,84 @@ class FleetDeckTest(unittest.TestCase):
             self.assertEqual(fleet.waiting("a"), expected, counts)
         self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
                          "the reason is said, once, and not for a login that is up")
+
+    def attach_fleet(self, focused=False):
+        with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
+            fleet = fleet_deck.DeckFleet(self.say, attach=True)
+        fleet.harness, fleet.tab_id = {"a": "p1"}, {"a": "t1"}
+        fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
+        fleet.live = {"a": 0}
+        workspace = {"workspace_id": "w1", "focused": True, "active_tab_id": "t1" if focused else "t9"}
+        fleet.herdr = mock.Mock(workspaces=mock.Mock(return_value=[workspace]),
+                                text=mock.Mock(return_value="a - Enter to activate\n"))
+        return fleet
+
+    def test_an_attach_mode_boot_attaches_an_unfocused_bare_pane_and_presses_at_its_prompt(self):
+        fleet = self.attach_fleet()
+        fleet.moveto = mock.Mock(return_value=(None, {"shell_pid": 5, "foreground_process_group_id": 5}))
+        self.assertIsNone(fleet.waiting("a"))
+        runs = [c.args for c in fleet.herdr.text.call_args_list if c.args[:2] == ("pane", "run")]
+        self.assertEqual(runs, [("pane", "run", "p1", "moveto a --attach")])
+        fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.ATTACH), {}))
+        self.assertEqual(fleet.waiting("a"), 7, "the prompt the attach mirrors is pressed")
+
+    def test_an_attach_mode_boot_starts_an_attach_at_most_twice_and_never_in_the_focused_tab(self):
+        bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5})
+        focused = self.attach_fleet(focused=True)
+        focused.moveto = mock.Mock(return_value=bare)
+        focused.waiting("a")
+        self.assertFalse([c for c in focused.herdr.text.call_args_list if c.args[:2] == ("pane", "run")],
+                         "the controller attaches the focused tab")
+        fleet = self.attach_fleet()
+        fleet.moveto = mock.Mock(return_value=bare)
+        clock = [0.0]
+        fleet.read_at = 1e9  # the cached counts stand on this clock too
+        with mock.patch.object(fleet_deck.time, "monotonic", side_effect=lambda: clock[0]):
+            for at in (0.0, 1.0, 10.0, 20.0, 30.0):
+                clock[0] = at
+                fleet.waiting("a")
+        runs = [c for c in fleet.herdr.text.call_args_list if c.args[:2] == ("pane", "run")]
+        self.assertEqual(len(runs), fleet_deck.ATTACH_STARTS)
+
+    def test_done_ends_the_boots_attach_and_says_the_agent_runs_on(self):
+        fleet = self.attach_fleet()
+        fleet.attached = {"a": (1, 0.0)}
+        attach = (mock.Mock(pid=7, mode=fleet_deck.ATTACH), {"foreground_process_group_id": 7})
+        bare = (None, {"shell_pid": 5, "foreground_process_group_id": 5})
+        fleet.moveto = mock.Mock(side_effect=[attach, bare])
+        with mock.patch.object(fleet_deck.boot, "hang_up", return_value=True) as hang_up:
+            fleet.done("a")
+        hang_up.assert_called_once_with(7)
+        fleet.herdr.text.assert_called_with("pane", "run", "p1", fleet_deck.DETACHED_COMMAND)
+
+    def test_done_leaves_a_focused_tab_and_a_pane_the_boot_did_not_attach(self):
+        focused, not_ours = self.attach_fleet(focused=True), self.attach_fleet()
+        focused.attached = {"a": (1, 0.0)}
+        for fleet in (focused, not_ours):
+            fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.ATTACH),
+                                                   {"foreground_process_group_id": 7}))
+            with mock.patch.object(fleet_deck.boot, "hang_up") as hang_up:
+                fleet.done("a")
+            hang_up.assert_not_called()
+
+    def test_stop_all_never_hangs_up_an_attach(self):
+        listed = "ui rust-ui-dev x\nqa rust-ui-dev x\n"
+        tab = lambda ws: mock.Mock(workspace_id=ws, panes={fleet_deck.HARNESS: "p"})
+        herdr = mock.Mock(workspaces=mock.Mock(return_value=[{"workspace_id": "w1", "label": "Rust"}]),
+                          account_tabs=mock.Mock(return_value={"ui": tab("w1"), "qa": tab("w1")}))
+        mode = {"ui": fleet_deck.ATTACH, "qa": fleet_deck.WAIT}
+        with mock.patch.object(fleet_deck, "moveto_list", return_value=listed), \
+             mock.patch.object(fleet_deck, "Herdr", return_value=herdr), \
+             mock.patch.object(fleet_deck, "attach_mode", return_value=True), \
+             mock.patch.object(fleet_deck.DeckFleet, "moveto",
+                               lambda self, login: (mock.Mock(mode=mode[login]),
+                                                    {"foreground_process_group_id": 3})), \
+             mock.patch.object(fleet_deck.DeckFleet, "up", lambda self, login: False), \
+             mock.patch.object(fleet_deck.boot, "hang_up", return_value=True) as hang_up:
+            fleet_deck.stop_sessions(self.say)
+        hang_up.assert_called_once_with(3)   # qa's --wait, its agent in the pane
+        self.assertTrue(any("attached, so not stopped here: ui" in line for line in self.said))
+        self.assertTrue(any("accounts' own servers" in line for line in self.said))
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
