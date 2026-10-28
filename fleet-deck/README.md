@@ -479,8 +479,9 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
   that does not come up keeps its attach open, so its pane shows why, and
   is reported as skipped or not up. The focused tab's attach is kept.
   While the boot runs the controller types nothing into a harness pane,
-  neither an attach nor a line, so only the boot types there; once it
-  ends, the controller attaches the focused tab and detaches the rest.
+  neither an attach nor a line, so only the boot types there. Once it
+  ends, the controller attaches the focused tab as before; an attach the
+  boot left open stays open until its tab has been focused and left.
 - **`stop --all`** never hangs up an attach: that ends no session. The
   harness sessions are stopped through their units, which is
   agent-fabric's part, and the deck says so, naming the sessions left
