@@ -274,13 +274,19 @@ def key_fingerprint(key: str, run: Run = subprocess.run) -> str | None:
 # whether or not an agent holds it; a pane linked to it asks the passphrase.
 HOLDS, LISTS, LIVE, DEAD = "holds", "lists", "live", "dead"
 
+# The remedy for panes whose agent no registration can mend: only a server
+# started anew takes another agent. fleet_deck.py offers `restart` (the
+# controller only) for any other link problem.
+RESTART_SERVER = "`fleet-deck stop --all`, then `fleet-deck start --auto`"
+
 
 def keyring_proxy(sock: str, env: dict[str, str] | None = None) -> bool:
-    """Whether `sock` is the desktop keyring's proxy. Asked to sign with a key
-    no agent behind it holds, it opens the desktop's "unlock private key"
-    dialog (seen by the owner, 2026-10-30), so it is never asked: a check
-    run at every start and status would open one each time. Its own agent,
-    keyring/.ssh beside it, is an ordinary candidate."""
+    """Whether `sock` is the desktop keyring's proxy. The owner saw its
+    "unlock private key" dialogs while panes used it (2026-10-30), so it is
+    never asked to sign: a check run at every start and status poll would
+    open one each time. Nor is it taken as holding the key when keyring/.ssh
+    beside it does: that it then signs without a dialog was never seen.
+    keyring/.ssh itself is an ordinary candidate."""
     env = os.environ if env is None else env
     runtime = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     return os.path.realpath(sock) == os.path.realpath(os.path.join(runtime, "keyring", "ssh"))
@@ -389,7 +395,7 @@ def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_
     if first_state == LISTS:
         say(f"the ssh-agent herdr's panes use ({first}) lists {key} but cannot sign with it, "
             "so each pane would ask its passphrase: nothing is started; restart the server so "
-            "it takes another agent: `fleet-deck stop --all`, then `fleet-deck start --auto`")
+            f"it takes another agent: {RESTART_SERVER}")
         return None
     first_live = first_state != DEAD
     found = find_agent(key, fingerprint, [first] if first_live else candidates, run, env)
@@ -465,8 +471,7 @@ def link_problem(api_socket: str | None, key: str | None = DECK_KEY,
         target = os.readlink(link)
     except FileNotFoundError:
         return (f"herdr's server gives its panes no ssh-agent ({link} is missing): panes it "
-                "made before now ask for the key's passphrase; restart it with "
-                "`fleet-deck stop --all` and `fleet-deck start --auto`")
+                f"made before now ask for the key's passphrase; restart it: {RESTART_SERVER}")
     except OSError as error:
         return f"cannot read {link}: {error.strerror}"
     if target.endswith(".unavailable") or not socket_answers(link):
@@ -475,7 +480,7 @@ def link_problem(api_socket: str | None, key: str | None = DECK_KEY,
     state = agent_state(link, key, fingerprint, run) if key and fingerprint else HOLDS
     if state == LISTS:
         return (f"the ssh-agent herdr's panes use ({target}) lists {key} but cannot sign "
-                "with it: each pane asks for its passphrase")
+                f"with it: each pane asks for its passphrase; restart the server: {RESTART_SERVER}")
     if state != HOLDS:
         return f"the ssh-agent herdr's panes use ({target}) does not hold {key}"
     return None

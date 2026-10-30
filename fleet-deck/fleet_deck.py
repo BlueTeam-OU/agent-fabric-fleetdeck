@@ -769,6 +769,15 @@ def start(args, say: Callable[[str], None]) -> int:
         os.close(fd)
 
 
+def attach_note(problem: str) -> str:
+    """What a plain attach says past a link problem: `restart` registers an
+    agent, which mends a dead link but not one the problem says only a new
+    server mends."""
+    if boot.RESTART_SERVER in problem:
+        return "attaching as before"
+    return "attaching as before; `fleet-deck restart` mends the panes' ssh-agent"
+
+
 def start_unlocked(args, say: Callable[[str], None]) -> int:
     line, checked = prefix_line(herdr_config_path())
     if not checked:
@@ -787,7 +796,7 @@ def start_unlocked(args, say: Callable[[str], None]) -> int:
         if agent is None:
             return 1
     elif problem:
-        say("attaching as before; `fleet-deck restart` mends the panes' ssh-agent")
+        say(attach_note(problem))
     if args.auto:
         # Once per boot, before the first pane is activated.
         try:

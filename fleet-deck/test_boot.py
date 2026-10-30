@@ -484,7 +484,21 @@ class AgentTest(unittest.TestCase):
         proxy = self.lister("proxy")
         api = os.path.join(self.sock_dir, "api.sock")
         os.symlink(proxy, api + ".agent")
-        self.assertIn("cannot sign", boot.link_problem(api, key=self.key))
+        problem = boot.link_problem(api, key=self.key)
+        self.assertIn("cannot sign", problem)
+        self.assertIn(boot.RESTART_SERVER, problem, "a registration cannot mend it")
+
+    def test_an_inherited_keyring_proxy_is_not_taken_when_its_own_agent_holds_the_key(self):
+        # That it then signs without a dialog was never seen; dialogs were.
+        proxy, fake = self.listing_agent("keyring", "ssh")
+        keyring = self.start_agent(os.path.join("keyring", ".ssh"))
+        self.add_key(keyring)
+        said = []
+        env = {"XDG_RUNTIME_DIR": self.sock_dir}
+        self.assertIsNone(boot.ensure_agent(said.append, interactive=True, key=self.key, env=env,
+                                            first=proxy))
+        self.assertTrue(any(boot.RESTART_SERVER in line for line in said), said)
+        self.assertEqual(fake.asked, 0)
 
     def test_checking_an_agent_never_asks_the_keys_passphrase(self):
         locked = os.path.join(self.dir, "locked")

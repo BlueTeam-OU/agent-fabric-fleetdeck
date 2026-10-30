@@ -63,9 +63,10 @@ login owns and listens on counts. It looks at this terminal's
 only when it signs with it (`ssh-add -T`, which never asks the
 passphrase); listing it is not enough, so an agent that only lists it is
 passed over. The keyring's proxy (`$XDG_RUNTIME_DIR/keyring/ssh`, no dot)
-lists every key in `~/.ssh` whether or not an agent holds it, and asked to
-sign with one opens the desktop's "unlock private key" dialog, so it is
-never asked: it is passed over as it is. If none holds the key, it runs
+lists every key in `~/.ssh` whether or not an agent holds it. Panes using
+it opened the desktop's "unlock private key" dialog, so it is never asked
+to sign and never counts as holding the key, even when its own agent
+beside it does. If none holds the key, it runs
 `ssh-add` once, here, into the first agent that answers without listing the
 key: you type the passphrase once. If there is no such agent, it starts one
 at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
