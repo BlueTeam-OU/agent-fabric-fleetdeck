@@ -1000,8 +1000,12 @@ UNKNOWN = "<no focused tab>"
 # How long a restore waits for the changes the restart caused to reach the
 # stream (one STATE_POLL_MS plus a margin) before it trusts a fresh record.
 RESTORE_SETTLE_S = 5
-# The account list and the tab map are read again this often.
+# The tab map is read again this often.
 PANE_MAP_REFRESH_S = 10
+# The account list is read again this often. It changes only when an account
+# is placed, removed or bound, and each read (`moveto --list`) runs a sudo per
+# account: read at the map's pace it was most of the controller's CPU.
+ACCOUNT_LIST_REFRESH_S = 60
 # Every pane's report is sent again after this long even when nothing
 # changed, so a herdr server restarted with the same pane ids (which
 # forgets every report) is put right.
@@ -1108,6 +1112,10 @@ class Deck:
     unarmed: set[str] = field(default_factory=set)
     said: set[str] = field(default_factory=set)
     mapped_at: float | None = None
+    # The account list last read, and when: a map read between two list reads
+    # uses it.
+    account_list: list[Account] | None = None
+    listed_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
     # Whether `fleet-deck start --auto` is running (it holds boot.lock for its
@@ -1214,7 +1222,10 @@ class Deck:
     def _restore(self, now: float, only: set[str] | None = None) -> None:
         if not self.loaded:
             self._load()
-        accounts = self._accounts()
+        # A whole restore reads the list afresh; a retry of some accounts runs
+        # at map reads (an unbound account is retried at every one) and takes
+        # the list as a map read does.
+        accounts = self._accounts(now) if only is None else self._listed(now)
         tabs = self._tabs({a.login for a in accounts}) if accounts is not None else None
         if tabs is None:
             self.lost = True
@@ -1782,7 +1793,7 @@ class Deck:
         server that could not be reached and now answers again was
         restarted: that is a restore."""
         self.mapped_at = now
-        accounts = self._accounts()
+        accounts = self._listed(now)
         if accounts is None:
             # moveto --list failed, not herdr: the map read last stays.
             return not self.lost
@@ -2139,12 +2150,23 @@ class Deck:
 
     # ------------------------------------------------------------- reading
 
-    def _accounts(self) -> list[Account] | None:
+    def _accounts(self, now: float) -> list[Account] | None:
         try:
-            return self.accounts()
+            accounts = self.accounts()
         except Exception as error:
+            # listed_at stays: the next map read reads the list again.
             self.log(f"cannot read the accounts (moveto --list): {printable(str(error))}")
             return None
+        self.account_list, self.listed_at = accounts, now
+        return accounts
+
+    def _listed(self, now: float) -> list[Account] | None:
+        """The account list as a map read sees it: the one read last while it
+        is younger than ACCOUNT_LIST_REFRESH_S, else read again."""
+        if (self.account_list is None or self.listed_at is None
+                or now - self.listed_at >= ACCOUNT_LIST_REFRESH_S):
+            return self._accounts(now)
+        return self.account_list
 
     def _tabs(self, logins: set[str], quiet: bool = False) -> dict[str, AccountTab] | None:
         try:
