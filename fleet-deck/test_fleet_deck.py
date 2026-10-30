@@ -77,6 +77,14 @@ def until(probe, seconds=10.0):
     return probe()
 
 
+class AttachNoteTest(unittest.TestCase):
+    def test_restart_is_offered_only_where_a_registration_mends_the_link(self):
+        self.assertIn("`fleet-deck restart` mends", fleet_deck.attach_note(
+            "herdr's panes' ssh-agent link /s.agent leads to no live agent (/s.unavailable)"))
+        listing = f"... lists the key but cannot sign with it; {fleet_deck.boot.RESTART_SERVER}"
+        self.assertEqual(fleet_deck.attach_note(listing), "attaching as before")
+
+
 class FleetDeckTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="fleet-deck-test-")
