@@ -1116,6 +1116,8 @@ class Deck:
     # uses it.
     account_list: list[Account] | None = None
     listed_at: float | None = None
+    # The look whose list read failed: it is not read again in that look.
+    list_failed_at: float | None = None
     lost: bool = False
     fleet_tab: bool = True
     # Whether `fleet-deck start --auto` is running (it holds boot.lock for its
@@ -1225,7 +1227,10 @@ class Deck:
         # A whole restore reads the list afresh; a retry of some accounts runs
         # at map reads (an unbound account is retried at every one) and takes
         # the list as a map read does.
-        accounts = self._accounts(now) if only is None else self._listed(now)
+        accounts = self._listed(now, whole=only is None)
+        if accounts is None and only is not None:
+            # moveto --list failed, not herdr: the accounts stay in retry.
+            return
         tabs = self._tabs({a.login for a in accounts}) if accounts is not None else None
         if tabs is None:
             self.lost = True
@@ -2155,18 +2160,24 @@ class Deck:
             accounts = self.accounts()
         except Exception as error:
             # listed_at stays: the next map read reads the list again.
+            self.list_failed_at = now
             self.log(f"cannot read the accounts (moveto --list): {printable(str(error))}")
             return None
         self.account_list, self.listed_at = accounts, now
         return accounts
 
-    def _listed(self, now: float) -> list[Account] | None:
+    def _listed(self, now: float, whole: bool = False) -> list[Account] | None:
         """The account list as a map read sees it: the one read last while it
-        is younger than ACCOUNT_LIST_REFRESH_S, else read again."""
-        if (self.account_list is None or self.listed_at is None
-                or now - self.listed_at >= ACCOUNT_LIST_REFRESH_S):
-            return self._accounts(now)
-        return self.account_list
+        is younger than ACCOUNT_LIST_REFRESH_S, else read again. A whole
+        restore takes only one read in this look. The list is read at most
+        once a look: a read that failed is not tried again until the next."""
+        if self.list_failed_at == now:
+            return None
+        if self.account_list is not None and self.listed_at is not None and (
+                self.listed_at == now
+                or (not whole and now - self.listed_at < ACCOUNT_LIST_REFRESH_S)):
+            return self.account_list
+        return self._accounts(now)
 
     def _tabs(self, logins: set[str], quiet: bool = False) -> dict[str, AccountTab] | None:
         try:

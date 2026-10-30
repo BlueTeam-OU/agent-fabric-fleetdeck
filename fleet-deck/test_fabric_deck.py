@@ -925,6 +925,37 @@ class Restore(unittest.TestCase):
         h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + PANE_MAP_REFRESH_S + RESTORE_SETTLE_S))
         self.assertIn("vo", h.deck.harness_pane)
 
+    def test_a_failed_account_list_read_with_an_account_in_retry_is_read_once_and_is_no_loss(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertIn("coord", h.deck.retry)
+        lists, accounts = [], h.deck.accounts
+
+        def failing():
+            lists.append(1)
+            raise OSError("moveto --list: timed out")
+        h.deck.accounts = failing
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        self.assertEqual(len(lists), 1, "once in the look")
+        self.assertFalse(h.deck.lost)
+        self.assertIn("coord", h.deck.retry)
+        h.deck.accounts = accounts
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + PANE_MAP_REFRESH_S))
+        self.assertNotIn("herdr's server answers: restoring", h.logs)
+        self.assertIn("ui", h.deck.harness_pane)
+
+    def test_herdr_coming_back_reads_the_account_list_once(self):
+        h = Harness(logins=("ui",))
+        h.deck.restore(0)
+        h.herdr.down = True
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        h.herdr.down = False
+        lists, accounts = [], h.deck.accounts
+        h.deck.accounts = lambda: lists.append(1) or accounts()
+        h.deck.follow(h.at(2 * ACCOUNT_LIST_REFRESH_S))
+        self.assertIn("herdr's server answers: restoring", h.logs)
+        self.assertEqual(len(lists), 1)
+
     def test_a_harness_closed_by_hand_is_not_recreated_before_a_restore(self):
         h = Harness()
         h.records["ui"] = record("ui")
