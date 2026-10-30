@@ -18,6 +18,7 @@ from fabric_deck import (
     live_of,
     BOARD_DIR,
     PANE_MAP_REFRESH_S,
+    ACCOUNT_LIST_REFRESH_S,
     NEW_WORKSPACE,
     UNBOUND,
     RESEND_AFTER_S,
@@ -695,7 +696,7 @@ class Restore(unittest.TestCase):
         h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
         self.assertEqual(sum("no role bound yet" in line for line in h.logs), 1, "said once")
         h.roles["ui"] = "rust-ui-dev"
-        h.deck.follow(h.at(2 * PANE_MAP_REFRESH_S + 2))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
         create = next(c for c in h.herdr.calls if c[:2] == ("tab", "create"))
         workspace = create[create.index("--workspace") + 1]
         labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
@@ -705,7 +706,7 @@ class Restore(unittest.TestCase):
         h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
         h.deck.restore(0)
         h.roles["coord"] = "fabric-coordinator"
-        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
         labels = {w["workspace_id"]: w["label"] for w in h.herdr.workspace_list}
         made = {c[c.index("--label") + 1]: labels[c[c.index("--workspace") + 1]]
                 for c in h.herdr.calls if c[:2] == ("tab", "create")}
@@ -716,7 +717,7 @@ class Restore(unittest.TestCase):
         h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
         h.deck.restore(0)
         h.logins.remove("coord")
-        h.deck.follow(h.at(PANE_MAP_REFRESH_S + 1))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
         self.assertEqual(h.deck.seed_on_bind, set())
 
     def test_a_new_account_gets_a_four_pane_tab_its_harness_waiting_for_the_decision(self):
@@ -870,7 +871,7 @@ class Restore(unittest.TestCase):
         h.herdr.fail_once = {("split", "p1")}
         h.deck.restore(0)
         h.logins = []
-        h.deck.follow(PANE_MAP_REFRESH_S)
+        h.deck.follow(ACCOUNT_LIST_REFRESH_S)
         self.assertEqual(h.deck.retry, set())
 
     def test_an_account_placed_while_the_deck_runs_gets_its_tab(self):
@@ -878,10 +879,82 @@ class Restore(unittest.TestCase):
         h.records.update(ui=record("ui"), vo=record("vo"))
         h.deck.restore(0)
         h.logins.append("vo")
-        h.deck.follow(h.at(PANE_MAP_REFRESH_S))
-        h.deck.follow(h.at(PANE_MAP_REFRESH_S + RESTORE_SETTLE_S))
-        self.assertIn("vo", h.deck.harness_pane)
+        h.deck.follow(h.at(1))
+        for at in range(PANE_MAP_REFRESH_S, ACCOUNT_LIST_REFRESH_S, PANE_MAP_REFRESH_S):
+            h.deck.follow(h.at(at))   # map reads between two list reads
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + RESTORE_SETTLE_S))
+        self.assertIn("vo", h.deck.harness_pane, "within one account-list period")
         self.assertIn("moveto vo --wait", h.herdr.runs(harness_of(h, "vo")))
+
+    def test_the_account_list_is_read_once_a_period_and_the_tab_map_at_its_own_pace(self):
+        h = Harness(logins=("ui",))
+        lists, maps, clock = [], [], [0]
+        accounts, tabs = h.deck.accounts, h.herdr.account_tabs
+        h.deck.accounts = lambda: lists.append(clock[0]) or accounts()
+        h.herdr.account_tabs = lambda logins: maps.append(clock[0]) or tabs(logins)
+        h.deck.restore(0)
+        del lists[:], maps[:]
+        for at in range(1, 2 * ACCOUNT_LIST_REFRESH_S + 1):
+            clock[0] = at
+            h.deck.follow(h.at(at))
+        self.assertEqual(lists, [ACCOUNT_LIST_REFRESH_S, 2 * ACCOUNT_LIST_REFRESH_S])
+        self.assertEqual({b - a for a, b in zip(maps[1:], maps[2:])}, {PANE_MAP_REFRESH_S})
+
+    def test_an_unbound_account_retried_at_each_map_read_does_not_read_the_list_each_time(self):
+        h = Harness(roles={"ui": UNBOUND}, catalog=CATALOG)
+        lists = []
+        accounts = h.deck.accounts
+        h.deck.accounts = lambda: lists.append(1) or accounts()
+        h.deck.restore(0)
+        lists.clear()
+        for at in range(1, ACCOUNT_LIST_REFRESH_S):
+            h.deck.follow(h.at(at))
+        self.assertIn("ui", h.deck.retry)
+        self.assertEqual(lists, [])
+
+    def test_a_failed_account_list_read_is_tried_again_at_the_next_map_read(self):
+        h = Harness(logins=("ui",))
+        h.deck.restore(0)
+        accounts = h.deck.accounts
+        h.deck.accounts = lambda: (_ for _ in ()).throw(OSError("moveto --list: timed out"))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        h.logins.append("vo")
+        h.deck.accounts = accounts
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + PANE_MAP_REFRESH_S))
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + PANE_MAP_REFRESH_S + RESTORE_SETTLE_S))
+        self.assertIn("vo", h.deck.harness_pane)
+
+    def test_a_failed_account_list_read_with_an_account_in_retry_is_read_once_and_is_no_loss(self):
+        h = Harness(logins=("ui", "coord"), roles={"coord": UNBOUND}, catalog=CATALOG)
+        h.deck.restore(0)
+        self.assertIn("coord", h.deck.retry)
+        lists, accounts = [], h.deck.accounts
+
+        def failing():
+            lists.append(1)
+            raise OSError("moveto --list: timed out")
+        h.deck.accounts = failing
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        self.assertEqual(len(lists), 1, "once in the look")
+        self.assertFalse(h.deck.lost)
+        self.assertIn("coord", h.deck.retry)
+        h.deck.accounts = accounts
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S + PANE_MAP_REFRESH_S))
+        self.assertNotIn("herdr's server answers: restoring", h.logs)
+        self.assertIn("ui", h.deck.harness_pane)
+
+    def test_herdr_coming_back_reads_the_account_list_once(self):
+        h = Harness(logins=("ui",))
+        h.deck.restore(0)
+        h.herdr.down = True
+        h.deck.follow(h.at(ACCOUNT_LIST_REFRESH_S))
+        h.herdr.down = False
+        lists, accounts = [], h.deck.accounts
+        h.deck.accounts = lambda: lists.append(1) or accounts()
+        h.deck.follow(h.at(2 * ACCOUNT_LIST_REFRESH_S))
+        self.assertIn("herdr's server answers: restoring", h.logs)
+        self.assertEqual(len(lists), 1)
 
     def test_a_harness_closed_by_hand_is_not_recreated_before_a_restore(self):
         h = Harness()
@@ -1922,7 +1995,7 @@ class Follow(unittest.TestCase):
     def test_a_pane_left_by_its_account_gives_back_what_the_deck_set(self):
         h, harness = self.ready()
         h.logins = []
-        h.deck.follow(RESTORE_SETTLE_S + 1 + PANE_MAP_REFRESH_S)
+        h.deck.follow(ACCOUNT_LIST_REFRESH_S)
         given = [c for c in h.herdr.calls if harness in c][-4:]
         self.assertEqual([c[1] for c in given],
                          ["release-agent", "report-metadata", "report-metadata", "report-metadata"])

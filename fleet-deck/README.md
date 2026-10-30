@@ -255,9 +255,13 @@ is one the check does not cover.
 
 When the deck starts, and whenever FleetDeck's server comes back after being
 lost or replaced, every placed account (`moveto --list`, without the
-deck's own login) gets its tab. An account placed while the deck runs
-gets its tab within 10 s. One whose restore failed part-way is restored
-again whole within 10 s, and is followed in nothing until then.
+deck's own login) gets its tab. The account list is read again every
+60 s and the tab map every 10 s: `moveto --list` runs a sudo per account,
+and at the map's pace it was most of the controller's CPU. So an account
+placed, removed or bound while the deck runs is seen within 60 s, and a
+placed one gets its tab then. One whose restore failed part-way is
+restored again whole within 10 s, and is followed in nothing until then.
+A failed list read is tried again at the next map read.
 - **The tab.** A missing tab is created. On a host's first setup the role
   catalogue's group seeds the workspace; afterwards a new account goes to
   its group's workspace if one still exists, else to `New`. An account
