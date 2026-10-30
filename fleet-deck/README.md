@@ -60,10 +60,12 @@ holding the key, and it chooses that agent itself: start it with no
 login owns and listens on counts. It looks at this terminal's
 `SSH_AUTH_SOCK`, then the desktop keyring's agent
 (`$XDG_RUNTIME_DIR/keyring/.ssh`), then its own. An agent holds the key
-only when it signs with it (`ssh-add -T`); listing it is not enough. The
-keyring's proxy (`$XDG_RUNTIME_DIR/keyring/ssh`, no dot) lists every key in
-`~/.ssh` whether or not an agent holds it, and a pane using it asks for the
-passphrase, so such an agent is passed over. If none holds the key, it runs
+only when it signs with it (`ssh-add -T`, which never asks the
+passphrase); listing it is not enough, so an agent that only lists it is
+passed over. The keyring's proxy (`$XDG_RUNTIME_DIR/keyring/ssh`, no dot)
+lists every key in `~/.ssh` whether or not an agent holds it, and asked to
+sign with one opens the desktop's "unlock private key" dialog, so it is
+never asked: it is passed over as it is. If none holds the key, it runs
 `ssh-add` once, here, into the first agent that answers without listing the
 key: you type the passphrase once. If there is no such agent, it starts one
 at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
@@ -76,7 +78,7 @@ agent alone. `status` says whether the link leads to a live agent that
 signs with the key, and names a link to an agent that only lists it. If it
 leads to a live agent without the key, the key is added to that agent: herdr prefers the agent its server inherited over a
 registered one, even when another agent holds the key. If that agent
-still cannot sign with it, as a listing proxy cannot, `fleet-deck` starts
+only lists the key, as the keyring's proxy does, `fleet-deck` starts
 nothing and says to restart the server: `stop --all`, then `start --auto`. A plain `fleet-deck` still attaches to a server with a dead
 link, and says that `fleet-deck restart` mends it. Panes that a server made
 while it had no link at all keep asking for the passphrase. For those,

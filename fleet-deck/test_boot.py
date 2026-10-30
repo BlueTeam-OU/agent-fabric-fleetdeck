@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import base64
 import struct
@@ -230,13 +231,14 @@ class ListingOnlyAgent:
     proxy does with every key in ~/.ssh: identities are answered with the
     key, everything else (a signature, an added key) with a failure."""
 
-    IDENTITIES, ANSWER, FAILURE = 11, 12, 5
+    IDENTITIES, ANSWER, SIGN, FAILURE = 11, 12, 13, 5
 
     def __init__(self, path: str, pub: str):
         with open(pub) as public:
             blob = base64.b64decode(public.read().split()[1])
         self.answer = (bytes([self.ANSWER]) + struct.pack(">I", 1)
                        + struct.pack(">I", len(blob)) + blob + struct.pack(">I", 4) + b"pub!")
+        self.asked = 0  # signatures asked for
         self.listener = socket.socket(socket.AF_UNIX)
         self.listener.bind(path)
         self.listener.listen(8)
@@ -257,7 +259,9 @@ class ListingOnlyAgent:
                 if len(head) < 4:
                     return
                 body = conn.recv(struct.unpack(">I", head)[0], socket.MSG_WAITALL)
-                reply = self.answer if body[:1] == bytes([self.IDENTITIES]) else bytes([self.FAILURE])
+                listing = body[:1] == bytes([self.IDENTITIES])
+                self.asked += body[:1] == bytes([self.SIGN])
+                reply = self.answer if listing else bytes([self.FAILURE])
                 conn.sendall(struct.pack(">I", len(reply)) + reply)
 
     def close(self):
@@ -399,31 +403,49 @@ class AgentTest(unittest.TestCase):
             "/f", "/t/s", os.path.join(self.sock_dir, "keyring", ".ssh"), boot.own_agent_path(env)])
 
     def lister(self, *parts) -> str:
+        return self.listing_agent(*parts)[0]
+
+    def listing_agent(self, *parts) -> tuple[str, ListingOnlyAgent]:
         path = os.path.join(self.sock_dir, *parts)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         agent = ListingOnlyAgent(path, self.key + ".pub")
         self.addCleanup(agent.close)
-        return path
+        return path, agent
 
     def test_an_agent_that_lists_the_key_without_signing_is_not_holding_it(self):
-        lister, holding = self.lister("keyring", "ssh"), self.start_agent("holding")
+        (lister, fake), holding = self.listing_agent("lister"), self.start_agent("holding")
         self.add_key(holding)
         fingerprint = boot.key_fingerprint(self.key)
         listed = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True,
                                 env=dict(os.environ, SSH_AUTH_SOCK=lister), stdin=subprocess.DEVNULL)
         self.assertIn(fingerprint, listed.stdout, "the control: the fake lists the key")
         self.assertEqual(boot.agent_state(lister, self.key, fingerprint), boot.LISTS)
+        self.assertGreater(fake.asked, 0, "the listing agent was asked to sign")
         self.assertEqual(boot.find_agent(self.key, fingerprint, [lister, holding]), holding)
+
+    def test_the_keyring_proxy_is_never_asked_to_sign(self):
+        # Asked, it opens the desktop's unlock dialog (2026-10-30).
+        proxy, fake = self.listing_agent("keyring", "ssh")
+        fingerprint = boot.key_fingerprint(self.key)
+        env = {"XDG_RUNTIME_DIR": self.sock_dir}
+        self.assertTrue(boot.keyring_proxy(proxy, env))
+        self.assertFalse(boot.keyring_proxy(os.path.join(self.sock_dir, "keyring", ".ssh"), env))
+        self.assertEqual(boot.agent_state(proxy, self.key, fingerprint, env=env), boot.LISTS)
+        self.assertEqual(boot.ensure_agent([].append, interactive=False, key=self.key,
+                                           env=dict(env, SSH_AUTH_SOCK=proxy)), None)
+        self.assertEqual(fake.asked, 0)
 
     def test_past_a_listing_proxy_the_keyring_agent_holding_the_key_is_chosen(self):
         # 2026-10-30: SSH_AUTH_SOCK named the keyring's proxy; its agent held the key.
-        proxy, keyring = self.lister("keyring", "ssh"), self.start_agent(os.path.join("keyring", ".ssh"))
+        (proxy, fake), keyring = (self.listing_agent("keyring", "ssh"),
+                                  self.start_agent(os.path.join("keyring", ".ssh")))
         self.add_key(keyring)
         said = []
         env = {"SSH_AUTH_SOCK": proxy, "XDG_RUNTIME_DIR": self.sock_dir}
         self.assertEqual(boot.ensure_agent(said.append, interactive=True, key=self.key, env=env),
                          keyring)
         self.assertEqual(said, [], "nothing to type")
+        self.assertEqual(fake.asked, 0, "the proxy was never asked to sign")
 
     def test_with_only_a_listing_agent_the_key_is_added_once_to_the_decks_own(self):
         proxy = self.lister("proxy")
@@ -444,20 +466,45 @@ class AgentTest(unittest.TestCase):
         self.assertTrue(any("no ssh-agent can sign" in line for line in said), said)
         self.assertFalse(os.path.exists(boot.own_agent_path(env)), "no agent of the deck's own")
 
-    def test_an_inherited_listing_agent_that_takes_no_key_names_the_restart(self):
-        proxy = self.lister("proxy")
+    def test_an_inherited_listing_agent_names_the_restart_and_gets_no_key(self):
+        proxy, fake = self.listing_agent("proxy")
+        holding = self.start_agent("holding")
+        self.add_key(holding)
         said = []
-        env = {"XDG_RUNTIME_DIR": self.sock_dir}
+        env = {"SSH_AUTH_SOCK": holding, "XDG_RUNTIME_DIR": self.sock_dir}
+        asked = fake.asked
         self.assertIsNone(boot.ensure_agent(said.append, interactive=True, key=self.key, env=env,
                                             first=proxy))
-        self.assertTrue(any("still cannot sign" in line and "fleet-deck stop --all" in line
+        self.assertTrue(any("cannot sign" in line and "fleet-deck stop --all" in line
                             for line in said), said)
+        self.assertFalse(any("type its passphrase" in line for line in said), said)
+        self.assertEqual(fake.asked - asked, 1, "asked to sign once")
 
     def test_a_link_to_a_listing_agent_is_a_problem(self):
         proxy = self.lister("proxy")
         api = os.path.join(self.sock_dir, "api.sock")
         os.symlink(proxy, api + ".agent")
         self.assertIn("cannot sign", boot.link_problem(api, key=self.key))
+
+    def test_checking_an_agent_never_asks_the_keys_passphrase(self):
+        locked = os.path.join(self.dir, "locked")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "a passphrase", "-f", locked],
+                       check=True, stdin=subprocess.DEVNULL)
+        asked = os.path.join(self.dir, "asked")
+        askpass = os.path.join(self.dir, "askpass")
+        with open(askpass, "w") as script:
+            script.write(f"#!/bin/sh\necho asked >> '{asked}'\necho 'a passphrase'\n")
+        os.chmod(askpass, 0o700)
+        holding = self.start_agent("holding")
+        prompting = dict(os.environ, SSH_ASKPASS=askpass, SSH_ASKPASS_REQUIRE="force",
+                         DISPLAY=":0")
+        subprocess.run(["ssh-add", "-q", locked], env=dict(prompting, SSH_AUTH_SOCK=holding),
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        os.unlink(asked)  # the control: adding it asked once
+        with mock.patch.dict(os.environ, prompting):
+            state = boot.agent_state(holding, locked, boot.key_fingerprint(locked))
+        self.assertEqual(state, boot.HOLDS)
+        self.assertFalse(os.path.exists(asked), "the check asked for the passphrase")
 
     def test_no_key_starts_nothing(self):
         said = []
