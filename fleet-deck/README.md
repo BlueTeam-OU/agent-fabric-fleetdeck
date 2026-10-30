@@ -55,19 +55,29 @@ server gives its panes. That is the link `<server socket>.agent`, which
 leads to the agent the server inherited. A server started without a live
 agent gives its panes none, and each pane asks for the key's passphrase.
 So `fleet-deck` starts no server and no controller until it has an agent
-holding the key. Only a socket this login owns and listens on counts. It looks at this terminal's `SSH_AUTH_SOCK`, then the
-desktop keyring's agent, then its own. If none holds the key, it runs
-`ssh-add` once, here: you type the passphrase once. If no agent answers at
-all, it starts one at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
+holding the key, and it chooses that agent itself: start it with no
+`SSH_AUTH_SOCK` prefix, whatever the terminal's is. Only a socket this
+login owns and listens on counts. It looks at this terminal's
+`SSH_AUTH_SOCK`, then the desktop keyring's agent
+(`$XDG_RUNTIME_DIR/keyring/.ssh`), then its own. An agent holds the key
+only when it signs with it (`ssh-add -T`); listing it is not enough. The
+keyring's proxy (`$XDG_RUNTIME_DIR/keyring/ssh`, no dot) lists every key in
+`~/.ssh` whether or not an agent holds it, and a pane using it asks for the
+passphrase, so such an agent is passed over. If none holds the key, it runs
+`ssh-add` once, here, into the first agent that answers without listing the
+key: you type the passphrase once. If there is no such agent, it starts one
+at `$XDG_RUNTIME_DIR/fabric-deck/agent.sock`.
 
 A server already running with a dead link is not replaced: its panes would
 go with it. Instead `fleet-deck hold-agent`, a small detached process,
 registers the agent with the server and holds it. The deck controller does
 not hold it, so stopping or restarting the controller leaves the panes'
 agent alone. `status` says whether the link leads to a live agent that
-holds the key. If it leads to a live agent without the key, the key is added
-to that agent: herdr prefers the agent its server inherited over a
-registered one, even when another agent holds the key. A plain `fleet-deck` still attaches to a server with a dead
+signs with the key, and names a link to an agent that only lists it. If it
+leads to a live agent without the key, the key is added to that agent: herdr prefers the agent its server inherited over a
+registered one, even when another agent holds the key. If that agent
+still cannot sign with it, as a listing proxy cannot, `fleet-deck` starts
+nothing and says to restart the server: `stop --all`, then `start --auto`. A plain `fleet-deck` still attaches to a server with a dead
 link, and says that `fleet-deck restart` mends it. Panes that a server made
 while it had no link at all keep asking for the passphrase. For those,
 restart the server: `stop --all`, then `start --auto`.

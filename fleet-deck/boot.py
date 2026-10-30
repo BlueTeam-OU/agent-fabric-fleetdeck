@@ -269,7 +269,10 @@ def key_fingerprint(key: str, run: Run = subprocess.run) -> str | None:
     return None
 
 
-HOLDS, LIVE, DEAD = "holds", "live", "dead"
+# LISTS: the agent lists the key and cannot sign with it. The desktop
+# keyring's proxy ($XDG_RUNTIME_DIR/keyring/ssh) lists every key in ~/.ssh
+# whether or not an agent holds it; a pane linked to it asks the passphrase.
+HOLDS, LISTS, LIVE, DEAD = "holds", "lists", "live", "dead"
 
 
 def own_socket(path: str) -> bool:
@@ -292,11 +295,12 @@ def own_socket(path: str) -> bool:
     return struct.unpack("3i", cred)[1] == os.geteuid()
 
 
-def agent_state(sock: str, fingerprint: str, run: Run = subprocess.run) -> str:
-    """HOLDS when the agent at `sock` lists the fingerprint, LIVE when it
-    answers without it, DEAD when nothing answers there, or when it is not
-    this user's own. ssh-add -l exits 1 for an agent with no identity and 2
-    when it cannot reach one."""
+def agent_state(sock: str, key: str, fingerprint: str, run: Run = subprocess.run) -> str:
+    """HOLDS when the agent at `sock` signs with `key` (whose fingerprint is
+    `fingerprint`), LISTS when it lists the key and cannot sign with it, LIVE
+    when it answers without it, DEAD when nothing answers there, or when it
+    is not this user's own. ssh-add -l exits 1 for an agent with no identity
+    and 2 when it cannot reach one."""
     if not sock or not own_socket(sock):
         return DEAD
     env = dict(os.environ, SSH_AUTH_SOCK=sock)
@@ -305,9 +309,18 @@ def agent_state(sock: str, fingerprint: str, run: Run = subprocess.run) -> str:
                      env=env, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return DEAD
-    if result.returncode == 0 and fingerprint in result.stdout.split():
-        return HOLDS
-    return LIVE if result.returncode in (0, 1) else DEAD
+    if result.returncode not in (0, 1):
+        return DEAD
+    if result.returncode == 1 or fingerprint not in result.stdout.split():
+        return LIVE
+    # A listing proves nothing: only a signature the agent makes does. ssh-add
+    # -T reads the public half from the key file, never its passphrase.
+    try:
+        signed = run(["ssh-add", "-T", os.path.expanduser(key)], capture_output=True, text=True,
+                     timeout=10, env=env, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return LISTS
+    return HOLDS if signed.returncode == 0 else LISTS
 
 
 def own_agent_path(env: dict[str, str] | None = None) -> str:
@@ -332,20 +345,21 @@ def agent_candidates(env: dict[str, str] | None = None, first: str | None = None
     return seen
 
 
-def find_agent(fingerprint: str, candidates: Iterable[str], run: Run = subprocess.run) -> str | None:
-    return next((s for s in candidates if agent_state(s, fingerprint, run) == HOLDS), None)
+def find_agent(key: str, fingerprint: str, candidates: Iterable[str],
+               run: Run = subprocess.run) -> str | None:
+    return next((s for s in candidates if agent_state(s, key, fingerprint, run) == HOLDS), None)
 
 
 def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_KEY,
                  env: dict[str, str] | None = None, run: Run = subprocess.run,
                  first: str | None = None) -> str | None:
-    """The socket of a live agent holding the deck key. Without one, the key
-    is added once, here, to the first live agent (an ssh-agent of the deck's
-    own is started when none is live), and the operator types its
-    passphrase in this terminal. None, said, when that cannot be. `first`
-    is tried before the others: herdr prefers the agent its server
-    inherited over any registered one, so a live inherited agent without
-    the key gets the key, not a rival."""
+    """The socket of a live agent that signs with the deck key. Without one,
+    the key is added once, here, to the first live agent that does not list
+    it (an ssh-agent of the deck's own is started when none is), and the
+    operator types its passphrase in this terminal. None, said, when that
+    cannot be. `first` is tried before the others: herdr prefers the agent
+    its server inherited over any registered one, so a live inherited agent
+    without the key gets the key, not a rival."""
     fingerprint = key_fingerprint(key, run)
     if fingerprint is None:
         say(f"no deck key at {key} (its .pub or the key itself): nothing is started")
@@ -353,27 +367,30 @@ def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_
     candidates = agent_candidates(env, first)
     # A live `first` is the agent herdr's panes use whatever else is registered:
     # only the key in it helps, so no other agent is looked for.
-    first_live = first is not None and agent_state(first, fingerprint, run) != DEAD
-    found = find_agent(fingerprint, [first] if first_live else candidates, run)
+    first_live = first is not None and agent_state(first, key, fingerprint, run) != DEAD
+    found = find_agent(key, fingerprint, [first] if first_live else candidates, run)
     if found:
         return found
     if not interactive:
         if first_live:
-            say(f"the ssh-agent herdr's panes use ({first}) does not hold {key}, and this is "
-                "no terminal to type its passphrase in: nothing is started; run fleet-deck "
+            say(f"the ssh-agent herdr's panes use ({first}) cannot sign with {key}, and this "
+                "is no terminal to type its passphrase in: nothing is started; run fleet-deck "
                 "from a terminal to add it there")
         else:
-            say(f"no ssh-agent holds {key}, and this is no terminal to type its passphrase in: "
-                "nothing is started")
+            say(f"no ssh-agent can sign with {key}, and this is no terminal to type its "
+                "passphrase in: nothing is started")
         return None
+    # An agent that lists the key without signing (a listing-only proxy) is
+    # passed over: adding the key there need not make it sign. The inherited
+    # one is still tried, as nothing else reaches the panes short of a restart.
     target = first if first_live else next(
-        (s for s in candidates if agent_state(s, fingerprint, run) == LIVE), None)
+        (s for s in candidates if agent_state(s, key, fingerprint, run) == LIVE), None)
     if target is None:
         target = own_agent_path(env)
         os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
         if os.path.lexists(target):
             os.unlink(target)  # a dead agent's socket: ssh-agent -a refuses an existing path
-        say(f"no ssh-agent answers; starting one at {target}")
+        say(f"no ssh-agent that could take {key} answers; starting one at {target}")
         started = run(["ssh-agent", "-a", target], capture_output=True, text=True, timeout=10,
                       stdin=subprocess.DEVNULL)
         if started.returncode != 0:
@@ -382,9 +399,14 @@ def ensure_agent(say: Callable[[str], None], interactive: bool, key: str = DECK_
     say(f"adding {key} to the ssh-agent at {target}: type its passphrase once")
     # The terminal's own stdin and stderr: ssh-add asks the operator directly.
     run(["ssh-add", os.path.expanduser(key)], env=dict(os.environ, SSH_AUTH_SOCK=target))
-    if agent_state(target, fingerprint, run) == HOLDS:
+    if agent_state(target, key, fingerprint, run) == HOLDS:
         return target
-    say(f"the ssh-agent at {target} still does not hold {key}: nothing is started")
+    if target == first:
+        say(f"the ssh-agent herdr's panes use ({first}) still cannot sign with {key}: "
+            "nothing is started; restart the server so it takes another agent: "
+            "`fleet-deck stop --all`, then `fleet-deck start --auto`")
+    else:
+        say(f"the ssh-agent at {target} still cannot sign with {key}: nothing is started")
     return None
 
 
@@ -417,7 +439,7 @@ def link_target(api_socket: str | None) -> str | None:
 def link_problem(api_socket: str | None, key: str | None = DECK_KEY,
                  run: Run = subprocess.run) -> str | None:
     """What is wrong with the panes' agent link of a running server, or None
-    when it leads to an agent that answers and, with `key`, holds that key."""
+    when it leads to an agent that answers and, with `key`, signs with it."""
     link = agent_link(api_socket)
     if link is None:
         return None
@@ -432,7 +454,11 @@ def link_problem(api_socket: str | None, key: str | None = DECK_KEY,
     if target.endswith(".unavailable") or not socket_answers(link):
         return f"herdr's panes' ssh-agent link {link} leads to no live agent ({target})"
     fingerprint = key_fingerprint(key, run) if key else None
-    if fingerprint and agent_state(link, fingerprint, run) != HOLDS:
+    state = agent_state(link, key, fingerprint, run) if key and fingerprint else HOLDS
+    if state == LISTS:
+        return (f"the ssh-agent herdr's panes use ({target}) lists {key} but cannot sign "
+                "with it: each pane asks for its passphrase")
+    if state != HOLDS:
         return f"the ssh-agent herdr's panes use ({target}) does not hold {key}"
     return None
 
