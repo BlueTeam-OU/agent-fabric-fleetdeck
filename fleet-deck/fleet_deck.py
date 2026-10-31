@@ -442,7 +442,12 @@ class DeckFleet:
                 return None
             if found is None or found.mode not in ((WAIT, ATTACH) if self.attach else (WAIT,)):
                 return None
-            text = self.herdr.text("pane", "read", self.harness[login], "--source", "recent",
+            # An attach is the account's own terminal client redrawing the
+            # pane: its prompt is on the screen and never in `recent`, which
+            # herdr answers empty for it (measured 2026-10-31: all 29 tabs at
+            # "<login> - Enter to activate", every `recent` read '').
+            source = "visible" if found.mode == ATTACH else "recent"
+            text = self.herdr.text("pane", "read", self.harness[login], "--source", source,
                                    "--lines", "5")
         except Exception:  # herdr busy or the pane gone: not waiting, asked again
             return None

@@ -548,8 +548,12 @@ class FleetDeckTest(unittest.TestCase):
         fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
         fleet.live = {"a": 0}
         workspace = {"workspace_id": "w1", "focused": True, "active_tab_id": "t1" if focused else "t9"}
-        fleet.herdr = mock.Mock(workspaces=mock.Mock(return_value=[workspace]),
-                                text=mock.Mock(return_value="a - Enter to activate\n"))
+        # As herdr answers an attach's pane: the prompt on the screen, nothing in `recent`.
+        def text(*args):
+            if args[:2] == ("pane", "read"):
+                return "a - Enter to activate\n" if args[args.index("--source") + 1] == "visible" else ""
+            return ""
+        fleet.herdr = mock.Mock(workspaces=mock.Mock(return_value=[workspace]), text=mock.Mock(side_effect=text))
         return fleet
 
     def test_an_attach_mode_boot_attaches_an_unfocused_bare_pane_and_presses_at_its_prompt(self):
