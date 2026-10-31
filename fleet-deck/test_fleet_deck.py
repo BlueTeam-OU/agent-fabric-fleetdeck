@@ -529,7 +529,9 @@ class FleetDeckTest(unittest.TestCase):
         fleet.harness = {"a": "p1"}
         fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
         fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.WAIT), {}))
-        fleet.herdr = mock.Mock(text=mock.Mock(return_value="a - Enter to activate\n"))
+        # A wait pane's prompt is its recent output; the screen is not read for it.
+        fleet.herdr = mock.Mock(text=mock.Mock(side_effect=lambda *args: (
+            "a - Enter to activate\n" if args[args.index("--source") + 1] == "recent" else "")))
         fleet.live = {"a": 1}
         self.assertIsNone(fleet.waiting("a"))
         self.assertEqual(self.said, [], "a login that is up is not said to lack a record")

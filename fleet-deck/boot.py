@@ -16,9 +16,10 @@ process of its own, not the deck controller: stopping or restarting the
 controller must not take the panes' agent with it.
 
 Activation presses the one Enter that `moveto <login> --wait` asks for,
-and only when the pane's foreground is that login's `moveto --wait` and
-its last line is moveto's own "<login> - Enter to activate": a pane at a
-passphrase prompt, a shell or a harness is never typed into.
+and only when the pane's foreground is that login's `moveto --wait` (or,
+attached, its `moveto --attach`) and its last line is moveto's own
+"<login> - Enter to activate": a pane at a passphrase prompt, a shell or
+a harness is never typed into.
 
 The policies are pure and take their effects injected, so their order,
 pacing and refusals are tested without a fleet.
@@ -106,8 +107,8 @@ def prompt_line(login: str) -> str:
 
 
 def at_prompt(text: str, login: str) -> bool:
-    """Whether a pane's recent output ends with moveto's prompt for this
-    login: its last non-blank line, exactly, so a prompt scrolled up by a
+    """Whether a pane's text (a wait pane's recent output, an attach
+    pane's visible screen) ends with moveto's prompt for this login: its last non-blank line, exactly, so a prompt scrolled up by a
     passphrase question or a shell does not count."""
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return bool(lines) and lines[-1] == prompt_line(login)

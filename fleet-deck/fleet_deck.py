@@ -423,11 +423,11 @@ class DeckFleet:
         return moveto_in(foreground, login), info
 
     def waiting(self, login: str) -> int | None:
-        """The pid of this login's `moveto --wait` when its pane shows the
-        prompt and a fresh state record says no session runs: over ssh the
-        prompt line is the account's own output, which a running harness
-        could print too, so the record is the independent evidence; unknown
-        is not pressed."""
+        """The pid of this login's `moveto --wait` (or, attached, its
+        `moveto --attach`) when its pane shows the prompt and a fresh state
+        record says no session runs: over ssh the prompt line is the
+        account's own output, which a running harness could print too, so
+        the record is the independent evidence; unknown is not pressed."""
         count = self.live_counts().get(login)
         if count != 0:
             if count is None and login not in self.unknown_said:
