@@ -437,6 +437,27 @@ class FleetDeckTest(unittest.TestCase):
         out = child.stdout.strip()
         return int(out) if out.isdigit() else None
 
+    def automatic_boot(self, attach):
+        calls = []
+        with mock.patch.object(fleet_deck.boot, "ensure_agent", return_value=self.agent), \
+             mock.patch.object(fleet_deck, "moveto_list", return_value="a-01 role\n"), \
+             mock.patch.object(fleet_deck, "probe_line", return_value=None), \
+             mock.patch.object(fleet_deck, "ensure_link", return_value=True), \
+             mock.patch.object(fleet_deck, "attach_mode", return_value=attach), \
+             mock.patch.object(fleet_deck, "control_agents", side_effect=lambda op, say: calls.append(op) or False), \
+             mock.patch.object(fleet_deck, "boot_fleet", side_effect=lambda *_: calls.append("boot") or 0), \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fleet_deck.main(["start", "--auto", "--no-fleet-tab", "--cwd", self.dir]), 0)
+        return calls, stderr.getvalue()
+
+    def test_an_attach_mode_boot_starts_the_harness_units_before_the_panes(self):
+        calls, said = self.automatic_boot(True)
+        self.assertEqual(calls, ["control-start", "harness-start", "boot"])
+        self.assertIn("some harness units did not start; going on with the panes", said)
+        calls, said = self.automatic_boot(False)
+        self.assertEqual(calls, ["control-start", "boot"], "no units without --attach")
+        self.assertNotIn("harness units", said)
+
     def test_the_controller_reads_the_boot_lock(self):
         self.assertIsNone(lock_holder(fabric_deck.boot_lock_path()))
         fd = hold_lock(fabric_deck.boot_lock_path())
@@ -677,6 +698,60 @@ class FleetDeckTest(unittest.TestCase):
         self.assertEqual(len(lag), 1)
         self.assertIn("qa", lag[0])
         self.assertNotIn("ui", lag[0])
+
+    def stop_all_in_attach_mode(self, harness_stop):
+        """stop_all with the deck gone, attach mode on, the stream showing ui
+        (its session in its unit) and qa (ended in its pane) live."""
+        calls = []
+
+        def control(op, say):
+            calls.append(op)
+            return harness_stop if op == "harness-stop" else True
+
+        with mock.patch.object(fleet_deck, "stop_controller", return_value=True), \
+             mock.patch.object(fleet_deck, "server_up", side_effect=[object(), None]), \
+             mock.patch.object(fleet_deck, "stop_holder"), \
+             mock.patch.object(fleet_deck, "attach_mode", return_value=True), \
+             mock.patch.object(fleet_deck, "control_agents", side_effect=control), \
+             mock.patch.object(fleet_deck.DeckFleet, "live_counts", return_value={"ui": 1, "qa": 1}), \
+             mock.patch.object(fleet_deck, "local_host", return_value="testhost"), \
+             mock.patch.object(fleet_deck, "stop_sessions", return_value=({"ui", "qa"}, {"ui"})), \
+             mock.patch.object(fleet_deck.subprocess, "run"), \
+             mock.patch.object(fleet_deck, "wait_for", return_value=True):
+            return fleet_deck.stop_all(self.say), calls
+
+    def test_stop_all_in_attach_mode_stops_the_harness_units_before_the_control_agents(self):
+        code, calls = self.stop_all_in_attach_mode(True)
+        self.assertEqual((code, calls), (0, ["harness-stop", "control-stop"]))
+        self.assertFalse(any("own servers" in line for line in self.said), "the unit's session was stopped")
+        lag = [line for line in self.said if "can lag" in line]
+        self.assertEqual(len(lag), 1)
+        self.assertIn("qa, ui", lag[0])
+
+    def test_a_failed_harness_stop_fails_stop_all_and_names_the_sessions_left_in_their_units(self):
+        code, calls = self.stop_all_in_attach_mode(False)
+        self.assertEqual((code, calls), (1, ["harness-stop", "control-stop"]))
+        self.assertIn("left running in their accounts' own servers: ui", self.said)
+
+    def test_a_fabric_ctl_without_harness_stop_leaves_the_units_running_and_says_so(self):
+        code, _ = self.stop_all_in_attach_mode(None)
+        self.assertEqual(code, 0, "nothing failed: there was nothing to run")
+        self.assertIn("left running in their accounts' own servers: ui", self.said)
+
+    def test_control_agents_says_which_units_and_none_when_fabric_ctl_lacks_the_op(self):
+        with mock.patch.object(fleet_deck, "fabric_ctl_has", return_value=False):
+            self.assertIsNone(fleet_deck.control_agents("harness-stop", self.say))
+        self.assertEqual(self.said[-1], "harness units: fabric-ctl has no harness-stop yet; left as they are")
+        done = subprocess.CompletedProcess([], 1, "x-01  failed  timeout\n", "")
+        with mock.patch.object(fleet_deck, "fabric_ctl_has", return_value=True), \
+             mock.patch.object(fleet_deck.subprocess, "run", return_value=done) as run:
+            self.assertIs(fleet_deck.control_agents("harness-stop", self.say), False)
+            self.assertIs(fleet_deck.control_agents("control-stop", self.say), False)
+        self.assertEqual([c.args[0] for c in run.call_args_list],
+                         [["fabric-ctl", "all", "harness-stop"], ["fabric-ctl", "all", "control-stop"]])
+        self.assertEqual([c.kwargs["timeout"] for c in run.call_args_list],
+                         [fleet_deck.HARNESS_CTL_S, fleet_deck.CONTROL_CTL_S])
+        self.assertEqual(self.said[-2:], ["harness units: x-01  failed  timeout", "control agents: x-01  failed  timeout"])
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))

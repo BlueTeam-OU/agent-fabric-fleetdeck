@@ -311,6 +311,12 @@ TIER_STOP_S = 30
 SERVER_STOP_S = 15
 
 
+# fabric-ctl's bound for the control agents' whole run. A harness unit's stop
+# waits for its session to end (the unit's TimeoutStopSec is 100 s), and
+# fabric-ctl stops the accounts one after another, so the fleet's harness
+# stop is bounded by the fleet's size, not by one call.
+CONTROL_CTL_S = 300
+HARNESS_CTL_S = 3600
 # How many times one boot starts an account's attach to reach its prompt.
 ATTACH_STARTS = 2
 # How long a hung-up attach has to give the operator's shell back before the
@@ -543,18 +549,22 @@ def fabric_ctl_has(op: str) -> bool:
     return op in (result.stdout + result.stderr).split()
 
 
-def control_agents(op: str, say: Callable[[str], None]) -> bool:
-    """`fabric-ctl all control-start|control-stop`, once fabric-ctl has it."""
+def control_agents(op: str, say: Callable[[str], None]) -> bool | None:
+    """`fabric-ctl all control-start|control-stop|harness-start|harness-stop`,
+    once fabric-ctl has it: None when it has not, so a caller can tell a unit
+    left as it is from one acted on."""
+    what = "harness units" if op.startswith("harness-") else "control agents"
     if not fabric_ctl_has(op):
-        say(f"control agents: fabric-ctl has no {op} yet; left as they are")
-        return True
+        say(f"{what}: fabric-ctl has no {op} yet; left as they are")
+        return None
     try:
-        result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True, timeout=300)
+        result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True,
+                                timeout=HARNESS_CTL_S if what == "harness units" else CONTROL_CTL_S)
     except (OSError, subprocess.SubprocessError) as error:
-        say(f"control agents: fabric-ctl all {op} failed: {boot.shown(str(error))}")
+        say(f"{what}: fabric-ctl all {op} failed: {boot.shown(str(error))}")
         return False
     for line in (result.stdout + result.stderr).splitlines():
-        say(f"control agents: {boot.shown(line)}")
+        say(f"{what}: {boot.shown(line)}")
     return result.returncode == 0
 
 
@@ -644,12 +654,21 @@ def stop_all(say: Callable[[str], None]) -> int:
     else:
         say(f"{BIN}'s server is not running")
     stop_holder(say)
+    # The sessions in the accounts' own servers end with their units, as
+    # `fabric-ctl restart` ends a session (SIGTERM, resumable); an attach's
+    # hang-up above ended none of them.
+    if attach_mode():
+        stopped = control_agents("harness-stop", say)
+        ok = stopped is not False and ok
+        if stopped:
+            # Each is still a deck session: one the stream shows now only lags its end.
+            in_units = set()
     # Read before the control agents stop: they are what answers the state stream.
     # Logins come from other accounts' state records: printable before shown.
     live = {boot.shown(login) for login, count in DeckFleet(say).live_counts().items() if count}
     deck = {boot.shown(login) for login in deck}
     in_units = {boot.shown(login) for login in in_units}
-    ok = control_agents("control-stop", say) and ok
+    ok = control_agents("control-stop", say) is not False and ok
     if live & in_units:
         say(f"left running in their accounts' own servers: {', '.join(sorted(live & in_units))}")
     lagging = live & deck - in_units
@@ -821,8 +840,13 @@ def start_unlocked(args, say: Callable[[str], None]) -> int:
     if not ensure_controller(args, say, agent):
         return 1
     if args.auto:
-        if not control_agents("control-start", say):
+        if control_agents("control-start", say) is False:
             say("some control agents did not start; going on with the panes")
+        # A stop --all left the harness units stopped (enabled, so they come
+        # back only at the account's next login otherwise): with no server
+        # the boot's attaches would find nothing to press.
+        if attach_mode() and control_agents("harness-start", say) is False:
+            say("some harness units did not start; going on with the panes")
         return boot_fleet(say, args.exclude)
     if args.verb == "attach":
         return attach()
