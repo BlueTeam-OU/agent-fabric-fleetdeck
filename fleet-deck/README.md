@@ -92,7 +92,10 @@ restart the server: `stop --all`, then `start --auto`.
    nothing is started.
 3. Starts the server, the controller and the control agents. The control
    agents are started once `fabric-ctl` has `control-start`; until then
-   this step says so and goes on.
+   this step says so and goes on. With `--attach` it also starts the
+   accounts' harness units (`fabric-ctl all harness-start`), which a
+   `stop --all` left stopped; one that does not start is named and the
+   boot goes on.
 4. Activates the panes in the order of their workspaces: C-Level,
    Infrastructure, Experts with Marketing, Legal and Accountants, every
    "… Developer" workspace, then any other.
@@ -133,7 +136,12 @@ boot ends, restores resume as before.
    `--attach`, an attach is left alone: its session runs in the account's
    own server (see Attach).
 3. Stops the server and the ssh-agent holder.
-4. Stops the control agents, once `fabric-ctl` has `control-stop`.
+4. With `--attach`, stops the accounts' harness units
+   (`fabric-ctl all harness-stop`), which ends each session as
+   `fabric-ctl restart` does, resumable; the account `stop --all` runs
+   as is skipped, as fabric-ctl skips it. A unit that does not stop fails
+   the stop, and its session is named as left running.
+5. Stops the control agents, once `fabric-ctl` has `control-stop`.
 
 It then names any session still running: one outside the deck is left
 running. The same is in the deck's menu as **Stop the whole fleet…**. Its
@@ -508,8 +516,9 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
   5 s), and the other then types nothing. The boot's Enter is pressed at
   the prompt its own attach shows, never at a shell.
 - **`stop --all`** never hangs up an attach: that ends no session. The
-  harness sessions are stopped through their units, which is
-  agent-fabric's part, and the deck says so, naming the sessions left
+  harness sessions are stopped through their units
+  (`fabric-ctl all harness-stop`, step 4 above). Where that fails, or
+  fabric-ctl has no `harness-stop`, the deck names the sessions left
   running in their accounts' own servers apart from any the stream may
   still show after their end.
 - **Limits.** A safeguard stop is read from the pane's screen, so it is
