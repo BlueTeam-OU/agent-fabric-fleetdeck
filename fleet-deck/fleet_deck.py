@@ -557,6 +557,10 @@ def control_agents(op: str, say: Callable[[str], None]) -> bool | None:
     if not fabric_ctl_has(op):
         say(f"{what}: fabric-ctl has no {op} yet; left as they are")
         return None
+    # fabric-ctl's rows come only at its end, and a harness stop waits on
+    # every account's session in turn: say that it runs, or the log is
+    # silent for minutes.
+    say(f"{what}: fabric-ctl all {op} …")
     try:
         result = subprocess.run(["fabric-ctl", "all", op], capture_output=True, text=True,
                                 timeout=HARNESS_CTL_S if what == "harness units" else CONTROL_CTL_S)
@@ -588,8 +592,8 @@ def stop_sessions(say: Callable[[str], None]) -> tuple[set[str], set[str]]:
     session runs in the account's own server, which this does not stop."""
     fleet = DeckFleet(say, attach=attach_mode())
     if fleet.attach:
-        # Stopping them is their units' (agent-fabric's stop --all through
-        # the unit), never an attach's hang-up, which ends only the attach.
+        # Stopping them is their units' (stop_all's fabric-ctl all
+        # harness-stop), never an attach's hang-up, which ends only the attach.
         say("the harness sessions run in their accounts' own servers: stopped there, not by "
             "ending the deck's panes")
     try:
