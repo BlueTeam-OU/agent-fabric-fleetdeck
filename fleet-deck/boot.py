@@ -108,8 +108,9 @@ def prompt_line(login: str) -> str:
 
 def at_prompt(text: str, login: str) -> bool:
     """Whether a pane's text (a wait pane's recent output, an attach
-    pane's visible screen) ends with moveto's prompt for this login: its last non-blank line, exactly, so a prompt scrolled up by a
-    passphrase question or a shell does not count."""
+    pane's visible screen) ends with moveto's prompt for this login: its
+    last non-blank line, exactly, so a prompt scrolled up by a passphrase
+    question or a shell does not count."""
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return bool(lines) and lines[-1] == prompt_line(login)
 
