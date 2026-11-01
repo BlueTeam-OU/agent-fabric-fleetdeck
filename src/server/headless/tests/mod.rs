@@ -7290,6 +7290,114 @@ fn terminal_control_client_keeps_the_whole_grid_without_a_scroll_bar() {
 }
 
 #[test]
+fn terminal_observer_follows_the_attach_owners_scroll_bar() {
+    with_terminal_session_test_server(
+        |server, runtime_terminal_id, terminal_id, public_pane_id| {
+            let mut bytes = Vec::new();
+            for line in 0..200 {
+                bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+            }
+            server.app.terminal_runtimes.insert(
+                runtime_terminal_id,
+                crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+            );
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                    client_id: 7,
+                    terminal_id: terminal_id.clone(),
+                    takeover: false,
+                })
+            );
+            let (writer, _control, render) = test_client_writer();
+            assert!(!server.handle_server_event(ServerEvent::ClientConnected {
+                client_id: 8,
+                cols: 100,
+                rows: 30,
+                cell_width_px: 0,
+                cell_height_px: 0,
+                pixel_mouse: false,
+                writer,
+            }));
+            assert!(
+                server.handle_server_event(ServerEvent::ClientObserveTerminal {
+                    client_id: 8,
+                    target: terminal_id.clone(),
+                })
+            );
+
+            // A person's attach: the observer shows the owner's bar.
+            assert!(server.attach_client_scroll_bar(8));
+            server.render_and_stream();
+            let observed = std::iter::from_fn(|| render.try_recv().ok())
+                .filter_map(|bytes| match read_server_message(bytes) {
+                    ServerMessage::Terminal(frame) => Some(frame),
+                    _ => None,
+                })
+                .last()
+                .expect("observer frame");
+            assert!(String::from_utf8_lossy(&observed.bytes).contains('\u{2590}'));
+
+            // A session control owner: no bar for the observer either.
+            let _ = server.handle_server_event(ServerEvent::ClientDisconnected { client_id: 7 });
+            connect_pending_terminal_client(server, 9);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 9,
+                    target: public_pane_id,
+                    takeover: false,
+                })
+            );
+            assert!(!server.attach_client_scroll_bar(8));
+        },
+    );
+}
+
+#[test]
+fn terminal_control_client_sends_a_release_without_its_press() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        // No scroll bar: a session control bridge, whose protocol sends every cell's events.
+        server.clients.insert(
+            1,
+            ClientConnection::new_with_mode(
+                ClientConnectionMode::TerminalAttach {
+                    terminal_id: terminal_id.clone(),
+                },
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                1,
+                RenderEncoding::TerminalAnsi,
+                None,
+            ),
+        );
+        assert!(server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Up(protocol::ClientMouseButton::Left),
+            position: protocol::ClientMousePosition::Cell { column: 10, row: 5 },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert_eq!(
+            input_rx.try_recv().expect("release"),
+            Bytes::from_static(b"\x1b[<0;11;6m")
+        );
+    });
+}
+
+#[test]
 fn direct_attach_gutter_routes_wheel_press_and_release() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         let mut bytes = Vec::new();

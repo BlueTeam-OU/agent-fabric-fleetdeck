@@ -176,8 +176,8 @@ pub(crate) struct ClientConnection {
     /// every cell's mouse events, as its protocol documents.
     pub(crate) attach_scroll_bar: bool,
     /// The buttons whose press this direct attach wrote to the attached program and whose
-    /// release it has not yet seen (`terminal_attach::button_bit`); only a held button's drag
-    /// or release past the program's cells reaches it.
+    /// release it has not yet seen (`terminal_attach::button_bit`). With a scroll bar, only a
+    /// held button's drag or release reaches the program, wherever the pointer is.
     pub(crate) attach_program_held: u8,
     /// Presses forwarded by this shell that need release on abrupt teardown.
     shell_held_inputs: HashMap<ClientShellPressId, ClientShellHeldInput>,

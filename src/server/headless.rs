@@ -1478,11 +1478,13 @@ impl HeadlessServer {
         }
         let cells = grid.width.min(runtime.current_size().1);
         let bit = crate::server::terminal_attach::button_bit(kind);
+        // A session control bridge has no bar to take a press from the program, and its
+        // protocol sends every cell's events, a drag or release without its press included.
         let route = crate::server::terminal_attach::gutter_route(
             kind,
             column,
             cells,
-            program_held & bit != 0,
+            !gutter || program_held & bit != 0,
         );
         // A release ends its button's press whatever becomes of it; a press counts only once
         // it has been written to the program, below.
