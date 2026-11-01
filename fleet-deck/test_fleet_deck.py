@@ -541,9 +541,11 @@ class FleetDeckTest(unittest.TestCase):
         self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
                          "the reason is said, once, and not for a login that is up")
 
-    def attach_fleet(self, focused=False):
+    def attach_fleet(self, focused=False, every_tab=False):
         with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
             fleet = fleet_deck.DeckFleet(self.say, attach=True)
+        # Never the host's own config.toml.
+        fleet.every_tab = lambda: every_tab
         fleet.harness, fleet.tab_id = {"a": "p1"}, {"a": "t1"}
         fleet.sleep = lambda s: None
         fleet.lock_dir = self.dir
@@ -666,6 +668,17 @@ class FleetDeckTest(unittest.TestCase):
             with mock.patch.object(fleet_deck.boot, "hang_up") as hang_up:
                 fleet.done("a")
             hang_up.assert_not_called()
+
+    def test_done_leaves_every_attach_when_every_tab_is_kept(self):
+        fleet = self.attach_fleet(every_tab=True)
+        fleet.attached = {"a": (1, 0.0)}
+        fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.ATTACH),
+                                               {"foreground_process_group_id": 7}))
+        with mock.patch.object(fleet_deck.boot, "hang_up") as hang_up:
+            fleet.done("a")
+        hang_up.assert_not_called()
+        self.assertNotIn(mock.call("pane", "run", "p1", fleet_deck.DETACHED_COMMAND),
+                         fleet.herdr.text.call_args_list)
 
     def test_stop_all_never_hangs_up_an_attach(self):
         listed = "ui rust-ui-dev x\nqa rust-ui-dev x\n"

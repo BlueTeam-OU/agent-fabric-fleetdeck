@@ -130,6 +130,7 @@ impl Config {
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.invalid_headless_size_diagnostic())
             .chain(self.unrecognized_socket_access_diagnostic())
+            .chain(self.fleet_deck_tabs_diagnostic())
             .collect()
     }
 
@@ -156,6 +157,34 @@ impl Config {
              enforcing \"client_only\" until it is corrected"
                 .to_owned()
         })
+    }
+
+    /// The deck reads a value it does not take as "focus"
+    /// (fleet-deck/fabric_deck.py deck_tabs); said here too, so a person
+    /// checking the file learns it.
+    pub(crate) fn fleet_deck_tabs_diagnostic(&self) -> Vec<String> {
+        const KEPT: &str =
+            "the fleet deck keeps only the focused tab connected until it is corrected";
+        let section = &self.fleet_deck;
+        if let Some(value) = section.not_a_table() {
+            return vec![format!(
+                "fleet_deck must be a section, [fleet_deck] with tabs = \"focus\" or \"all\" \
+                 (got fleet_deck = {value}); {KEPT}"
+            )];
+        }
+        let mut diagnostics: Vec<String> = section
+            .unknown_keys()
+            .iter()
+            .map(|key| format!("unknown config key fleet_deck.{key}; ignoring key"))
+            .collect();
+        match &section.tabs {
+            None => {}
+            Some(toml::Value::String(value)) if value == "focus" || value == "all" => {}
+            Some(value) => diagnostics.push(format!(
+                "fleet_deck.tabs must be \"focus\" or \"all\" (got {value}); {KEPT}"
+            )),
+        }
+        diagnostics
     }
 
     pub(crate) fn invalid_sidebar_bounds_diagnostic(&self) -> Option<String> {
