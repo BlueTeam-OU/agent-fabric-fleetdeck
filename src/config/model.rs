@@ -326,6 +326,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub fleet_deck: FleetDeckConfig,
 }
 
 #[derive(Debug)]
@@ -1138,6 +1139,19 @@ pub struct RemoteConfig {
     /// Add keepalive fallbacks and private connection reuse for `herdr --remote`.
     /// Set false to run plain ssh unchanged. Default: true.
     pub manage_ssh_config: bool,
+}
+
+/// `[fleet_deck]`: what the fleet deck (`fleet-deck/fabric_deck.py`) reads
+/// from this file. The server uses none of it; it is declared so `config
+/// check` knows the section and says when a value is not one the deck takes.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FleetDeckConfig {
+    /// `"focus"` (default): an account tab's panes connect only while it is
+    /// focused. `"all"`: every account tab's stay connected. Kept as a raw
+    /// value so a wrong one is a diagnostic, never a parse error that would
+    /// drop the whole file to defaults.
+    pub tabs: Option<toml::Value>,
 }
 
 impl Default for RemoteConfig {

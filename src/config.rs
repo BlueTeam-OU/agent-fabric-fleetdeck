@@ -130,6 +130,7 @@ impl Config {
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.invalid_headless_size_diagnostic())
             .chain(self.unrecognized_socket_access_diagnostic())
+            .chain(self.fleet_deck_tabs_diagnostic())
             .collect()
     }
 
@@ -156,6 +157,20 @@ impl Config {
              enforcing \"client_only\" until it is corrected"
                 .to_owned()
         })
+    }
+
+    /// The deck reads a value it does not take as "focus"
+    /// (fleet-deck/fabric_deck.py deck_tabs); said here too, so a person
+    /// checking the file learns it.
+    pub(crate) fn fleet_deck_tabs_diagnostic(&self) -> Option<String> {
+        match &self.fleet_deck.tabs {
+            None => None,
+            Some(toml::Value::String(value)) if value == "focus" || value == "all" => None,
+            Some(value) => Some(format!(
+                "fleet_deck.tabs must be \"focus\" or \"all\" (got {value}); \
+                 the fleet deck keeps only the focused tab connected until it is corrected"
+            )),
+        }
     }
 
     pub(crate) fn invalid_sidebar_bounds_diagnostic(&self) -> Option<String> {
