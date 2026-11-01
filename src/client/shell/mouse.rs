@@ -2246,7 +2246,17 @@ impl ClientShellState {
                     .find(|hit| super::contains(hit.rect, point))
                     .cloned();
                 if let Some(hit) = pane_hit {
-                    if hit.mouse_reporting && super::contains(hit.inner_rect, point) {
+                    // The select modifier keeps the press for FleetDeck's own
+                    // selection even when the program asked for the mouse; the
+                    // whole gesture then stays out of the pane.
+                    let select_over_program = self
+                        .config
+                        .mouse_select_modifiers
+                        .is_some_and(|modifiers| modifiers == mouse.modifiers);
+                    if hit.mouse_reporting
+                        && !select_over_program
+                        && super::contains(hit.inner_rect, point)
+                    {
                         self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
                         self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
                             last_position: self.pane_mouse_position(&hit, mouse),

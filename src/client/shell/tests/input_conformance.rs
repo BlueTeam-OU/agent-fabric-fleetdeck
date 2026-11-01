@@ -475,6 +475,17 @@ impl HerdrPath {
             herdr_owned |= self.absorb(outcome, &mut events);
         }
         herdr_owned |= self.state.mode != ClientShellMode::Terminal || self.state.overlay.is_some();
+        // The select modifier keeps a press in a mouse-reporting pane for the
+        // client's own selection, so that gesture never reaches the program by
+        // design. In a pane that does not report the mouse a selection is the
+        // ordinary outcome, and the program expects nothing either way.
+        herdr_owned |= self.state.selection.is_some()
+            && self
+                .state
+                .hits
+                .panes
+                .first()
+                .is_some_and(|pane| pane.mouse_reporting);
         if herdr_owned {
             return None;
         }

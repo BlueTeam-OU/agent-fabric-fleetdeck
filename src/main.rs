@@ -292,6 +292,13 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # Empty/off disables this. Shift is intentionally unsupported because terminals commonly reserve Shift+mouse.
 # right_click_passthrough_modifier = ""
 
+# Modifier that makes a left drag select text in a pane whose program reports
+# the mouse (an attached harness, an editor), copied as any selection, instead
+# of sending the drag to the program. A plain drag still reaches the program.
+# Empty/off disables this. Shift is unsupported (the outer terminal's own
+# selection), and so is ctrl (ctrl+click opens links).
+# mouse_select_modifier = "alt"
+
 # Force a full redraw when the outer terminal regains focus.
 # Set false to reduce visible flashing when switching back to FleetDeck.
 # Trade-off: rare host terminal surface corruption may persist until the next full redraw.
