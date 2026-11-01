@@ -2297,6 +2297,71 @@ class StreamLines(unittest.TestCase):
         self.assertEqual(seen, ["a", "b"])
         self.assertEqual(logs, ["a state record was skipped: bad"])
 
+    def starting_stream(self):
+        """A Stream whose reader thread sits inside Popen, its child already
+        running, until `proceed` is set."""
+        started, proceed = threading.Event(), threading.Event()
+        children = []
+        real = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            child = real(*args, **kwargs)
+            children.append(child)
+            started.set()
+            proceed.wait(10)
+            return child
+
+        patch = mock.patch.object(fabric_deck.subprocess, "Popen", popen)
+        patch.start()
+        self.addCleanup(patch.stop)
+        stream = Stream(on_line=lambda raw: None, log=lambda line: None, command=("sleep", "60"))
+        reader = threading.Thread(target=stream.run, daemon=True)
+        reader.start()
+        self.assertTrue(started.wait(10))
+
+        def end():
+            proceed.set()
+            reader.join(10)
+            if children[0].poll() is None:
+                children[0].kill()
+                children[0].wait()
+
+        self.addCleanup(end)
+        return stream, children[0], proceed, reader
+
+    def test_close_while_a_child_starts_reaps_it_before_returning(self):
+        # The deck exits as soon as close returns, dropping the reader thread:
+        # a child that thread was still starting would be orphaned.
+        stream, child, proceed, reader = self.starting_stream()
+        release = threading.Timer(0.2, proceed.set)
+        release.start()
+        self.addCleanup(release.join)
+        stream.close()
+        self.assertIsNotNone(child.poll(), "close returned while its child still ran")
+        reader.join(10)
+        self.assertFalse(reader.is_alive())
+
+    def test_a_stop_while_close_waits_is_acted_on_after_the_reap(self):
+        # A second ctrl-c or kill while close waits for the starting child
+        # must not end close before that child is reaped.
+        import signal
+
+        def stop(_signum, _frame):
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGTERM, stop)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        stream, child, proceed, _reader = self.starting_stream()
+        kill = threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGTERM))
+        release = threading.Timer(0.3, proceed.set)
+        kill.start()
+        release.start()
+        self.addCleanup(kill.join)
+        self.addCleanup(release.join)
+        with self.assertRaises(KeyboardInterrupt):
+            stream.close()
+        self.assertIsNotNone(child.poll(), "the stop ended close before its child was reaped")
+
 
 class StreamRecordsListed(unittest.TestCase):
     def test_every_way_of_storing_a_record_keeps_listed(self):
