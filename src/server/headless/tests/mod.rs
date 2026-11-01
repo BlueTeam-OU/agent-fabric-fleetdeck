@@ -7383,6 +7383,48 @@ fn direct_attach_gutter_routes_wheel_press_and_release() {
 }
 
 #[test]
+fn direct_attach_gutter_drops_a_press_before_the_grid_narrows() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        // Back on the main screen, the runtime still has the full 81 columns until the next
+        // frame narrows it; column 80 is already the gutter.
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                81,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+
+        assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(protocol::ClientMouseButton::Left),
+            position: protocol::ClientMousePosition::Cell { column: 80, row: 5 },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert!(input_rx.try_recv().is_err());
+    });
+}
+
+#[test]
 fn direct_terminal_mouse_sends_nothing_without_mouse_reporting() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         // A plain shell never enabled mouse reporting, so a controller's click
