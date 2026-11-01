@@ -1220,6 +1220,41 @@ mouse_captur = true
     }
 
     #[test]
+    fn a_fleet_deck_that_is_no_section_or_has_an_unknown_key_is_said_and_keeps_the_rest() {
+        for (content, said) in [
+            ("fleet_deck = \"all\"\n", "fleet_deck must be a section"),
+            (
+                "[fleet_deck]\ntab = \"all\"\n",
+                "unknown config key fleet_deck.tab",
+            ),
+        ] {
+            let content = format!("{content}[ui.toast]\ndelivery = \"system\"\n");
+            let loaded = load_startup_config("fleet-deck-shape", &content);
+            assert_eq!(
+                loaded.diagnostics.len(),
+                1,
+                "{content}: {:?}",
+                loaded.diagnostics
+            );
+            assert!(
+                loaded.diagnostics[0].starts_with(said),
+                "{:?}",
+                loaded.diagnostics
+            );
+            assert_eq!(
+                loaded.config.ui.toast.delivery,
+                super::super::ToastDelivery::System,
+                "{content}: the file is not dropped to defaults"
+            );
+            let live = load_live_config_from_str(&content).unwrap();
+            assert_eq!(
+                live.config.ui.toast.delivery,
+                super::super::ToastDelivery::System
+            );
+        }
+    }
+
+    #[test]
     fn startup_config_load_warns_about_unknown_top_level_sections() {
         let _guard = crate::config::test_config_env_lock().lock().unwrap();
         let path = std::env::temp_dir().join(format!(
