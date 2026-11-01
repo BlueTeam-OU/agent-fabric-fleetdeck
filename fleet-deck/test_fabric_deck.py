@@ -3235,6 +3235,29 @@ class EveryTab(unittest.TestCase):
         self.look(34)
         self.assertEqual(self.herdr.runs(self.b[0]), ["moveto qa --attach"] * 2)
 
+    def test_a_shell_or_status_moveto_that_ends_is_connected_again_at_the_next_map_read(self):
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        self.herdr.proc[self.a[2]] = BARE      # the focused tab's status: its ssh dropped
+        self.herdr.proc[self.b[1]] = BARE      # an unfocused tab's shell: a person's exit
+        self.look(3)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"], "taken at the map read, not before")
+        self.herdr.focused_tab = self.b_tab    # no pause round-trip to queue them either
+        self.look(PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(self.herdr.runs(self.a[2]), ["moveto ui --watch"] * 2)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"] * 2)
+        self.assertEqual(self.herdr.keys(self.b[1])[-1:], ["ctrl+u"], "a half-typed line dropped first")
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        self.look(2 * PANE_MAP_REFRESH_S + 5)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"] * 2, "a running one is left alone")
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.lines(), [])
+
     def test_a_running_deck_takes_a_switch_at_its_next_map_read_both_ways(self):
         self.setting = ("focus", None)
         self.deck(attach=False)
@@ -3242,6 +3265,7 @@ class EveryTab(unittest.TestCase):
         self.h.deck.restore(0)
         self.look(1)
         self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+        self.connected("ui", self.a, attach=False)
         self.setting = ("all", None)
         self.look(3)
         self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND],

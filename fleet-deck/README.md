@@ -543,7 +543,10 @@ tabs = "focus"   # the default; "all" keeps every account tab connected
 - **`"all"`** connects every activated account's shell, status and harness
   panes and keeps them connected: a focus change hangs up nothing and
   types no paused or detached line. An attach that ends is started again
-  in any tab, as in a focused one, the 15 s halt included. In attach mode the harness pane attaches;
+  in any tab, as in a focused one, the 15 s halt included; a shell or
+  status pane whose moveto ended (a dropped ssh, an `exit`) is connected
+  again at the next map read, a line half-typed at its prompt dropped
+  first. In attach mode the harness pane attaches;
   without `--attach` in moveto it runs the session in the pane, as before
   attach mode. `start --auto` then leaves every attach it opened open.
   Nothing depends on the host: an account reached over ssh on another

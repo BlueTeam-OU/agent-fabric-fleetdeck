@@ -1608,6 +1608,8 @@ class Deck:
             if self.retry:
                 self.restore(now, only=set(self.retry))
             self._restart_ended_views(now)
+            if self.every_tab:
+                self._requeue_ended(now)
         self._follow_focus(now)
         self.decide_pending(now)
         self._note_befores(server)
@@ -2080,6 +2082,32 @@ class Deck:
                 self.view_seen.discard(pane)
                 self.waiting[key] = now
                 self.log(f"{login}: its agent screen in {pane} had ended; starting it again")
+
+    def _requeue_ended(self, now: float) -> None:
+        """With every tab kept, a shell or status pane whose moveto ended (a
+        dropped ssh, a person's exit) is queued to connect again, at each
+        map read. Under "focus" the lost focus's pause queues it, and the
+        next focus connects it; with every tab kept nothing pauses, so
+        nothing else would. The harness pane's attach is _attach_ended's."""
+        for login, tab in (self.tabs or {}).items():
+            if login not in self.harness_pane or tab.undetermined:
+                continue
+            for role, mode in ON_FOCUS:
+                pane = tab.panes.get(role)
+                if (pane is None or (login, pane, mode) in self.waiting or pane in self.pausing
+                        or now - self.typed_at.get(pane, -ENTRY_GRACE_S) < ENTRY_GRACE_S):
+                    continue    # queued, or its moveto typed there may not have started yet
+                try:
+                    bare = self._bare(pane)
+                except Exception as error:  # looked at again at the next map read
+                    self.log(f"{login}: {printable(str(error))}")
+                    continue
+                if bare:
+                    self.waiting[(login, pane, mode)] = now
+                    # A line a person half-typed at that prompt is dropped
+                    # before the moveto, never run with it appended.
+                    self.resumed.add(pane)
+                    self.log(f"{login}: its {role} in {pane} had ended; connecting it again")
 
     def _bare(self, pane: str) -> bool:
         info = self.herdr.process_info(pane)
