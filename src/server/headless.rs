@@ -1432,6 +1432,7 @@ impl HeadlessServer {
         let pixel_mouse = client.pixel_mouse;
         let host_sgr_pixels_active = client.host_sgr_pixels_active == Some(true);
         let scrollbar_grab = client.attach_scrollbar_grab;
+        let program_pressed = client.attach_program_pressed;
         let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
             return false;
         };
@@ -1474,15 +1475,33 @@ impl HeadlessServer {
             }
             return true;
         }
-        let (position, geometry) =
-            match crate::server::terminal_attach::gutter_route(kind, column, grid.width) {
-                crate::server::terminal_attach::GutterRoute::Terminal => (position, geometry),
-                crate::server::terminal_attach::GutterRoute::Clamp(last) => (
-                    protocol::ClientMousePosition::Cell { column: last, row },
-                    None,
-                ),
-                crate::server::terminal_attach::GutterRoute::Drop => return false,
-            };
+        let cells = grid.width.min(runtime.current_size().1);
+        let route =
+            crate::server::terminal_attach::gutter_route(kind, column, cells, program_pressed);
+        let pressed_after = match (kind, route) {
+            (_, crate::server::terminal_attach::GutterRoute::Drop)
+                if !matches!(kind, protocol::ClientMouseKind::Up(_)) =>
+            {
+                program_pressed
+            }
+            (protocol::ClientMouseKind::Down(_), _) => true,
+            (protocol::ClientMouseKind::Up(_), _) => false,
+            _ => program_pressed,
+        };
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.attach_program_pressed = pressed_after;
+        }
+        let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
+            return false;
+        };
+        let (position, geometry) = match route {
+            crate::server::terminal_attach::GutterRoute::Terminal => (position, geometry),
+            crate::server::terminal_attach::GutterRoute::Clamp(last) => (
+                protocol::ClientMousePosition::Cell { column: last, row },
+                None,
+            ),
+            crate::server::terminal_attach::GutterRoute::Drop => return false,
+        };
         let Some(position) = terminal_attach_mouse_position(
             runtime,
             terminal_size,
@@ -1914,6 +1933,7 @@ impl HeadlessServer {
         };
         client.attach_scroll_bar = scroll_bar;
         client.attach_scrollbar_grab = None;
+        client.attach_program_pressed = false;
         client.render_state.reset_baseline();
         client.last_activity = stamp;
         let was_foreground = self.foreground_client_id == Some(client_id);

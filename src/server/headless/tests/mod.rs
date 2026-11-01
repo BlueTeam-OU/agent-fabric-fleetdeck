@@ -7362,6 +7362,15 @@ fn direct_attach_gutter_routes_wheel_press_and_release() {
         assert!(!mouse(server, protocol::ClientMouseKind::Moved, 80));
         assert!(input_rx.try_recv().is_err());
 
+        // A jump on the track is the bar's: its drag and release never reach the program.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Drag(left), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "the program saw no press of the bar's"
+        );
+
         // A press off the track ends a drag whose release was lost.
         server
             .clients
