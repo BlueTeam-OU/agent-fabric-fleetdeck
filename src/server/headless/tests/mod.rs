@@ -7434,6 +7434,62 @@ fn direct_attach_gutter_drops_a_press_before_the_grid_narrows() {
 }
 
 #[test]
+fn direct_attach_keeps_a_release_in_the_frame_that_enters_the_alternate_screen() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        // The grid is 80 of 81 columns; the program then enters its alternate screen, so the
+        // layout has the whole 81 while the runtime keeps 80 until the next frame.
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h\x1b[?1049h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 79));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;80;6M")
+        );
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx
+                .try_recv()
+                .expect("release at the runtime's last column"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+    });
+}
+
+#[test]
 fn direct_terminal_mouse_sends_nothing_without_mouse_reporting() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         // A plain shell never enabled mouse reporting, so a controller's click
