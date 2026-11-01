@@ -1523,9 +1523,11 @@ impl HeadlessServer {
             modifiers,
             lines: lines.max(1),
         };
+        // With reporting off a press encodes to nothing, though the apply succeeds.
+        let reported = runtime.mouse_reporting_enabled();
         if let Err(err) = apply_client_pane_input_events(runtime, &[event]) {
             warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach mouse input failed");
-        } else if matches!(kind, protocol::ClientMouseKind::Down(_)) {
+        } else if reported && matches!(kind, protocol::ClientMouseKind::Down(_)) {
             if let Some(client) = self.clients.get_mut(&client_id) {
                 client.attach_program_held |= bit;
             }

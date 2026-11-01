@@ -7556,6 +7556,55 @@ fn direct_attach_gutter_routes_wheel_press_and_release() {
 }
 
 #[test]
+fn direct_attach_holds_no_press_the_program_was_not_reporting() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80, 24, 0, b"", 4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+
+        // The press reaches a program with mouse reporting off: nothing is written.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert!(input_rx.try_recv().is_err());
+        assert_eq!(server.clients[&1].attach_program_held, 0);
+        // Reporting turns on before the release; the release is not the program's.
+        server
+            .runtime_for_terminal_id_string(&terminal_id)
+            .expect("runtime")
+            .test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(input_rx.try_recv().is_err());
+    });
+}
+
+#[test]
 fn direct_attach_gutter_drops_a_press_before_the_grid_narrows() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         // Back on the main screen, the runtime still has the full 81 columns until the next
