@@ -76,15 +76,17 @@ pub(crate) fn attach_scrollbar_drag(
 
 /// Where a pointer event off the scroll bar goes. `cells` is the width both the layout's grid and
 /// the runtime agree on: for one frame after the alternate screen toggles they differ by the
-/// gutter, and an event past either lands on no cell of the program.
+/// gutter, and an event past either lands on no cell of the program. A drag or release goes to
+/// the program only for a button whose press it was sent, wherever the pointer is, as the
+/// shell's pane gesture does; a press the bar or the gutter took is not the program's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GutterRoute {
     /// Inside the cells: the attached terminal takes it as it is.
     Terminal,
-    /// A drag or release past the cells while the program holds a press it was sent: it gets
-    /// the event at its last column, or it would keep a button it never saw released.
+    /// A held button's drag or release past the cells: the program gets it at its last column,
+    /// or it would keep a button it never saw released.
     Clamp(u16),
-    /// Anything else past the cells, a drag or release of a press made on the bar included.
+    /// A drag or release of a button the program does not hold, or anything else past the cells.
     Drop,
 }
 
@@ -113,13 +115,15 @@ pub(crate) fn gutter_route(
 ) -> GutterRoute {
     use crate::protocol::ClientMouseKind;
 
+    let gesture = matches!(kind, ClientMouseKind::Drag(_) | ClientMouseKind::Up(_));
+    if gesture && !program_holds {
+        return GutterRoute::Drop;
+    }
     if column < cells {
         return GutterRoute::Terminal;
     }
     match kind {
-        ClientMouseKind::Drag(_) | ClientMouseKind::Up(_) if program_holds && cells > 0 => {
-            GutterRoute::Clamp(cells - 1)
-        }
+        _ if gesture && cells > 0 => GutterRoute::Clamp(cells - 1),
         _ => GutterRoute::Drop,
     }
 }
@@ -163,7 +167,24 @@ mod tests {
             gutter_route(ClientMouseKind::Drag(left), 80, 80, true),
             GutterRoute::Clamp(79)
         );
-        // A press the program never saw (on the bar, or in the gutter) keeps its release.
+        // A press the program never saw (on the bar, or in the gutter) keeps its release, in
+        // the gutter or back in the cells.
+        assert_eq!(
+            gutter_route(ClientMouseKind::Up(left), 10, 80, false),
+            GutterRoute::Drop
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Drag(left), 10, 80, false),
+            GutterRoute::Drop
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Up(left), 10, 80, true),
+            GutterRoute::Terminal
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Moved, 10, 80, false),
+            GutterRoute::Terminal
+        );
         assert_eq!(
             gutter_route(ClientMouseKind::Up(left), 80, 80, false),
             GutterRoute::Drop

@@ -7370,6 +7370,29 @@ fn direct_attach_gutter_routes_wheel_press_and_release() {
             input_rx.try_recv().is_err(),
             "the program saw no press of the bar's"
         );
+        // Nor when the pointer comes back into the cells before the release (a jump off the
+        // thumb, which the last jump left near row 5).
+        assert!(server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(left),
+            position: protocol::ClientMousePosition::Cell {
+                column: 80,
+                row: 23
+            },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert_eq!(
+            server.clients[&1].attach_scrollbar_grab, None,
+            "a jump, not a grab"
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Drag(left), 10));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 10));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a jump's drag and release stay the bar's"
+        );
 
         // A press the program never got (past its rows) does not make a gutter release its.
         assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {

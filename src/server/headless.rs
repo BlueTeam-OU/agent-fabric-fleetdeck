@@ -1395,7 +1395,8 @@ impl HeadlessServer {
             terminal_size.1,
             gutter,
         );
-        if matches!(source, AttachScrollSource::Wheel) && column.is_some_and(|c| c >= grid.width) {
+        let cells = grid.width.min(runtime.current_size().1);
+        if matches!(source, AttachScrollSource::Wheel) && column.is_some_and(|c| c >= cells) {
             return false;
         }
 
