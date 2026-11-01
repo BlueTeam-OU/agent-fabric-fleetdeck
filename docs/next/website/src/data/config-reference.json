@@ -1546,6 +1546,18 @@
       ]
     },
     {
+      "id": "fleet_deck",
+      "title": "Fleet deck",
+      "keys": [
+        {
+          "key": "fleet_deck.tabs",
+          "type": "string",
+          "default": "\"focus\"",
+          "description": "Read by the fleet deck (fleet-deck/), not the server. `\"focus\"`: an account tab's shell, status and harness panes connect only while the tab is focused; the others are hung up. `\"all\"`: every activated account tab's panes stay connected whatever is focused. A running deck takes a change at its next map read, about ten seconds."
+        }
+      ]
+    },
+    {
       "id": "advanced",
       "title": "Advanced",
       "keys": [
