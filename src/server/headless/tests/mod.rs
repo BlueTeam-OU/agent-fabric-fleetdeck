@@ -4662,6 +4662,7 @@ fn terminal_attach_disconnect_restores_client_shell_pane_size() {
         .state
         .direct_attach_resize_locks
         .contains(&terminal_id));
+    // The attach's 100 columns less its scroll bar gutter.
     assert_eq!(
         server
             .app
@@ -4669,7 +4670,7 @@ fn terminal_attach_disconnect_restores_client_shell_pane_size() {
             .get(&terminal_id)
             .expect("runtime")
             .current_size(),
-        (30, 100)
+        (30, 99)
     );
 
     assert!(server.focus_shell_client_on_tab(1, &second_tab_id));
@@ -6617,12 +6618,13 @@ fn terminal_attach_resize_uses_known_cell_geometry_without_pixel_mouse() {
             cell_height_px: 16,
             pixel_mouse: false,
         }));
+        // 99 of the 100 columns: the last is the attached terminal's scroll bar gutter.
         assert_eq!(
             server
                 .runtime_for_terminal_id_string(&terminal_id)
                 .unwrap()
                 .pixel_size(),
-            Some((800, 480))
+            Some((792, 480))
         );
         assert_eq!(
             server.clients[&1].cell_size,
@@ -6653,6 +6655,70 @@ fn terminal_attach_resize_uses_known_cell_geometry_without_pixel_mouse() {
             crate::kitty_graphics::HostCellSize::default()
         );
         assert!(!server.clients[&1].pixel_mouse);
+    });
+}
+
+#[test]
+fn terminal_attach_frame_keeps_the_attached_terminals_scroll_bar() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let mut bytes = Vec::new();
+        for line in 0..200 {
+            bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+        }
+        server.app.terminal_runtimes.insert(
+            runtime_terminal_id.clone(),
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+        );
+        let (writer, _control, render) = test_client_writer();
+        assert!(!server.handle_server_event(ServerEvent::ClientConnected {
+            client_id: 7,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_mouse: false,
+            writer,
+        }));
+        assert!(
+            server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                client_id: 7,
+                terminal_id: terminal_id.clone(),
+                takeover: false,
+            })
+        );
+        let runtime = |server: &HeadlessServer| {
+            server
+                .runtime_for_terminal_id_string(&terminal_id)
+                .expect("runtime")
+                .current_size()
+        };
+        assert_eq!(runtime(server), (24, 79));
+
+        server.render_and_stream();
+        let ServerMessage::Terminal(frame) =
+            read_server_message(render.recv().expect("attach frame"))
+        else {
+            panic!("expected terminal frame");
+        };
+        let text = String::from_utf8_lossy(&frame.bytes);
+        assert!(text.contains("line 199"), "the terminal's own rows");
+        assert!(text.contains('\u{2590}'), "the focused scroll bar's thumb");
+
+        // On the alternate screen the gutter goes, as a pane's does, and the grid widens.
+        server
+            .runtime_for_terminal_id_string(&terminal_id)
+            .expect("runtime")
+            .test_process_pty_bytes(b"\x1b[?1049h\x1b[2J\x1b[HFULL");
+        server.render_and_stream();
+        assert_eq!(runtime(server), (24, 80));
+        let ServerMessage::Terminal(frame) =
+            read_server_message(render.recv().expect("alternate screen frame"))
+        else {
+            panic!("expected terminal frame");
+        };
+        let text = String::from_utf8_lossy(&frame.bytes);
+        assert!(text.contains("FULL"));
+        assert!(!text.contains('\u{2590}') && !text.contains('\u{2595}'));
     });
 }
 
@@ -7248,7 +7314,8 @@ fn direct_terminal_pixel_mouse_uses_runtime_tracking_and_coordinates() {
                 b"\x1b[?1000h\x1b[?1006h\x1b[?1016h",
                 4,
             );
-        runtime.resize(24, 80, 10, 20);
+        // An 80-column attach on the main screen leaves 79 for the grid and 1 for its scroll bar.
+        runtime.resize(24, 79, 10, 20);
         server
             .app
             .terminal_runtimes

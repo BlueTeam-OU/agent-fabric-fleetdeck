@@ -169,6 +169,8 @@ pub(crate) struct ClientConnection {
     pub(crate) host_sgr_pixels_active: Option<bool>,
     /// Last keyboard protocol state sent to a directly attached terminal client.
     pub(crate) host_keyboard_protocol_active: Option<(u16, u8)>,
+    /// Row offset inside the thumb where a direct attach client's scroll bar drag took hold.
+    pub(crate) attach_scrollbar_grab: Option<u16>,
     /// Presses forwarded by this shell that need release on abrupt teardown.
     shell_held_inputs: HashMap<ClientShellPressId, ClientShellHeldInput>,
     /// Temporary files staged from this client's local clipboard image pastes.
@@ -243,6 +245,7 @@ impl ClientConnection {
             host_mouse_capture_active: None,
             host_sgr_pixels_active: None,
             host_keyboard_protocol_active: None,
+            attach_scrollbar_grab: None,
             shell_held_inputs: HashMap::new(),
             staged_clipboard_files: Vec::new(),
             shell_location: None,

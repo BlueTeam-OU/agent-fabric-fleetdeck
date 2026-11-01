@@ -1400,12 +1400,37 @@ impl HeadlessServer {
         let cell_size = client.cell_size;
         let pixel_mouse = client.pixel_mouse;
         let host_sgr_pixels_active = client.host_sgr_pixels_active == Some(true);
+        let scrollbar_grab = client.attach_scrollbar_grab;
         let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
             return false;
         };
+        let (grid, scrollbar) = crate::server::terminal_attach::attach_layout(
+            runtime,
+            terminal_size.0,
+            terminal_size.1,
+            self.app.state.pane_scrollbars,
+        );
+        let (column, row) = match position {
+            protocol::ClientMousePosition::Cell { column, row }
+            | protocol::ClientMousePosition::Pixels { column, row, .. } => (column, row),
+        };
+        if let Some(grab) = crate::server::terminal_attach::attach_scrollbar_drag(
+            runtime,
+            scrollbar,
+            scrollbar_grab,
+            kind,
+            column,
+            row,
+        ) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_scrollbar_grab = grab;
+            }
+            return true;
+        }
         let Some(position) = terminal_attach_mouse_position(
             runtime,
             terminal_size,
+            grid,
             cell_size,
             pixel_mouse,
             host_sgr_pixels_active,
@@ -1844,10 +1869,26 @@ impl HeadlessServer {
             .state
             .direct_attach_resize_locks
             .insert(real_terminal_id.clone());
+        // A resume that has no runtime yet starts a process on its main screen, so it gets the
+        // main screen's gutter from the start rather than a resize at its first frame.
+        let full = Rect::new(0, 0, cols, rows);
+        let grid_cols = match self.app.terminal_runtimes.get(&real_terminal_id) {
+            Some(runtime) => {
+                crate::server::terminal_attach::attach_layout(
+                    runtime,
+                    cols,
+                    rows,
+                    self.app.state.pane_scrollbars,
+                )
+                .0
+                .width
+            }
+            None => crate::ui::terminal_inner_rect_for(full, self.app.state.pane_scrollbars).width,
+        };
         self.app
-            .start_pending_agent_resume_for_terminal(&real_terminal_id, rows, cols, true);
+            .start_pending_agent_resume_for_terminal(&real_terminal_id, rows, grid_cols, true);
         if let Some(runtime) = self.app.terminal_runtimes.get(&real_terminal_id) {
-            runtime.resize(rows, cols, cell_size.width_px, cell_size.height_px);
+            runtime.resize(rows, grid_cols, cell_size.width_px, cell_size.height_px);
         }
         true
     }
@@ -2217,7 +2258,18 @@ impl HeadlessServer {
                 };
                 if let Some((terminal_id, cell_size)) = direct_terminal_id {
                     if let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) {
-                        runtime.resize(rows, cols, cell_size.width_px, cell_size.height_px);
+                        let (grid, _) = crate::server::terminal_attach::attach_layout(
+                            runtime,
+                            cols,
+                            rows,
+                            self.app.state.pane_scrollbars,
+                        );
+                        runtime.resize(
+                            grid.height,
+                            grid.width,
+                            cell_size.width_px,
+                            cell_size.height_px,
+                        );
                     }
                     return true;
                 }

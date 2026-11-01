@@ -735,6 +735,7 @@ impl HeadlessServer {
                 }
             }
             let mut surface_parts = None;
+            let owns_attach_geometry = matches!(mode, ClientConnectionMode::TerminalAttach { .. });
             let frame = match mode {
                 ClientConnectionMode::ClientShell => {
                     let crate::server::client_shell::RenderedPaneSurface {
@@ -778,15 +779,48 @@ impl HeadlessServer {
                         }
                         continue;
                     }
+                    let (inner, scrollbar) = crate::server::terminal_attach::attach_layout(
+                        runtime,
+                        cols,
+                        rows,
+                        self.app.state.pane_scrollbars,
+                    );
+                    // The gutter comes and goes with the alternate screen, as a pane's does
+                    // in compute_view; only the attach owner sets the grid, observers follow.
+                    if owns_attach_geometry && runtime.current_size() != (inner.height, inner.width)
+                    {
+                        runtime.resize(
+                            inner.height,
+                            inner.width,
+                            cell_size.width_px,
+                            cell_size.height_px,
+                        );
+                    }
                     let render_started = crate::render_prof::timer();
-                    let (buffer, cursor) =
-                        crate::server::render_stream::render_terminal_virtual(runtime, area);
+                    let (inner_buffer, cursor) =
+                        crate::server::render_stream::render_terminal_virtual(runtime, inner);
+                    let mut buffer = ratatui::buffer::Buffer::empty(area);
+                    buffer.merge(&inner_buffer);
+                    if let (Some(track), Some(metrics)) = (scrollbar, runtime.scroll_metrics()) {
+                        let focused = self
+                            .clients
+                            .get(&client_id)
+                            .and_then(|client| client.outer_terminal_focus)
+                            .unwrap_or(true);
+                        crate::ui::render_pane_scrollbar_buffer(
+                            &mut buffer,
+                            metrics,
+                            track,
+                            &self.app.state.palette,
+                            focused,
+                        );
+                    }
                     crate::render_prof::duration_since(
                         "full_render.render_terminal_virtual",
                         render_started,
                     );
                     let hyperlinks_started = crate::render_prof::timer();
-                    let hyperlinks = runtime.visible_hyperlinks(area);
+                    let hyperlinks = runtime.visible_hyperlinks(inner);
                     crate::render_prof::duration_since(
                         "full_render.visible_hyperlinks",
                         hyperlinks_started,
