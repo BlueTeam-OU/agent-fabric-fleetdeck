@@ -936,6 +936,9 @@ pub(crate) struct ClientShellState {
     pub(super) replaying_url_click: bool,
     pub(super) selection: Option<crate::selection::Selection<String>>,
     pub(super) last_pane_click: Option<ClientPaneClick>,
+    /// The select-modifier press kept from a mouse-reporting program. If it
+    /// ends as a click with no motion, the program gets it with the release.
+    pub(super) held_select_press: Option<(PaneHit, crossterm::event::MouseEvent)>,
     pub(super) selection_autoscroll: Option<ClientSelectionAutoscroll>,
     pub(super) selection_autoscroll_deadline: Option<std::time::Instant>,
     pub(super) selection_highlight_clear_deadline: Option<std::time::Instant>,
@@ -1124,6 +1127,7 @@ impl ClientShellState {
             replaying_url_click: false,
             selection: None,
             last_pane_click: None,
+            held_select_press: None,
             selection_autoscroll: None,
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
@@ -1320,6 +1324,7 @@ impl ClientShellState {
         self.replaying_url_click = false;
         self.selection = None;
         self.last_pane_click = None;
+        self.held_select_press = None;
         self.selection_autoscroll = None;
         self.selection_autoscroll_deadline = None;
         self.selection_highlight_clear_deadline = None;
@@ -1505,6 +1510,7 @@ impl ClientShellState {
             self.selection_highlight_clear_deadline = None;
             self.word_selection_gesture = None;
             self.last_pane_click = None;
+            self.held_select_press = None;
         }
         if let Some(copy_pane_id) = self
             .copy_mode
@@ -1728,6 +1734,7 @@ impl ClientShellState {
             }
             self.selection = None;
             self.last_pane_click = None;
+            self.held_select_press = None;
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;

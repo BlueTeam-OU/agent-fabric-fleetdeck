@@ -1774,8 +1774,19 @@ impl ClientShellState {
                 .as_ref()
                 .is_some_and(crate::selection::Selection::is_just_click)
             {
-                self.selection = None;
+                let pane_id = self.selection.take().map(|selection| selection.pane_id);
+                // A select-modifier click that never moved selected nothing:
+                // it was a click meant for the program, so it gets one.
+                if let Some((hit, press)) = self
+                    .held_select_press
+                    .take()
+                    .filter(|(hit, _)| Some(&hit.pane_id) == pane_id.as_ref())
+                {
+                    self.push_pane_mouse_event(&hit, press, press.modifiers, outcome);
+                    self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
+                }
             }
+            self.held_select_press = None;
             if copied {
                 self.last_pane_click = None;
             }
@@ -1942,6 +1953,7 @@ impl ClientShellState {
                 self.selection_highlight_clear_deadline = None;
                 self.word_selection_gesture = None;
                 let previous_pane_click = self.last_pane_click.take();
+                self.held_select_press = None;
                 self.workspace_press = None;
                 self.tab_press = None;
                 self.chrome_drag = None;
@@ -2266,6 +2278,9 @@ impl ClientShellState {
                             last_event: mouse,
                         });
                     } else if super::contains(hit.inner_rect, point) {
+                        if hit.mouse_reporting {
+                            self.held_select_press = Some((hit.clone(), mouse));
+                        }
                         let click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
                             viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),

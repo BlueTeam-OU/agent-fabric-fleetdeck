@@ -549,6 +549,20 @@ mod tests {
     }
 
     #[test]
+    fn live_reload_applies_the_mouse_select_modifier() {
+        let mut shell = ClientShellConfig::from_config(&Config::default());
+        assert_eq!(shell.mouse_select_modifiers, Some(KeyModifiers::ALT));
+        let next: Config = toml::from_str("[ui]\nmouse_select_modifier = \"super\"").unwrap();
+
+        assert!(shell.apply_live_config(&next, &[], &[]).is_empty());
+        assert_eq!(shell.mouse_select_modifiers, Some(KeyModifiers::SUPER));
+
+        let off: Config = toml::from_str("[ui]\nmouse_select_modifier = \"off\"").unwrap();
+        shell.apply_live_config(&off, &[], &[]);
+        assert_eq!(shell.mouse_select_modifiers, None);
+    }
+
+    #[test]
     fn initial_surface_size_uses_persisted_endpoint_chrome() {
         let path = std::env::temp_dir().join(format!(
             "herdr-initial-shell-preferences-{}.json",

@@ -1378,3 +1378,77 @@ fn plain_drag_in_a_mouse_reporting_pane_still_reaches_the_program() {
     assert!(state.selection.is_none());
     assert!(state.pane_mouse_gesture.is_none());
 }
+
+fn assert_left_gesture_reaches_program(
+    outcome: &ClientShellInput,
+    kinds: &[crate::protocol::ClientMouseKind],
+    modifiers: KeyModifiers,
+) {
+    let events: Vec<_> = outcome
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ClientMessage::ClientShellPaneInput { pane_id, events } if pane_id == "pane_1" => {
+                Some(events.iter())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(events.len(), kinds.len(), "{events:?}");
+    for (event, kind) in events.iter().zip(kinds) {
+        assert!(
+            matches!(
+                event,
+                ClientPaneInputEvent::Mouse { kind: got, modifiers: bits, .. }
+                    if got == kind && *bits == modifiers.bits()
+            ),
+            "{event:?} is not {kind:?} with {modifiers:?}"
+        );
+    }
+}
+
+#[test]
+fn select_modifier_click_without_motion_reaches_the_program_on_release() {
+    use crate::protocol::{ClientMouseButton, ClientMouseKind};
+    let (mut state, pane) = reporting_pane_state();
+    let [down, _, mut up] = left_gesture(&pane, KeyModifiers::ALT);
+    up.column = down.column;
+
+    let press = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+    assert_eq!(
+        pane_input_count(&press),
+        0,
+        "the press waits for its outcome"
+    );
+    let release = state.handle_raw_events(vec![RawInputEvent::Mouse(up)]);
+
+    assert_left_gesture_reaches_program(
+        &release,
+        &[
+            ClientMouseKind::Down(ClientMouseButton::Left),
+            ClientMouseKind::Up(ClientMouseButton::Left),
+        ],
+        KeyModifiers::ALT,
+    );
+    assert!(state.selection.is_none());
+    assert!(state.held_select_press.is_none());
+}
+
+#[test]
+fn a_drag_with_more_modifiers_than_the_select_modifier_reaches_the_program() {
+    use crate::protocol::{ClientMouseButton, ClientMouseKind};
+    let (mut state, pane) = reporting_pane_state();
+    let modifiers = KeyModifiers::ALT | KeyModifiers::SUPER;
+    let [down, drag, up] = left_gesture(&pane, modifiers);
+
+    for (event, kind) in [
+        (down, ClientMouseKind::Down(ClientMouseButton::Left)),
+        (drag, ClientMouseKind::Drag(ClientMouseButton::Left)),
+        (up, ClientMouseKind::Up(ClientMouseButton::Left)),
+    ] {
+        let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(event)]);
+        assert_left_gesture_reaches_program(&outcome, &[kind], modifiers);
+    }
+    assert!(state.selection.is_none());
+}
