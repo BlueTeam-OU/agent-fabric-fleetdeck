@@ -40,7 +40,6 @@ STUBS = {
         server)
             echo started >> "$STUB_DIR/servers"
             echo "$SSH_AUTH_SOCK" >> "$STUB_DIR/server.agent"
-            echo $$ >> "$STUB_DIR/server.pid"
             exec "$PYTHON" -c 'import socket,os,time
 s=socket.socket(socket.AF_UNIX); s.bind(os.environ["STUB_SOCK"]); s.listen(8)
 while True: c,_=s.accept(); c.close()'
@@ -65,6 +64,24 @@ def alive(pid: int) -> bool:
 def stat_fields(pid: int) -> list[str]:
     with open(f"/proc/{pid}/stat") as handle:
         return handle.read().rsplit(")", 1)[1].split()
+
+
+def stub_processes(stub_dir: str) -> list[int]:
+    """This login's live processes whose environment names `stub_dir` as
+    STUB_DIR. A zombie's environ reads empty, so it is never listed; nor is
+    this process, whose /proc environ is the one it started with."""
+    marker = b"STUB_DIR=" + os.fsencode(stub_dir)
+    found = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit() or int(name) == os.getpid():
+            continue
+        try:
+            with open(f"/proc/{name}/environ", "rb") as handle:
+                if marker in handle.read().split(b"\0"):
+                    found.append(int(name))
+        except OSError:     # another login's, or gone meanwhile
+            pass
+    return found
 
 
 def until(probe, seconds=10.0):
@@ -98,6 +115,7 @@ class FleetDeckTest(unittest.TestCase):
         # A Unix socket path is limited to 108 bytes: keep it short.
         runtime = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
         self.sock_dir = tempfile.mkdtemp(prefix="fd-", dir=runtime)
+        self.addCleanup(self.clean)
         env = {
             "PATH": bin_dir + os.pathsep + os.environ["PATH"],
             "XDG_STATE_HOME": os.path.join(self.dir, "state"),
@@ -117,29 +135,26 @@ class FleetDeckTest(unittest.TestCase):
         for name in ("HERDR_ENV", "HERDR_POPUP", "HERDR_SOCKET_PATH", "HERDR_SESSION",
                      "AGENT_FABRIC_FLEETDECK"):
             os.environ.pop(name, None)
-        self.addCleanup(self.clean)
         self.said = []
         # Only passed on: no test here reaches it through ssh.
         self.agent = os.path.join(self.sock_dir, "agent")
 
     def clean(self):
         # Nothing a run started outlives it: the deck, its stream, the server.
-        holder = lock_holder(lock_path())
-        if holder:
-            os.kill(holder, signal.SIGKILL)
-        for name in ("stream.pid", "server.pid"):
-            try:
-                with open(os.path.join(self.dir, name)) as handle:
-                    pids = [int(line) for line in handle.read().split()]
-            except FileNotFoundError:
-                continue
-            for pid in pids:
+        # They are found by the STUB_DIR they inherited, not by stream.pid or
+        # the lock: a stream the deck spawned just before it was killed has
+        # not written its pid yet, and would write it after rmtree had looked.
+        deadline = time.monotonic() + 10
+        while (left := stub_processes(self.dir)) and time.monotonic() < deadline:
+            for pid in left:
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+            time.sleep(0.05)
         shutil.rmtree(self.dir, ignore_errors=True)
         shutil.rmtree(self.sock_dir, ignore_errors=True)
+        self.assertEqual(left, [], f"processes of {self.dir} outlived their test")
 
     def say(self, line):
         self.said.append(line)
