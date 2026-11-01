@@ -6618,13 +6618,12 @@ fn terminal_attach_resize_uses_known_cell_geometry_without_pixel_mouse() {
             cell_height_px: 16,
             pixel_mouse: false,
         }));
-        // 99 of the 100 columns: the last is the attached terminal's scroll bar gutter.
         assert_eq!(
             server
                 .runtime_for_terminal_id_string(&terminal_id)
                 .unwrap()
                 .pixel_size(),
-            Some((792, 480))
+            Some((800, 480))
         );
         assert_eq!(
             server.clients[&1].cell_size,
@@ -7258,6 +7257,132 @@ fn direct_terminal_mouse_uses_runtime_protocol_encoding() {
 }
 
 #[test]
+fn terminal_control_client_keeps_the_whole_grid_without_a_scroll_bar() {
+    with_terminal_session_test_server(
+        |server, runtime_terminal_id, terminal_id, public_pane_id| {
+            let mut bytes = Vec::new();
+            for line in 0..200 {
+                bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+            }
+            server.app.terminal_runtimes.insert(
+                runtime_terminal_id,
+                crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+            );
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: public_pane_id,
+                    takeover: false,
+                })
+            );
+            // A session control bridge's viewport is its program's grid, every column of it.
+            assert_eq!(
+                server
+                    .runtime_for_terminal_id_string(&terminal_id)
+                    .expect("runtime")
+                    .current_size(),
+                (30, 100)
+            );
+            assert!(!server.attach_client_scroll_bar(7));
+        },
+    );
+}
+
+#[test]
+fn direct_attach_gutter_routes_wheel_press_and_release() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let mut bytes = Vec::new();
+        for line in 0..80 {
+            bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
+        }
+        bytes.extend_from_slice(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80, 24, 4096, &bytes, 4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        // 81 columns: an 80-column grid and the gutter at column 80.
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+        let wheel = |server: &mut HeadlessServer, column| {
+            server.handle_server_event(ServerEvent::ClientAttachScroll {
+                client_id: 1,
+                source: AttachScrollSource::Wheel,
+                direction: AttachScrollDirection::Up,
+                lines: 1,
+                column: Some(column),
+                row: Some(5),
+                modifiers: 0,
+            })
+        };
+
+        // A wheel over the gutter reaches no program; inside the grid it does.
+        assert!(!wheel(server, 80));
+        assert!(input_rx.try_recv().is_err());
+        assert!(wheel(server, 10));
+        let report = input_rx.try_recv().expect("wheel report inside the grid");
+        assert!(report.starts_with(b"\x1b[<64;11;6M"), "{report:?}");
+
+        // A press in the grid released over the gutter ends at the program's last column.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx.try_recv().expect("clamped release"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Moved, 80));
+        assert!(input_rx.try_recv().is_err());
+
+        // A press off the track ends a drag whose release was lost.
+        server
+            .clients
+            .get_mut(&1)
+            .expect("client")
+            .attach_scrollbar_grab = Some(0);
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert_eq!(server.clients[&1].attach_scrollbar_grab, None);
+        assert!(mouse(server, protocol::ClientMouseKind::Drag(left), 12));
+        assert_eq!(
+            input_rx.try_recv().expect("drag reaches the program"),
+            Bytes::from_static(b"\x1b[<32;13;6M")
+        );
+    });
+}
+
+#[test]
 fn direct_terminal_mouse_sends_nothing_without_mouse_reporting() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         // A plain shell never enabled mouse reporting, so a controller's click
@@ -7339,6 +7464,7 @@ fn direct_terminal_pixel_mouse_uses_runtime_tracking_and_coordinates() {
         let client = server.clients.get_mut(&1).expect("direct attach client");
         client.pixel_mouse = true;
         client.host_sgr_pixels_active = Some(true);
+        client.attach_scroll_bar = true;
 
         assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
             client_id: 1,

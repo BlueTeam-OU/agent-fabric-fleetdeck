@@ -171,6 +171,10 @@ pub(crate) struct ClientConnection {
     pub(crate) host_keyboard_protocol_active: Option<(u16, u8)>,
     /// Row offset inside the thumb where a direct attach client's scroll bar drag took hold.
     pub(crate) attach_scrollbar_grab: Option<u16>,
+    /// Whether this direct attach shows the attached terminal's scroll bar: a person's
+    /// `terminal attach` does; a `terminal session control` bridge keeps the whole grid and
+    /// every cell's mouse events, as its protocol documents.
+    pub(crate) attach_scroll_bar: bool,
     /// Presses forwarded by this shell that need release on abrupt teardown.
     shell_held_inputs: HashMap<ClientShellPressId, ClientShellHeldInput>,
     /// Temporary files staged from this client's local clipboard image pastes.
@@ -246,6 +250,7 @@ impl ClientConnection {
             host_sgr_pixels_active: None,
             host_keyboard_protocol_active: None,
             attach_scrollbar_grab: None,
+            attach_scroll_bar: false,
             shell_held_inputs: HashMap::new(),
             staged_clipboard_files: Vec::new(),
             shell_location: None,

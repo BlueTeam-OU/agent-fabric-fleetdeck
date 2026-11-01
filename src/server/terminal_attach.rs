@@ -31,7 +31,7 @@ pub(crate) fn attach_layout(
 /// Applies a direct attach client's pointer event to the attached terminal's scroll bar, as the
 /// shell's pane scroll bar takes it: a left press on the thumb grabs it, a press elsewhere on the
 /// track jumps there, a drag follows the pointer even off the track, a release ends it.
-/// `Some(next grab)` when the bar took the event; `None` when it belongs to the terminal.
+/// `Some(next grab)` when the bar took the event; `None` when it did not.
 pub(crate) fn attach_scrollbar_drag(
     runtime: &crate::terminal::TerminalRuntime,
     track: Option<ratatui::layout::Rect>,
@@ -69,9 +69,39 @@ pub(crate) fn attach_scrollbar_drag(
             Some(grab)
         }
         ClientMouseKind::Up(ClientMouseButton::Left) if grab.is_some() => Some(None),
-        // Any other event on the gutter lands on no terminal cell.
-        _ if on_track.is_some() => Some(grab),
+        // Everything else is the grid's or the gutter's (gutter_route), track or no track.
         _ => None,
+    }
+}
+
+/// Where a pointer event off the scroll bar goes, for an attach whose grid is `grid_width` wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GutterRoute {
+    /// Inside the grid: the attached terminal takes it as it is.
+    Terminal,
+    /// A drag or release over the gutter: the press began in the grid, so the program gets it
+    /// at its last column, or it would be left with a button it never saw released.
+    Clamp(u16),
+    /// Anything else over the gutter lands on no terminal cell. Judged by the grid rather than
+    /// the runtime's width, which lags one frame behind a return to the main screen.
+    Drop,
+}
+
+pub(crate) fn gutter_route(
+    kind: crate::protocol::ClientMouseKind,
+    column: u16,
+    grid_width: u16,
+) -> GutterRoute {
+    use crate::protocol::ClientMouseKind;
+
+    if column < grid_width {
+        return GutterRoute::Terminal;
+    }
+    match kind {
+        ClientMouseKind::Drag(_) | ClientMouseKind::Up(_) if grid_width > 0 => {
+            GutterRoute::Clamp(grid_width - 1)
+        }
+        _ => GutterRoute::Drop,
     }
 }
 
@@ -97,6 +127,35 @@ mod tests {
         drop(runtime);
         drop(_guard);
         rt.shutdown_timeout(std::time::Duration::from_millis(100));
+    }
+
+    #[test]
+    fn gutter_route_keeps_a_grid_press_released_over_the_gutter() {
+        let left = ClientMouseButton::Left;
+        assert_eq!(
+            gutter_route(ClientMouseKind::Down(left), 79, 80),
+            GutterRoute::Terminal
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Up(left), 80, 80),
+            GutterRoute::Clamp(79)
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Drag(left), 80, 80),
+            GutterRoute::Clamp(79)
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Down(left), 80, 80),
+            GutterRoute::Drop
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Moved, 80, 80),
+            GutterRoute::Drop
+        );
+        assert_eq!(
+            gutter_route(ClientMouseKind::Up(left), 0, 0),
+            GutterRoute::Drop
+        );
     }
 
     #[test]
@@ -160,7 +219,7 @@ mod tests {
                 Some(None)
             );
 
-            // The terminal keeps its own cells; the gutter swallows what it does not use.
+            // The bar takes only its own left press, drag and release.
             assert_eq!(
                 attach_scrollbar_drag(runtime, track, None, ClientMouseKind::Down(left), 3, 2),
                 None
@@ -178,7 +237,7 @@ mod tests {
                     20,
                     2
                 ),
-                Some(None)
+                None
             );
             assert_eq!(
                 attach_scrollbar_drag(runtime, None, None, ClientMouseKind::Down(left), 20, 2),

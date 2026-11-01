@@ -783,7 +783,7 @@ impl HeadlessServer {
                         runtime,
                         cols,
                         rows,
-                        self.app.state.pane_scrollbars,
+                        self.attach_client_scroll_bar(client_id),
                     );
                     // The gutter comes and goes with the alternate screen, as a pane's does
                     // in compute_view; only the attach owner sets the grid, observers follow.
