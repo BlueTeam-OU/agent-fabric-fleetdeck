@@ -1345,7 +1345,25 @@ impl HeadlessServer {
             return false;
         };
 
-        self.attach_terminal_client(client_id, terminal_id, takeover)
+        self.attach_terminal_client(client_id, terminal_id, takeover, false)
+    }
+
+    /// Whether a direct terminal client's area keeps a scroll bar gutter. An observer follows
+    /// the attach owner, whose grid it shows; with no owner the grid is the shell pane's.
+    fn attach_client_scroll_bar(&self, client_id: u64) -> bool {
+        let Some(client) = self.clients.get(&client_id) else {
+            return false;
+        };
+        let shows = match &client.mode {
+            ClientConnectionMode::TerminalAttach { .. } => client.attach_scroll_bar,
+            ClientConnectionMode::TerminalObserve { terminal_id } => self
+                .terminal_attach_owners
+                .get(terminal_id)
+                .and_then(|owner| self.clients.get(owner))
+                .is_some_and(|owner| owner.attach_scroll_bar),
+            _ => false,
+        };
+        shows && self.app.state.pane_scrollbars
     }
 
     fn handle_terminal_attach_scroll(
@@ -1358,8 +1376,10 @@ impl HeadlessServer {
         row: Option<u16>,
         modifiers: u8,
     ) -> bool {
+        let gutter = self.attach_client_scroll_bar(client_id);
         let Some(ClientConnection {
             mode: ClientConnectionMode::TerminalAttach { terminal_id },
+            terminal_size,
             ..
         }) = self.clients.get(&client_id)
         else {
@@ -1368,6 +1388,17 @@ impl HeadlessServer {
         let Some(runtime) = self.runtime_for_terminal_id_string(terminal_id) else {
             return false;
         };
+        // A wheel over the scroll bar reaches no pane in the shell either.
+        let (grid, _) = crate::server::terminal_attach::attach_layout(
+            runtime,
+            terminal_size.0,
+            terminal_size.1,
+            gutter,
+        );
+        let cells = grid.width.min(runtime.current_size().1);
+        if matches!(source, AttachScrollSource::Wheel) && column.is_some_and(|c| c >= cells) {
+            return false;
+        }
 
         if let Err(err) =
             apply_terminal_attach_scroll(runtime, source, direction, lines, column, row, modifiers)
@@ -1389,6 +1420,7 @@ impl HeadlessServer {
         if self.handoff_in_progress {
             return false;
         }
+        let gutter = self.attach_client_scroll_bar(client_id);
         let Some(client) = self.clients.get(&client_id) else {
             return false;
         };
@@ -1400,12 +1432,82 @@ impl HeadlessServer {
         let cell_size = client.cell_size;
         let pixel_mouse = client.pixel_mouse;
         let host_sgr_pixels_active = client.host_sgr_pixels_active == Some(true);
+        let scrollbar_grab = client.attach_scrollbar_grab;
+        let program_held = client.attach_program_held;
         let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
             return false;
+        };
+        let (grid, scrollbar) = crate::server::terminal_attach::attach_layout(
+            runtime,
+            terminal_size.0,
+            terminal_size.1,
+            gutter,
+        );
+        let (column, row) = match position {
+            protocol::ClientMousePosition::Cell { column, row }
+            | protocol::ClientMousePosition::Pixels { column, row, .. } => (column, row),
+        };
+        // A press anywhere off the track ends any drag whose release never arrived, so a lost
+        // release cannot keep later drags from the program.
+        let on_track = scrollbar.is_some_and(|track| column == track.x);
+        let scrollbar_grab = if matches!(kind, protocol::ClientMouseKind::Down(_)) && !on_track {
+            None
+        } else {
+            scrollbar_grab
+        };
+        if scrollbar_grab.is_none() {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_scrollbar_grab = None;
+            }
+        }
+        let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
+            return false;
+        };
+        if let Some(grab) = crate::server::terminal_attach::attach_scrollbar_drag(
+            runtime,
+            scrollbar,
+            scrollbar_grab,
+            kind,
+            column,
+            row,
+        ) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_scrollbar_grab = grab;
+            }
+            return true;
+        }
+        let cells = grid.width.min(runtime.current_size().1);
+        let bit = crate::server::terminal_attach::button_bit(kind);
+        // A session control bridge has no bar to take a press from the program, and its
+        // protocol sends every cell's events, a drag or release without its press included.
+        let route = crate::server::terminal_attach::gutter_route(
+            kind,
+            column,
+            cells,
+            !gutter || program_held & bit != 0,
+        );
+        // A release ends its button's press whatever becomes of it; a press counts only once
+        // it has been written to the program, below.
+        if matches!(kind, protocol::ClientMouseKind::Up(_)) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_program_held &= !bit;
+            }
+        }
+        let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
+            return false;
+        };
+        let (position, geometry) = match route {
+            crate::server::terminal_attach::GutterRoute::Terminal => (position, geometry),
+            crate::server::terminal_attach::GutterRoute::Clamp(last) => (
+                protocol::ClientMousePosition::Cell { column: last, row },
+                None,
+            ),
+            crate::server::terminal_attach::GutterRoute::Drop => return false,
         };
         let Some(position) = terminal_attach_mouse_position(
             runtime,
             terminal_size,
+            grid,
             cell_size,
             pixel_mouse,
             host_sgr_pixels_active,
@@ -1421,8 +1523,14 @@ impl HeadlessServer {
             modifiers,
             lines: lines.max(1),
         };
+        // With reporting off a press encodes to nothing, though the apply succeeds.
+        let reported = runtime.mouse_reporting_enabled();
         if let Err(err) = apply_client_pane_input_events(runtime, &[event]) {
             warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach mouse input failed");
+        } else if reported && matches!(kind, protocol::ClientMouseKind::Down(_)) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_program_held |= bit;
+            }
         }
         true
     }
@@ -1752,6 +1860,7 @@ impl HeadlessServer {
         client_id: u64,
         terminal_id: String,
         takeover: bool,
+        scroll_bar: bool,
     ) -> bool {
         if !self.client_is_pending_terminal_mode(client_id) {
             self.send_to_client(
@@ -1830,6 +1939,9 @@ impl HeadlessServer {
         client.mode = ClientConnectionMode::TerminalAttach {
             terminal_id: terminal_id.clone(),
         };
+        client.attach_scroll_bar = scroll_bar;
+        client.attach_scrollbar_grab = None;
+        client.attach_program_held = 0;
         client.render_state.reset_baseline();
         client.last_activity = stamp;
         let was_foreground = self.foreground_client_id == Some(client_id);
@@ -1844,10 +1956,22 @@ impl HeadlessServer {
             .state
             .direct_attach_resize_locks
             .insert(real_terminal_id.clone());
+        // A resume that has no runtime yet starts a process on its main screen, so it gets the
+        // main screen's gutter from the start rather than a resize at its first frame.
+        let full = Rect::new(0, 0, cols, rows);
+        let gutter = self.attach_client_scroll_bar(client_id);
+        let grid_cols = match self.app.terminal_runtimes.get(&real_terminal_id) {
+            Some(runtime) => {
+                crate::server::terminal_attach::attach_layout(runtime, cols, rows, gutter)
+                    .0
+                    .width
+            }
+            None => crate::ui::terminal_inner_rect_for(full, gutter).width,
+        };
         self.app
-            .start_pending_agent_resume_for_terminal(&real_terminal_id, rows, cols, true);
+            .start_pending_agent_resume_for_terminal(&real_terminal_id, rows, grid_cols, true);
         if let Some(runtime) = self.app.terminal_runtimes.get(&real_terminal_id) {
-            runtime.resize(rows, cols, cell_size.width_px, cell_size.height_px);
+            runtime.resize(rows, grid_cols, cell_size.width_px, cell_size.height_px);
         }
         true
     }
@@ -2064,7 +2188,7 @@ impl HeadlessServer {
                 client_id,
                 terminal_id,
                 takeover,
-            } => self.attach_terminal_client(client_id, terminal_id, takeover),
+            } => self.attach_terminal_client(client_id, terminal_id, takeover, true),
             ServerEvent::ClientObserveTerminal { client_id, target } => {
                 self.observe_terminal_client(client_id, target)
             }
@@ -2216,8 +2340,17 @@ impl HeadlessServer {
                     None
                 };
                 if let Some((terminal_id, cell_size)) = direct_terminal_id {
+                    let gutter = self.attach_client_scroll_bar(client_id);
                     if let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) {
-                        runtime.resize(rows, cols, cell_size.width_px, cell_size.height_px);
+                        let (grid, _) = crate::server::terminal_attach::attach_layout(
+                            runtime, cols, rows, gutter,
+                        );
+                        runtime.resize(
+                            grid.height,
+                            grid.width,
+                            cell_size.width_px,
+                            cell_size.height_px,
+                        );
                     }
                     return true;
                 }

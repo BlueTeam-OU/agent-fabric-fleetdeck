@@ -37,7 +37,7 @@ fn terminal_inner_rect(rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: 
     terminal_inner_rect_for(pane_inner, pane_scrollbars && !rt.alternate_screen_active())
 }
 
-fn terminal_inner_rect_for(pane_inner: Rect, scrollbar_gutter: bool) -> Rect {
+pub(crate) fn terminal_inner_rect_for(pane_inner: Rect, scrollbar_gutter: bool) -> Rect {
     if !scrollbar_gutter || pane_inner.width <= 4 {
         return pane_inner;
     }
@@ -287,7 +287,9 @@ fn runtime_for_tab_pane<'a>(
         .map(|runtime| (terminal_id, runtime))
 }
 
-fn stable_scrollbar_gutter(
+/// The terminal grid and the scroll bar track inside `pane_inner`. A direct terminal attach
+/// uses this too, so an attached terminal gets the same gutter and bar as the pane would.
+pub(crate) fn stable_scrollbar_gutter(
     rt: &TerminalRuntime,
     pane_inner: Rect,
     pane_scrollbars: bool,

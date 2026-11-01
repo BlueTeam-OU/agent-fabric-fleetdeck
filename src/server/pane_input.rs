@@ -41,6 +41,7 @@ pub(super) fn downgrade_ineligible_pixel_mouse(
 pub(super) fn terminal_attach_mouse_position(
     runtime: &crate::terminal::TerminalRuntime,
     terminal_size: (u16, u16),
+    grid: ratatui::layout::Rect,
     cell_size: crate::kitty_graphics::HostCellSize,
     pixel_mouse: bool,
     host_sgr_pixels_active: bool,
@@ -78,7 +79,7 @@ pub(super) fn terminal_attach_mouse_position(
             || !host_sgr_pixels_active
             || !runtime.sgr_pixel_mouse_enabled()
             || terminal_size != (geometry.cols, geometry.rows)
-            || runtime_size != (geometry.rows, geometry.cols)
+            || runtime_size != (grid.height, grid.width)
             || !cell_size.is_known()
             || average_width != cell_size.width_px
             || average_height != cell_size.height_px
@@ -90,11 +91,7 @@ pub(super) fn terminal_attach_mouse_position(
             y,
             geometry: host_geometry,
         })
-        .pane_position(
-            ratatui::layout::Rect::new(0, 0, geometry.cols, geometry.rows),
-            child_width_px,
-            child_height_px,
-        )?
+        .pane_position(grid, child_width_px, child_height_px)?
         else {
             return None;
         };
@@ -382,6 +379,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (20, 5),
+                ratatui::layout::Rect::new(0, 0, 20, 5),
                 crate::kitty_graphics::HostCellSize {
                     width_px: 10,
                     height_px: 20,
@@ -402,6 +400,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (20, 5),
+                ratatui::layout::Rect::new(0, 0, 20, 5),
                 crate::kitty_graphics::HostCellSize {
                     width_px: 10,
                     height_px: 20,
@@ -427,6 +426,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (80, 24),
+                ratatui::layout::Rect::new(0, 0, 20, 5),
                 crate::kitty_graphics::HostCellSize::default(),
                 false,
                 false,
