@@ -7,6 +7,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "experimental",
+    "fleet_deck",
     "keys",
     "onboarding",
     "remote",
@@ -418,6 +419,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.remote = section,
+    );
+    load_live_section(
+        table,
+        "fleet_deck",
+        "fleet deck config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.fleet_deck = section,
     );
 
     diagnostics.extend(config.theme.diagnostics());
@@ -1152,6 +1161,97 @@ mouse_captur = true
         let _ = std::fs::remove_file(path);
 
         assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
+    }
+
+    fn load_startup_config(name: &str, content: &str) -> LoadedConfig {
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let path =
+            std::env::temp_dir().join(format!("herdr-config-{name}-{}.toml", std::process::id()));
+        std::fs::write(&path, content).unwrap();
+        std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
+        let loaded = Config::load();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
+        loaded
+    }
+
+    #[test]
+    fn the_fleet_decks_tabs_setting_is_known_in_both_words() {
+        for word in ["focus", "all"] {
+            let content = format!("[fleet_deck]\ntabs = \"{word}\"\n");
+            let loaded = load_startup_config("fleet-deck-tabs", &content);
+            assert!(
+                loaded.diagnostics.is_empty(),
+                "{word}: {:?}",
+                loaded.diagnostics
+            );
+            let live = load_live_config_from_str(&content).unwrap();
+            assert!(
+                live.diagnostics.is_empty(),
+                "{word}: {:?}",
+                live.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_fleet_deck_tabs_value_is_said_and_keeps_the_rest_of_the_file() {
+        for value in ["\"every\"", "true"] {
+            let content =
+                format!("[fleet_deck]\ntabs = {value}\n[ui.toast]\ndelivery = \"system\"\n");
+            let loaded = load_startup_config("fleet-deck-tabs-wrong", &content);
+            assert_eq!(
+                loaded.diagnostics.len(),
+                1,
+                "{value}: {:?}",
+                loaded.diagnostics
+            );
+            assert!(
+                loaded.diagnostics[0].starts_with("fleet_deck.tabs must be"),
+                "{:?}",
+                loaded.diagnostics
+            );
+            assert_eq!(
+                loaded.config.ui.toast.delivery,
+                super::super::ToastDelivery::System,
+                "{value}: the file is not dropped to defaults"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fleet_deck_that_is_no_section_or_has_an_unknown_key_is_said_and_keeps_the_rest() {
+        for (content, said) in [
+            ("fleet_deck = \"all\"\n", "fleet_deck must be a section"),
+            (
+                "[fleet_deck]\ntab = \"all\"\n",
+                "unknown config key fleet_deck.tab",
+            ),
+        ] {
+            let content = format!("{content}[ui.toast]\ndelivery = \"system\"\n");
+            let loaded = load_startup_config("fleet-deck-shape", &content);
+            assert_eq!(
+                loaded.diagnostics.len(),
+                1,
+                "{content}: {:?}",
+                loaded.diagnostics
+            );
+            assert!(
+                loaded.diagnostics[0].starts_with(said),
+                "{:?}",
+                loaded.diagnostics
+            );
+            assert_eq!(
+                loaded.config.ui.toast.delivery,
+                super::super::ToastDelivery::System,
+                "{content}: the file is not dropped to defaults"
+            );
+            let live = load_live_config_from_str(&content).unwrap();
+            assert_eq!(
+                live.config.ui.toast.delivery,
+                super::super::ToastDelivery::System
+            );
+        }
     }
 
     #[test]

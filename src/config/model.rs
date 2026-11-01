@@ -326,6 +326,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub fleet_deck: FleetDeckConfig,
 }
 
 #[derive(Debug)]
@@ -1138,6 +1139,50 @@ pub struct RemoteConfig {
     /// Add keepalive fallbacks and private connection reuse for `herdr --remote`.
     /// Set false to run plain ssh unchanged. Default: true.
     pub manage_ssh_config: bool,
+}
+
+/// `[fleet_deck]`: what the fleet deck (`fleet-deck/fabric_deck.py`) reads
+/// from this file. The server uses none of it; it is declared so `config
+/// check` knows the section and says when a value is not one the deck takes.
+/// Deserialized from any value, never failing: a wrong shape anywhere in it
+/// (`fleet_deck = "all"`, `tabs = true`) is a diagnostic, never a parse
+/// error that would drop the whole file to defaults.
+#[derive(Debug, Default)]
+pub struct FleetDeckConfig {
+    /// `"focus"` (default): an account tab's panes connect only while it is
+    /// focused. `"all"`: every account tab's stay connected.
+    pub tabs: Option<toml::Value>,
+    /// The section as written when it is not a table.
+    not_a_table: Option<toml::Value>,
+    /// Keys of the table other than `tabs`, as the derived sections'
+    /// serde_ignored pass would have named them.
+    unknown_keys: Vec<String>,
+}
+
+impl FleetDeckConfig {
+    pub(crate) fn not_a_table(&self) -> Option<&toml::Value> {
+        self.not_a_table.as_ref()
+    }
+
+    pub(crate) fn unknown_keys(&self) -> &[String] {
+        &self.unknown_keys
+    }
+}
+
+impl<'de> Deserialize<'de> for FleetDeckConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match toml::Value::deserialize(deserializer)? {
+            toml::Value::Table(mut table) => Self {
+                tabs: table.remove("tabs"),
+                not_a_table: None,
+                unknown_keys: table.keys().cloned().collect(),
+            },
+            other => Self {
+                not_a_table: Some(other),
+                ..Self::default()
+            },
+        })
+    }
 }
 
 impl Default for RemoteConfig {

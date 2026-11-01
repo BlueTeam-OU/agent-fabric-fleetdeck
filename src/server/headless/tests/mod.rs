@@ -4662,6 +4662,7 @@ fn terminal_attach_disconnect_restores_client_shell_pane_size() {
         .state
         .direct_attach_resize_locks
         .contains(&terminal_id));
+    // The attach's 100 columns less its scroll bar gutter.
     assert_eq!(
         server
             .app
@@ -4669,7 +4670,7 @@ fn terminal_attach_disconnect_restores_client_shell_pane_size() {
             .get(&terminal_id)
             .expect("runtime")
             .current_size(),
-        (30, 100)
+        (30, 99)
     );
 
     assert!(server.focus_shell_client_on_tab(1, &second_tab_id));
@@ -6657,6 +6658,70 @@ fn terminal_attach_resize_uses_known_cell_geometry_without_pixel_mouse() {
 }
 
 #[test]
+fn terminal_attach_frame_keeps_the_attached_terminals_scroll_bar() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let mut bytes = Vec::new();
+        for line in 0..200 {
+            bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+        }
+        server.app.terminal_runtimes.insert(
+            runtime_terminal_id.clone(),
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+        );
+        let (writer, _control, render) = test_client_writer();
+        assert!(!server.handle_server_event(ServerEvent::ClientConnected {
+            client_id: 7,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_mouse: false,
+            writer,
+        }));
+        assert!(
+            server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                client_id: 7,
+                terminal_id: terminal_id.clone(),
+                takeover: false,
+            })
+        );
+        let runtime = |server: &HeadlessServer| {
+            server
+                .runtime_for_terminal_id_string(&terminal_id)
+                .expect("runtime")
+                .current_size()
+        };
+        assert_eq!(runtime(server), (24, 79));
+
+        server.render_and_stream();
+        let ServerMessage::Terminal(frame) =
+            read_server_message(render.recv().expect("attach frame"))
+        else {
+            panic!("expected terminal frame");
+        };
+        let text = String::from_utf8_lossy(&frame.bytes);
+        assert!(text.contains("line 199"), "the terminal's own rows");
+        assert!(text.contains('\u{2590}'), "the focused scroll bar's thumb");
+
+        // On the alternate screen the gutter goes, as a pane's does, and the grid widens.
+        server
+            .runtime_for_terminal_id_string(&terminal_id)
+            .expect("runtime")
+            .test_process_pty_bytes(b"\x1b[?1049h\x1b[2J\x1b[HFULL");
+        server.render_and_stream();
+        assert_eq!(runtime(server), (24, 80));
+        let ServerMessage::Terminal(frame) =
+            read_server_message(render.recv().expect("alternate screen frame"))
+        else {
+            panic!("expected terminal frame");
+        };
+        let text = String::from_utf8_lossy(&frame.bytes);
+        assert!(text.contains("FULL"));
+        assert!(!text.contains('\u{2590}') && !text.contains('\u{2595}'));
+    });
+}
+
+#[test]
 fn pending_terminal_resize_does_not_take_shell_foreground_or_geometry() {
     let mut server = test_headless_server();
     server.clients.insert(
@@ -7192,6 +7257,452 @@ fn direct_terminal_mouse_uses_runtime_protocol_encoding() {
 }
 
 #[test]
+fn terminal_control_client_keeps_the_whole_grid_without_a_scroll_bar() {
+    with_terminal_session_test_server(
+        |server, runtime_terminal_id, terminal_id, public_pane_id| {
+            let mut bytes = Vec::new();
+            for line in 0..200 {
+                bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+            }
+            server.app.terminal_runtimes.insert(
+                runtime_terminal_id,
+                crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+            );
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: public_pane_id,
+                    takeover: false,
+                })
+            );
+            // A session control bridge's viewport is its program's grid, every column of it.
+            assert_eq!(
+                server
+                    .runtime_for_terminal_id_string(&terminal_id)
+                    .expect("runtime")
+                    .current_size(),
+                (30, 100)
+            );
+            assert!(!server.attach_client_scroll_bar(7));
+        },
+    );
+}
+
+#[test]
+fn terminal_observer_follows_the_attach_owners_scroll_bar() {
+    with_terminal_session_test_server(
+        |server, runtime_terminal_id, terminal_id, public_pane_id| {
+            let mut bytes = Vec::new();
+            for line in 0..200 {
+                bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+            }
+            server.app.terminal_runtimes.insert(
+                runtime_terminal_id,
+                crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+            );
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                    client_id: 7,
+                    terminal_id: terminal_id.clone(),
+                    takeover: false,
+                })
+            );
+            let (writer, _control, render) = test_client_writer();
+            assert!(!server.handle_server_event(ServerEvent::ClientConnected {
+                client_id: 8,
+                cols: 100,
+                rows: 30,
+                cell_width_px: 0,
+                cell_height_px: 0,
+                pixel_mouse: false,
+                writer,
+            }));
+            assert!(
+                server.handle_server_event(ServerEvent::ClientObserveTerminal {
+                    client_id: 8,
+                    target: terminal_id.clone(),
+                })
+            );
+
+            // A person's attach: the observer shows the owner's bar.
+            assert!(server.attach_client_scroll_bar(8));
+            server.render_and_stream();
+            let observed = std::iter::from_fn(|| render.try_recv().ok())
+                .filter_map(|bytes| match read_server_message(bytes) {
+                    ServerMessage::Terminal(frame) => Some(frame),
+                    _ => None,
+                })
+                .last()
+                .expect("observer frame");
+            assert!(String::from_utf8_lossy(&observed.bytes).contains('\u{2590}'));
+
+            // A session control owner: no bar for the observer either.
+            let _ = server.handle_server_event(ServerEvent::ClientDisconnected { client_id: 7 });
+            connect_pending_terminal_client(server, 9);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 9,
+                    target: public_pane_id,
+                    takeover: false,
+                })
+            );
+            assert!(!server.attach_client_scroll_bar(8));
+        },
+    );
+}
+
+#[test]
+fn terminal_control_client_sends_a_release_without_its_press() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        // No scroll bar: a session control bridge, whose protocol sends every cell's events.
+        server.clients.insert(
+            1,
+            ClientConnection::new_with_mode(
+                ClientConnectionMode::TerminalAttach {
+                    terminal_id: terminal_id.clone(),
+                },
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                1,
+                RenderEncoding::TerminalAnsi,
+                None,
+            ),
+        );
+        assert!(server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Up(protocol::ClientMouseButton::Left),
+            position: protocol::ClientMousePosition::Cell { column: 10, row: 5 },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert_eq!(
+            input_rx.try_recv().expect("release"),
+            Bytes::from_static(b"\x1b[<0;11;6m")
+        );
+    });
+}
+
+#[test]
+fn direct_attach_gutter_routes_wheel_press_and_release() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let mut bytes = Vec::new();
+        for line in 0..80 {
+            bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
+        }
+        bytes.extend_from_slice(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80, 24, 4096, &bytes, 4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        // 81 columns: an 80-column grid and the gutter at column 80.
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+        let wheel = |server: &mut HeadlessServer, column| {
+            server.handle_server_event(ServerEvent::ClientAttachScroll {
+                client_id: 1,
+                source: AttachScrollSource::Wheel,
+                direction: AttachScrollDirection::Up,
+                lines: 1,
+                column: Some(column),
+                row: Some(5),
+                modifiers: 0,
+            })
+        };
+
+        // A wheel over the gutter reaches no program; inside the grid it does.
+        assert!(!wheel(server, 80));
+        assert!(input_rx.try_recv().is_err());
+        assert!(wheel(server, 10));
+        let report = input_rx.try_recv().expect("wheel report inside the grid");
+        assert!(report.starts_with(b"\x1b[<64;11;6M"), "{report:?}");
+
+        // A press in the grid released over the gutter ends at the program's last column.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx.try_recv().expect("clamped release"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Moved, 80));
+        assert!(input_rx.try_recv().is_err());
+
+        // A jump on the track is the bar's: its drag and release never reach the program.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Drag(left), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "the program saw no press of the bar's"
+        );
+        // Nor when the pointer comes back into the cells before the release (a jump off the
+        // thumb, which the last jump left near row 5).
+        assert!(server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(left),
+            position: protocol::ClientMousePosition::Cell {
+                column: 80,
+                row: 23
+            },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert_eq!(
+            server.clients[&1].attach_scrollbar_grab, None,
+            "a jump, not a grab"
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Drag(left), 10));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 10));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a jump's drag and release stay the bar's"
+        );
+
+        // A press the program never got (past its rows) does not make a gutter release its.
+        assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(left),
+            position: protocol::ClientMousePosition::Cell {
+                column: 10,
+                row: 30
+            },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a release with no press it was sent"
+        );
+
+        // Each button is its own press: another button's gutter release leaves left held.
+        let right = protocol::ClientMouseButton::Right;
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Down(right), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(right), 80));
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx.try_recv().expect("left's release, clamped"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+
+        // A press off the track ends a drag whose release was lost.
+        server
+            .clients
+            .get_mut(&1)
+            .expect("client")
+            .attach_scrollbar_grab = Some(0);
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert_eq!(server.clients[&1].attach_scrollbar_grab, None);
+        assert!(mouse(server, protocol::ClientMouseKind::Drag(left), 12));
+        assert_eq!(
+            input_rx.try_recv().expect("drag reaches the program"),
+            Bytes::from_static(b"\x1b[<32;13;6M")
+        );
+    });
+}
+
+#[test]
+fn direct_attach_holds_no_press_the_program_was_not_reporting() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80, 24, 0, b"", 4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+
+        // The press reaches a program with mouse reporting off: nothing is written.
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert!(input_rx.try_recv().is_err());
+        assert_eq!(server.clients[&1].attach_program_held, 0);
+        // Reporting turns on before the release; the release is not the program's.
+        server
+            .runtime_for_terminal_id_string(&terminal_id)
+            .expect("runtime")
+            .test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(input_rx.try_recv().is_err());
+    });
+}
+
+#[test]
+fn direct_attach_gutter_drops_a_press_before_the_grid_narrows() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        // Back on the main screen, the runtime still has the full 81 columns until the next
+        // frame narrows it; column 80 is already the gutter.
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                81,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+
+        assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(protocol::ClientMouseButton::Left),
+            position: protocol::ClientMousePosition::Cell { column: 80, row: 5 },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert!(input_rx.try_recv().is_err());
+    });
+}
+
+#[test]
+fn direct_attach_keeps_a_release_in_the_frame_that_enters_the_alternate_screen() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        // The grid is 80 of 81 columns; the program then enters its alternate screen, so the
+        // layout has the whole 81 while the runtime keeps 80 until the next frame.
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1000h\x1b[?1006h\x1b[?1049h",
+                4,
+            );
+        server
+            .app
+            .terminal_runtimes
+            .insert(runtime_terminal_id, runtime);
+        let mut client = ClientConnection::new_with_mode(
+            ClientConnectionMode::TerminalAttach {
+                terminal_id: terminal_id.clone(),
+            },
+            (81, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::TerminalAnsi,
+            None,
+        );
+        client.attach_scroll_bar = true;
+        server.clients.insert(1, client);
+        let left = protocol::ClientMouseButton::Left;
+        let mouse = |server: &mut HeadlessServer, kind, column| {
+            server.handle_server_event(ServerEvent::ClientAttachMouse {
+                client_id: 1,
+                kind,
+                position: protocol::ClientMousePosition::Cell { column, row: 5 },
+                geometry: None,
+                modifiers: 0,
+                lines: 1,
+            })
+        };
+
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 79));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;80;6M")
+        );
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx
+                .try_recv()
+                .expect("release at the runtime's last column"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+    });
+}
+
+#[test]
 fn direct_terminal_mouse_sends_nothing_without_mouse_reporting() {
     with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
         // A plain shell never enabled mouse reporting, so a controller's click
@@ -7248,7 +7759,8 @@ fn direct_terminal_pixel_mouse_uses_runtime_tracking_and_coordinates() {
                 b"\x1b[?1000h\x1b[?1006h\x1b[?1016h",
                 4,
             );
-        runtime.resize(24, 80, 10, 20);
+        // An 80-column attach on the main screen leaves 79 for the grid and 1 for its scroll bar.
+        runtime.resize(24, 79, 10, 20);
         server
             .app
             .terminal_runtimes
@@ -7272,6 +7784,7 @@ fn direct_terminal_pixel_mouse_uses_runtime_tracking_and_coordinates() {
         let client = server.clients.get_mut(&1).expect("direct attach client");
         client.pixel_mouse = true;
         client.host_sgr_pixels_active = Some(true);
+        client.attach_scroll_bar = true;
 
         assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
             client_id: 1,

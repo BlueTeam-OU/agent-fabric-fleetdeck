@@ -446,6 +446,13 @@ const DEFAULT_CONFIG: &str = r##"# Agent Fabric FleetDeck configuration
 # force keepalive or multiplexing off, it only stops FleetDeck from adding its own.
 # manage_ssh_config = true
 
+[fleet_deck]
+# Read by the fleet deck (fleet-deck/), not the server. "focus" (default):
+# an account tab's panes connect only while the tab is focused, the others
+# hung up. "all": every account tab's stay connected. A running deck takes a
+# change at its next map read, about ten seconds.
+# tabs = "focus"
+
 [experimental]
 # Allow launching FleetDeck from inside a FleetDeck-managed pane.
 # allow_nested = false

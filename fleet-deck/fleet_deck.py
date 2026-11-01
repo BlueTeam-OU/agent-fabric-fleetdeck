@@ -42,6 +42,9 @@ from fabric_deck import (
     PANE_MARKER,
     Herdr,
     fleetdeck_env,
+    herdr_config_path,
+    deck_tabs,
+    TABS_ALL,
     for_this_host,
     herdr_socket_path,
     live_of,
@@ -88,15 +91,6 @@ def in_herdr_pane() -> bool:
 # The prefix herdr's tests check against every harness's keys
 # (src/client/shell/tests/harness_keys.rs); 0x1e on a legacy host is ctrl+^.
 CHECKED_PREFIXES = frozenset({"ctrl+6", "ctrl+^"})
-
-
-def herdr_config_path() -> str:
-    """FleetDeck's config file, as it resolves it (src/config/io.rs config_path)."""
-    env = fleetdeck_env()
-    if env.get("HERDR_CONFIG_PATH"):
-        return env["HERDR_CONFIG_PATH"]
-    base = env.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return os.path.join(base, BIN, "config.toml")
 
 
 def configured_prefix(path: str) -> list[str] | None:
@@ -338,7 +332,8 @@ class DeckFleet:
     reached by `moveto <login> --attach` in its harness pane. The boot
     attaches each account it activates itself, the focused tab's too, for
     its activation alone, and ends that attach once the account's session
-    is seen up, unless its tab is focused. While it runs the controller
+    is seen up, unless its tab is focused or every tab is kept attached
+    (`[fleet_deck] tabs = "all"`). While it runs the controller
     types nothing into the harness pane of an account that is not up
     (fabric_deck.Deck._boot_holds). One that never comes up keeps its
     attach open, its pane showing why."""
@@ -349,6 +344,9 @@ class DeckFleet:
         self.sleep: Callable[[float], None] = time.sleep
         # harness_lock's directory (None: the uid's own, the controller's too).
         self.lock_dir: str | None = None
+        # Whether `[fleet_deck] tabs = "all"` keeps every tab attached, read
+        # at each act: a person may switch it while the boot runs.
+        self.every_tab: Callable[[], bool] = lambda: deck_tabs(herdr_config_path())[0] == TABS_ALL
         # login -> (the boot's attach starts, when it last started one)
         self.attached: dict[str, tuple[int, float]] = {}
         self.tab_id: dict[str, str] = {}
@@ -423,11 +421,11 @@ class DeckFleet:
         return moveto_in(foreground, login), info
 
     def waiting(self, login: str) -> int | None:
-        """The pid of this login's `moveto --wait` when its pane shows the
-        prompt and a fresh state record says no session runs: over ssh the
-        prompt line is the account's own output, which a running harness
-        could print too, so the record is the independent evidence; unknown
-        is not pressed."""
+        """The pid of this login's `moveto --wait` (or, attached, its
+        `moveto --attach`) when its pane shows the prompt and a fresh state
+        record says no session runs: over ssh the prompt line is the
+        account's own output, which a running harness could print too, so
+        the record is the independent evidence; unknown is not pressed."""
         count = self.live_counts().get(login)
         if count != 0:
             if count is None and login not in self.unknown_said:
@@ -442,7 +440,12 @@ class DeckFleet:
                 return None
             if found is None or found.mode not in ((WAIT, ATTACH) if self.attach else (WAIT,)):
                 return None
-            text = self.herdr.text("pane", "read", self.harness[login], "--source", "recent",
+            # An attach is the account's own terminal client redrawing the
+            # pane: its prompt is on the screen and never in `recent`, which
+            # herdr answers empty for it (measured 2026-10-31: all 29 tabs at
+            # "<login> - Enter to activate", every `recent` read '').
+            source = "visible" if found.mode == ATTACH else "recent"
+            text = self.herdr.text("pane", "read", self.harness[login], "--source", source,
                                    "--lines", "5")
         except Exception:  # herdr busy or the pane gone: not waiting, asked again
             return None
@@ -455,6 +458,11 @@ class DeckFleet:
             if workspace.get("focused") is True:
                 return workspace.get("active_tab_id") == self.tab_id.get(login)
         return False
+
+    def _kept(self, login: str) -> bool:
+        """Whether the login's attach stays open once it is up: every tab
+        is kept attached, or its tab is the one a person sees."""
+        return self.every_tab() or self._focused(login)
 
     def _attach(self, login: str, info: dict) -> None:
         """Start the login's attach in its harness pane, at the operator's
@@ -479,7 +487,8 @@ class DeckFleet:
 
     def done(self, login: str) -> None:
         """The login's session is up: the attach the boot opened for it ends,
-        unless a person is looking at its tab, and its pane says the agent
+        unless a person is looking at its tab or every tab is kept
+        attached, and its pane says the agent
         runs on. Focus is read just before each act, as a person may open
         the tab at any moment; the controller attaches it then, the
         account being up."""
@@ -490,7 +499,7 @@ class DeckFleet:
             group = info.get("foreground_process_group_id")
             if found is None or found.mode != ATTACH or not isinstance(group, int):
                 return
-            if self._focused(login):
+            if self._kept(login):
                 return
             if not boot.hang_up(group):
                 self.say(f"{login}: up, but its attach could not be ended; the controller "
@@ -504,7 +513,7 @@ class DeckFleet:
                     # the wait for it may be the controller's attach of
                     # another tab, and a person may open this one meanwhile.
                     typed_at_bare_shell(
-                        lambda: {} if self._focused(login) else self.moveto(login)[1],
+                        lambda: {} if self._kept(login) else self.moveto(login)[1],
                         lambda: self.herdr.text("pane", "run", self.harness[login], DETACHED_COMMAND),
                         self.sleep, wait=False, directory=self.lock_dir)
                     return

@@ -3161,6 +3161,187 @@ class AttachFocus(unittest.TestCase):
         self.assertNotIn(61, h.hung)
 
 
+class EveryTab(unittest.TestCase):
+    """`[fleet_deck] tabs = "all"`: every account tab's panes connect and
+    stay connected whatever is focused (the owner, 2026-11-01)."""
+
+    def setUp(self):
+        self.setting = ("all", None)
+        self.herdr = FakeHerdr()
+
+    def deck(self, attach):
+        make = attach_tab if attach else account_tab
+        self.a_tab, self.a = make(self.herdr, "ui")
+        self.b_tab, self.b = make(self.herdr, "qa")
+        self.h = Harness(self.herdr, logins=("ui", "qa"),
+                         modes=ALL_MODES | {ATTACH} if attach else ALL_MODES)
+        self.h.deck.tabs_setting = lambda: self.setting
+        for login in ("ui", "qa"):
+            self.h.records[login] = record(login)
+
+    def look(self, at):
+        self.h.deck.follow(self.h.at(at))
+
+    def connected(self, login, names, attach):
+        """Every pane the deck connects, as its moveto runs there."""
+        base = 1000 if login == "ui" else 2000
+        self.herdr.proc[names[1]] = in_moveto(login, pid=base + 1)
+        self.herdr.proc[names[2]] = in_moveto(login, WATCH, pid=base + 2)
+        if attach:
+            self.herdr.proc[names[0]] = in_moveto(login, ATTACH, pid=base)
+
+    def lines(self):
+        return [run for run in self.herdr.runs() if run in (fabric_deck.PAUSED_COMMAND, DETACHED_COMMAND)]
+
+    def test_every_tab_connects_and_a_focus_change_hangs_up_nothing(self):
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"], "the unfocused tab connects too")
+        self.assertEqual(self.herdr.runs(self.b[2]), ["moveto qa --watch"])
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        for at, tab in ((3, self.b_tab), (5, self.a_tab), (PANE_MAP_REFRESH_S + 7, self.b_tab)):
+            self.herdr.focused_tab = tab
+            self.look(at)
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.lines(), [], "no paused line anywhere")
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"], "nothing typed again")
+
+    def test_with_attach_every_harness_pane_attaches_and_none_is_detached(self):
+        self.deck(attach=True)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.b[0]), ["moveto qa --attach"])
+        self.connected("ui", self.a, attach=True)
+        self.connected("qa", self.b, attach=True)
+        for at, tab in ((3, self.b_tab), (5, self.a_tab), (7, None)):
+            self.herdr.focused_tab = tab
+            self.look(at)
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.lines(), [], "no detached or paused line")
+
+    def test_an_attach_that_ends_in_an_unfocused_tab_is_started_again(self):
+        self.deck(attach=True)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.connected("qa", self.b, attach=True)
+        self.look(30)
+        self.herdr.proc[self.b[0]] = BARE      # the ssh dropped
+        self.look(32)
+        self.look(34)
+        self.assertEqual(self.herdr.runs(self.b[0]), ["moveto qa --attach"] * 2)
+
+    def test_a_shell_or_status_moveto_that_ends_is_connected_again_at_the_next_map_read(self):
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        self.herdr.proc[self.a[2]] = BARE      # the focused tab's status: its ssh dropped
+        self.herdr.proc[self.b[1]] = BARE      # an unfocused tab's shell: a person's exit
+        self.look(3)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"], "taken at the map read, not before")
+        self.herdr.focused_tab = self.b_tab    # no pause round-trip to queue them either
+        self.look(PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(self.herdr.runs(self.a[2]), ["moveto ui --watch"] * 2)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"] * 2)
+        self.assertEqual(self.herdr.keys(self.b[1])[-1:], ["ctrl+u"], "a half-typed line dropped first")
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        self.look(2 * PANE_MAP_REFRESH_S + 5)
+        self.assertEqual(self.herdr.runs(self.b[1]), ["moveto qa"] * 2, "a running one is left alone")
+        self.assertEqual(self.h.hung, [])
+        self.assertEqual(self.lines(), [])
+
+    def test_a_running_deck_takes_a_switch_at_its_next_map_read_both_ways(self):
+        self.setting = ("focus", None)
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+        self.connected("ui", self.a, attach=False)
+        self.setting = ("all", None)
+        self.look(3)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND],
+                         "taken at the map read, not before")
+        self.look(PANE_MAP_REFRESH_S + 1)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND, "moveto qa"])
+        self.assertEqual(self.herdr.keys(self.b[1])[-1:], ["ctrl+u"], "the paused line's prompt cleared first")
+        self.assertEqual(self.herdr.runs(self.b[2])[-1], "moveto qa --watch")
+        self.connected("ui", self.a, attach=False)
+        self.connected("qa", self.b, attach=False)
+        self.setting = ("focus", None)
+        self.look(2 * PANE_MAP_REFRESH_S + 1)
+        self.assertEqual(len(self.h.hung), 2, "the unfocused tab's shell and status are hung up")
+        self.herdr.proc[self.b[1]] = BARE
+        self.herdr.proc[self.b[2]] = BARE
+        self.look(2 * PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(self.herdr.runs(self.b[1])[-1], fabric_deck.PAUSED_COMMAND)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui"], "the focused tab is left connected")
+
+    def test_a_pane_still_ending_its_pause_at_the_switch_connects_again_with_no_paused_line(self):
+        self.setting = ("focus", None)
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        self.look(1)
+        self.connected("ui", self.a, attach=False)
+        self.herdr.focused_tab = self.b_tab
+        self.look(3)
+        self.assertEqual(sorted(self.h.hung), [1001, 1002], "hung up; its moveto still ending")
+        self.setting = ("all", None)
+        self.look(PANE_MAP_REFRESH_S + 1)
+        self.herdr.proc[self.a[1]] = BARE
+        self.herdr.proc[self.a[2]] = BARE
+        self.look(PANE_MAP_REFRESH_S + 3)
+        self.assertEqual(self.herdr.runs(self.a[1]), ["moveto ui", "moveto ui"])
+        self.assertEqual(self.herdr.runs(self.a[2]), ["moveto ui --watch", "moveto ui --watch"])
+
+    def test_a_setting_that_cannot_be_used_is_said_once_and_keeps_the_focus_rule(self):
+        self.setting = ("focus", "config.toml: [fleet_deck] tabs is 'every', neither \"focus\" nor \"all\"")
+        self.deck(attach=False)
+        self.herdr.focused_tab = self.a_tab
+        self.h.deck.restore(0)
+        for at in range(1, 3 * PANE_MAP_REFRESH_S, 2):
+            self.look(at)
+        self.assertEqual(self.herdr.runs(self.b[1]), [fabric_deck.PAUSED_COMMAND])
+        self.assertEqual(sum("tabs is 'every'" in line for line in self.h.logs), 1)
+
+
+class DeckTabsSetting(unittest.TestCase):
+    """deck_tabs reads `[fleet_deck] tabs` from FleetDeck's config.toml."""
+
+    def read(self, text):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "config.toml")
+            if text is not None:
+                with open(path, "w") as handle:
+                    handle.write(text)
+            return fabric_deck.deck_tabs(path)
+
+    def test_unset_or_no_file_is_focus(self):
+        self.assertEqual(self.read(None), ("focus", None))
+        self.assertEqual(self.read("[keys]\nprefix = \"ctrl+b\"\n"), ("focus", None))
+        self.assertEqual(self.read("[fleet_deck]\n"), ("focus", None))
+
+    def test_each_word_is_taken(self):
+        self.assertEqual(self.read("[fleet_deck]\ntabs = \"all\"\n"), ("all", None))
+        self.assertEqual(self.read("[fleet_deck]\ntabs = \"focus\"\n"), ("focus", None))
+
+    def test_anything_else_is_focus_with_the_reason(self):
+        for text in ("[fleet_deck]\ntabs = \"All\"\n", "[fleet_deck]\ntabs = true\n",
+                     "fleet_deck = 1\n", "[fleet_deck\n"):
+            value, wrong = self.read(text)
+            self.assertEqual(value, "focus", text)
+            self.assertIsNotNone(wrong, text)
+
+
 class TypedAtBareShell(unittest.TestCase):
     """The one way into an attach-mode harness pane, for the controller and
     the boot alike: under harness_lock, after a second look at the shell."""

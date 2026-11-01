@@ -529,7 +529,9 @@ class FleetDeckTest(unittest.TestCase):
         fleet.harness = {"a": "p1"}
         fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
         fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.WAIT), {}))
-        fleet.herdr = mock.Mock(text=mock.Mock(return_value="a - Enter to activate\n"))
+        # A wait pane's prompt is its recent output; the screen is not read for it.
+        fleet.herdr = mock.Mock(text=mock.Mock(side_effect=lambda *args: (
+            "a - Enter to activate\n" if args[args.index("--source") + 1] == "recent" else "")))
         fleet.live = {"a": 1}
         self.assertIsNone(fleet.waiting("a"))
         self.assertEqual(self.said, [], "a login that is up is not said to lack a record")
@@ -539,17 +541,23 @@ class FleetDeckTest(unittest.TestCase):
         self.assertEqual(sum("no fresh state record" in line for line in self.said), 1,
                          "the reason is said, once, and not for a login that is up")
 
-    def attach_fleet(self, focused=False):
+    def attach_fleet(self, focused=False, every_tab=False):
         with mock.patch.object(fleet_deck, "local_host", return_value="testhost"):
             fleet = fleet_deck.DeckFleet(self.say, attach=True)
+        # Never the host's own config.toml.
+        fleet.every_tab = lambda: every_tab
         fleet.harness, fleet.tab_id = {"a": "p1"}, {"a": "t1"}
         fleet.sleep = lambda s: None
         fleet.lock_dir = self.dir
         fleet.read_at = time.monotonic() + 3600  # the cached counts below stand
         fleet.live = {"a": 0}
         workspace = {"workspace_id": "w1", "focused": True, "active_tab_id": "t1" if focused else "t9"}
-        fleet.herdr = mock.Mock(workspaces=mock.Mock(return_value=[workspace]),
-                                text=mock.Mock(return_value="a - Enter to activate\n"))
+        # As herdr answers an attach's pane: the prompt on the screen, nothing in `recent`.
+        def text(*args):
+            if args[:2] == ("pane", "read"):
+                return "a - Enter to activate\n" if args[args.index("--source") + 1] == "visible" else ""
+            return ""
+        fleet.herdr = mock.Mock(workspaces=mock.Mock(return_value=[workspace]), text=mock.Mock(side_effect=text))
         return fleet
 
     def test_an_attach_mode_boot_attaches_an_unfocused_bare_pane_and_presses_at_its_prompt(self):
@@ -660,6 +668,17 @@ class FleetDeckTest(unittest.TestCase):
             with mock.patch.object(fleet_deck.boot, "hang_up") as hang_up:
                 fleet.done("a")
             hang_up.assert_not_called()
+
+    def test_done_leaves_every_attach_when_every_tab_is_kept(self):
+        fleet = self.attach_fleet(every_tab=True)
+        fleet.attached = {"a": (1, 0.0)}
+        fleet.moveto = mock.Mock(return_value=(mock.Mock(pid=7, mode=fleet_deck.ATTACH),
+                                               {"foreground_process_group_id": 7}))
+        with mock.patch.object(fleet_deck.boot, "hang_up") as hang_up:
+            fleet.done("a")
+        hang_up.assert_not_called()
+        self.assertNotIn(mock.call("pane", "run", "p1", fleet_deck.DETACHED_COMMAND),
+                         fleet.herdr.text.call_args_list)
 
     def test_stop_all_never_hangs_up_an_attach(self):
         listed = "ui rust-ui-dev x\nqa rust-ui-dev x\n"
