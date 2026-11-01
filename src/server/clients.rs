@@ -175,9 +175,10 @@ pub(crate) struct ClientConnection {
     /// `terminal attach` does; a `terminal session control` bridge keeps the whole grid and
     /// every cell's mouse events, as its protocol documents.
     pub(crate) attach_scroll_bar: bool,
-    /// Whether the attached program holds a press this direct attach forwarded and has not yet
-    /// seen released; only then does a release past its cells reach it.
-    pub(crate) attach_program_pressed: bool,
+    /// The buttons whose press this direct attach wrote to the attached program and whose
+    /// release it has not yet seen (`terminal_attach::button_bit`); only a held button's drag
+    /// or release past the program's cells reaches it.
+    pub(crate) attach_program_held: u8,
     /// Presses forwarded by this shell that need release on abrupt teardown.
     shell_held_inputs: HashMap<ClientShellPressId, ClientShellHeldInput>,
     /// Temporary files staged from this client's local clipboard image pastes.
@@ -254,7 +255,7 @@ impl ClientConnection {
             host_keyboard_protocol_active: None,
             attach_scrollbar_grab: None,
             attach_scroll_bar: false,
-            attach_program_pressed: false,
+            attach_program_held: 0,
             shell_held_inputs: HashMap::new(),
             staged_clipboard_files: Vec::new(),
             shell_location: None,

@@ -1432,7 +1432,7 @@ impl HeadlessServer {
         let pixel_mouse = client.pixel_mouse;
         let host_sgr_pixels_active = client.host_sgr_pixels_active == Some(true);
         let scrollbar_grab = client.attach_scrollbar_grab;
-        let program_pressed = client.attach_program_pressed;
+        let program_held = client.attach_program_held;
         let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
             return false;
         };
@@ -1476,20 +1476,19 @@ impl HeadlessServer {
             return true;
         }
         let cells = grid.width.min(runtime.current_size().1);
-        let route =
-            crate::server::terminal_attach::gutter_route(kind, column, cells, program_pressed);
-        let pressed_after = match (kind, route) {
-            (_, crate::server::terminal_attach::GutterRoute::Drop)
-                if !matches!(kind, protocol::ClientMouseKind::Up(_)) =>
-            {
-                program_pressed
+        let bit = crate::server::terminal_attach::button_bit(kind);
+        let route = crate::server::terminal_attach::gutter_route(
+            kind,
+            column,
+            cells,
+            program_held & bit != 0,
+        );
+        // A release ends its button's press whatever becomes of it; a press counts only once
+        // it has been written to the program, below.
+        if matches!(kind, protocol::ClientMouseKind::Up(_)) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_program_held &= !bit;
             }
-            (protocol::ClientMouseKind::Down(_), _) => true,
-            (protocol::ClientMouseKind::Up(_), _) => false,
-            _ => program_pressed,
-        };
-        if let Some(client) = self.clients.get_mut(&client_id) {
-            client.attach_program_pressed = pressed_after;
         }
         let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
             return false;
@@ -1523,6 +1522,10 @@ impl HeadlessServer {
         };
         if let Err(err) = apply_client_pane_input_events(runtime, &[event]) {
             warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach mouse input failed");
+        } else if matches!(kind, protocol::ClientMouseKind::Down(_)) {
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.attach_program_held |= bit;
+            }
         }
         true
     }
@@ -1933,7 +1936,7 @@ impl HeadlessServer {
         };
         client.attach_scroll_bar = scroll_bar;
         client.attach_scrollbar_grab = None;
-        client.attach_program_pressed = false;
+        client.attach_program_held = 0;
         client.render_state.reset_baseline();
         client.last_activity = stamp;
         let was_foreground = self.foreground_client_id == Some(client_id);

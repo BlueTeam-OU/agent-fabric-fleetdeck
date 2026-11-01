@@ -88,11 +88,28 @@ pub(crate) enum GutterRoute {
     Drop,
 }
 
+/// The bit of `kind`'s button in a direct attach's record of the presses its program holds.
+pub(crate) fn button_bit(kind: crate::protocol::ClientMouseKind) -> u8 {
+    use crate::protocol::{ClientMouseButton, ClientMouseKind};
+
+    match kind {
+        ClientMouseKind::Down(button)
+        | ClientMouseKind::Up(button)
+        | ClientMouseKind::Drag(button) => match button {
+            ClientMouseButton::Left => 1,
+            ClientMouseButton::Right => 2,
+            ClientMouseButton::Middle => 4,
+        },
+        _ => 0,
+    }
+}
+
+/// `program_holds` says whether the program holds a press of this event's button.
 pub(crate) fn gutter_route(
     kind: crate::protocol::ClientMouseKind,
     column: u16,
     cells: u16,
-    program_pressed: bool,
+    program_holds: bool,
 ) -> GutterRoute {
     use crate::protocol::ClientMouseKind;
 
@@ -100,7 +117,7 @@ pub(crate) fn gutter_route(
         return GutterRoute::Terminal;
     }
     match kind {
-        ClientMouseKind::Drag(_) | ClientMouseKind::Up(_) if program_pressed && cells > 0 => {
+        ClientMouseKind::Drag(_) | ClientMouseKind::Up(_) if program_holds && cells > 0 => {
             GutterRoute::Clamp(cells - 1)
         }
         _ => GutterRoute::Drop,
@@ -167,6 +184,23 @@ mod tests {
             gutter_route(ClientMouseKind::Up(left), 0, 0, true),
             GutterRoute::Drop
         );
+    }
+
+    #[test]
+    fn button_bit_names_each_button_once() {
+        let bits = [
+            ClientMouseButton::Left,
+            ClientMouseButton::Right,
+            ClientMouseButton::Middle,
+        ]
+        .map(|button| button_bit(ClientMouseKind::Down(button)));
+        assert_eq!(bits, [1, 2, 4]);
+        assert_eq!(button_bit(ClientMouseKind::Up(ClientMouseButton::Right)), 2);
+        assert_eq!(
+            button_bit(ClientMouseKind::Drag(ClientMouseButton::Middle)),
+            4
+        );
+        assert_eq!(button_bit(ClientMouseKind::Moved), 0);
     }
 
     #[test]

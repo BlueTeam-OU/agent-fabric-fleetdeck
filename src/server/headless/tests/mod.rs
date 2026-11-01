@@ -7371,6 +7371,39 @@ fn direct_attach_gutter_routes_wheel_press_and_release() {
             "the program saw no press of the bar's"
         );
 
+        // A press the program never got (past its rows) does not make a gutter release its.
+        assert!(!server.handle_server_event(ServerEvent::ClientAttachMouse {
+            client_id: 1,
+            kind: protocol::ClientMouseKind::Down(left),
+            position: protocol::ClientMousePosition::Cell {
+                column: 10,
+                row: 30
+            },
+            geometry: None,
+            modifiers: 0,
+            lines: 1,
+        }));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a release with no press it was sent"
+        );
+
+        // Each button is its own press: another button's gutter release leaves left held.
+        let right = protocol::ClientMouseButton::Right;
+        assert!(mouse(server, protocol::ClientMouseKind::Down(left), 10));
+        assert_eq!(
+            input_rx.try_recv().expect("press"),
+            Bytes::from_static(b"\x1b[<0;11;6M")
+        );
+        assert!(!mouse(server, protocol::ClientMouseKind::Down(right), 80));
+        assert!(!mouse(server, protocol::ClientMouseKind::Up(right), 80));
+        assert!(mouse(server, protocol::ClientMouseKind::Up(left), 80));
+        assert_eq!(
+            input_rx.try_recv().expect("left's release, clamped"),
+            Bytes::from_static(b"\x1b[<0;80;6m")
+        );
+
         // A press off the track ends a drag whose release was lost.
         server
             .clients
