@@ -2629,31 +2629,40 @@ def next_backoff(failures: int, lived_s: float) -> tuple[int, int]:
 STOP_CHILD_GRACE_S = 5
 
 
-def stop_child(child: subprocess.Popen) -> None:
-    """Terminate the child and reap it, killing it if it outlives the grace.
-    A ctrl-c or kill while this runs is held, not acted on, so the child is
-    reaped first; then it raises KeyboardInterrupt. Ignoring it instead would
-    drop a stop that arrives while the deck is on its way out."""
-    import signal
-
+@contextlib.contextmanager
+def stops_held():
+    """A ctrl-c or kill inside the block is held, not acted on, and raised as
+    KeyboardInterrupt once the block is done. Ignoring it instead would drop a
+    stop that arrives while the deck is on its way out. Main thread only."""
     caught: list[int] = []
     held = {
         sig: signal.signal(sig, lambda signum, _frame: caught.append(signum))
         for sig in (signal.SIGINT, signal.SIGTERM)
     }
     try:
-        if child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=STOP_CHILD_GRACE_S)
-            except subprocess.TimeoutExpired:
-                child.kill()
-        child.wait()
+        yield
     finally:
         for sig, handler in held.items():
             signal.signal(sig, handler)
     if caught:
         raise KeyboardInterrupt
+
+
+def reap_child(child: subprocess.Popen) -> None:
+    """Terminate the child and reap it, killing it if it outlives the grace."""
+    if child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=STOP_CHILD_GRACE_S)
+        except subprocess.TimeoutExpired:
+            child.kill()
+    child.wait()
+
+
+def stop_child(child: subprocess.Popen) -> None:
+    """reap_child, with a stop meanwhile acted on only after the reap."""
+    with stops_held():
+        reap_child(child)
 
 
 @dataclass
@@ -2702,11 +2711,14 @@ class Stream:
             time.sleep(wait)
 
     def close(self) -> None:
-        with self.starting:
-            self.closing = True
-            child = self.child
-        if child is not None:
-            stop_child(child)
+        # The wait for a starting child is held too: a stop that interrupted
+        # it would leave close before the reap.
+        with stops_held():
+            with self.starting:
+                self.closing = True
+                child = self.child
+            if child is not None:
+                reap_child(child)
 
 
 # --------------------------------------------------------------------- run
