@@ -98,6 +98,43 @@ def fleetdeck_env(env: dict[str, str] | None = None) -> dict[str, str]:
         return {key: value for key, value in env.items() if not key.startswith("HERDR_")}
     return env
 
+
+def herdr_config_path() -> str:
+    """FleetDeck's config file, as it resolves it (src/config/io.rs config_path)."""
+    env = fleetdeck_env()
+    if env.get("HERDR_CONFIG_PATH"):
+        return env["HERDR_CONFIG_PATH"]
+    base = env.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, BIN, "config.toml")
+
+
+# `[fleet_deck] tabs` in FleetDeck's config.toml (docs/fleetdeck/CONFIGURATION.md):
+# whether an account tab's panes connect only while it is focused (j167, the
+# default) or every tab's stay connected (the owner, 2026-11-01).
+TABS_FOCUS = "focus"
+TABS_ALL = "all"
+
+
+def deck_tabs(path: str) -> tuple[str, str | None]:
+    """`[fleet_deck] tabs` as the config sets it, and what is wrong with it.
+    Unset, or no file, is "focus" with nothing wrong; a file that does not
+    parse, or a value that is neither word, is "focus" too, with the reason:
+    the deck keeps the default rather than guess."""
+    import tomllib
+
+    try:
+        with open(path, "rb") as handle:
+            config = tomllib.load(handle)
+    except FileNotFoundError:
+        return TABS_FOCUS, None
+    except (OSError, ValueError) as error:
+        return TABS_FOCUS, f"{path} cannot be read ({printable(str(error))})"
+    section = config.get("fleet_deck", {})
+    value = section.get("tabs", TABS_FOCUS) if isinstance(section, dict) else None
+    if value in (TABS_FOCUS, TABS_ALL):
+        return value, None
+    return TABS_FOCUS, f"{path}: [fleet_deck] tabs is {printable(repr(value))}, neither \"focus\" nor \"all\""
+
 # The workspace an account goes to when the catalogue names no group for it,
 # or when its group's workspace no longer exists (the operator removed it).
 NEW_WORKSPACE = "New"
@@ -987,7 +1024,8 @@ POLL_S = 2
 # focused: their ssh closed, typed at the operator's bare shell.
 PAUSED_LINE = "paused: tab not focused"
 PAUSED_COMMAND = f"clear; echo '{PAUSED_LINE}'"
-# The panes that connect only while their tab is focused, and how each runs.
+# The panes that connect only while their tab is focused (unless every tab is
+# kept, `[fleet_deck] tabs = "all"`), and how each runs.
 ON_FOCUS = ((SHELL, PLAIN), (STATUS, WATCH))
 # With moveto's --attach the harness pane is one of them: its agent runs on
 # in the account's own terminal server, so its line says that, not "paused",
@@ -1178,6 +1216,12 @@ class Deck:
     # Accounts whose attach the deck stopped starting after those, until
     # their tab is focused again.
     attach_halted: set[str] = field(default_factory=set)
+    # `[fleet_deck] tabs` (deck_tabs): read again at every map read, so a
+    # person switches it on a running deck. main() wires the config file.
+    tabs_setting: Callable[[], tuple[str, str | None]] = lambda: (TABS_FOCUS, None)
+    # Whether every account tab is kept connected ("all"), as the last read
+    # found the setting; False is j167's focus rule.
+    every_tab: bool = False
 
     @property
     def attach(self) -> bool:
@@ -1263,6 +1307,9 @@ class Deck:
                     self.log(f"cannot close the spare tab {tab_id}: {printable(str(error))}")
         if only is None and self.fleet_tab:
             self._restore_fleet_tab()
+        # A restore stands for a map read: the setting is read with it, so
+        # a deck started on "all" pauses no tab at its first look.
+        self._read_tabs()
         self.mapped_at = now
 
     def _restore_fleet_tab(self, recheck: str | None = None) -> None:
@@ -1469,7 +1516,7 @@ class Deck:
     def decide_pending(self, now: float) -> None:
         for key, since in list(self.waiting.items()):
             login, pane, mode = key
-            if mode != VIEW and login != self.focused_login:
+            if mode != VIEW and not self.every_tab and login != self.focused_login:
                 continue    # connects once its tab is focused (_follow_focus)
             if mode == ATTACH and self._boot_holds(login):
                 continue
@@ -1555,6 +1602,7 @@ class Deck:
         self.instance = server
         # While herdr's server is lost, only the map is read, until it answers.
         if self.lost or self.mapped_at is None or now - self.mapped_at >= PANE_MAP_REFRESH_S:
+            self._read_tabs()
             if not self._refresh(now):
                 return
             if self.retry:
@@ -1632,7 +1680,7 @@ class Deck:
     def _attach_ended(self, login: str, pane: str, now: float) -> None:
         key = (login, pane, ATTACH)
         # Queued (a lost focus's detach queues it too), it is started once
-        # its tab is focused (decide_pending).
+        # its tab is focused, or at once with every tab kept (decide_pending).
         if key in self.waiting:
             return
         at = self.attached_at.get(login)
@@ -1657,7 +1705,9 @@ class Deck:
         the tab is focused: decide_pending starts the focused tab's at their
         prompt and leaves every other tab's queued; a tab that loses focus
         has them hung up, queued again, and showing PAUSED_LINE. Acts on a change of focus only, and on the
-        first read, which pauses every tab but the focused one."""
+        first read, which pauses every tab but the focused one. With every
+        tab kept (`[fleet_deck] tabs = "all"`) a lost focus pauses nothing,
+        and focus only lifts a halted attach."""
         try:
             focused = self._focused_tab()
         except Exception as error:  # nothing changes until herdr answers
@@ -1695,7 +1745,7 @@ class Deck:
                         pane = tab.panes.get(role)
                         if pane is not None and self.pausing.pop(pane, None) is not None:
                             self.ending.add(pane)
-                elif not self.focus_read or other == before:
+                elif not self.every_tab and (not self.focus_read or other == before):
                     self.to_pause.add(other)
             self.focus_read = True
         for other in sorted(self.to_pause):
@@ -1705,6 +1755,32 @@ class Deck:
             elif self._pause(other, tab, now):
                 self.to_pause.discard(other)
         self._type_paused()
+
+    def _read_tabs(self) -> None:
+        """Take `[fleet_deck] tabs` as it is now. To "all": every paused
+        pane is as a tab focused again, queued to connect at this look's
+        decide_pending, its paused line not typed. Back to "focus": the
+        next look is a first read, pausing every tab but the focused one."""
+        value, wrong = self.tabs_setting()
+        if wrong is not None:
+            self._say("tabs-setting", f"{wrong}; only the focused tab is kept connected")
+        else:
+            self.said.discard("tabs-setting")
+        every = value == TABS_ALL
+        if every == self.every_tab:
+            return
+        self.every_tab = every
+        if every:
+            self.to_pause.clear()
+            # A pane in pausing was hung up, or found bare: queued already.
+            # One whose moveto is still ending is waited for, as a tab
+            # focused again waits for it.
+            self.ending.update(self.pausing)
+            self.pausing.clear()
+            self.log("tabs: every account tab kept connected ([fleet_deck] tabs = \"all\")")
+        else:
+            self.focus_read = False
+            self.log("tabs: only the focused tab kept connected ([fleet_deck] tabs = \"focus\")")
 
     def _focused_tab(self) -> str:
         """The tab herdr's focused workspace shows: the one a person sees."""
@@ -2690,8 +2766,9 @@ def main(argv: list[str] | None = None) -> int:
     missing = sorted({WAIT, WATCH, RESUME} - modes)
     if missing:
         log(f"moveto has no {', '.join(missing)} yet: no pane is armed with it")
-    log("harness: attached to each account's own server, only while its tab is focused"
-        if ATTACH in modes else "harness: in its pane (moveto has no --attach)")
+    log("harness: attached to each account's own server" if ATTACH in modes
+        else "harness: in its pane (moveto has no --attach)")
+    config = herdr_config_path()
     deck = Deck(
         herdr=Herdr(),
         accounts=lambda: parse_moveto_list(moveto_list(), exclude=exclude),
@@ -2709,6 +2786,7 @@ def main(argv: list[str] | None = None) -> int:
         fleet_tab=not args.no_fleet_tab,
         booting=lambda: lock_holder(boot_lock_path()) is not None,
         tell_safeguard=safeguard_teller(log),
+        tabs_setting=lambda: deck_tabs(config),
     )
     return run(deck, Stream(on_line=take, log=log), woken)
 

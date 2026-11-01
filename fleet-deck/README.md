@@ -14,9 +14,9 @@ labels shows no second row, and the deck leaves all its panes in sight.
 
 | pane | runs | for |
 |---|---|---|
-| **harness** (left, 65 %, focused) | `moveto <account> --wait`; with `--attach` in moveto, `moveto <account> --attach` while the tab is focused | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session. Attached, the account's own terminal, `detached: tab not focused; the agent keeps running` otherwise (see Attach) |
-| **shell** (top right) | `moveto <account>`, while the tab is focused | a shell as the account; `paused: tab not focused` otherwise |
-| **status** (right) | `moveto <account> --watch`, while the tab is focused | the account's status, read-only; `paused: tab not focused` otherwise |
+| **harness** (left, 65 %, focused) | `moveto <account> --wait`; with `--attach` in moveto, `moveto <account> --attach` while the tab is focused (always with `tabs = "all"`) | one line, `<account> - Enter to activate`; Enter starts or resumes the account's session. Attached, the account's own terminal, `detached: tab not focused; the agent keeps running` otherwise (see Attach) |
+| **shell** (top right) | `moveto <account>`, while the tab is focused (always with `tabs = "all"`) | a shell as the account; `paused: tab not focused` otherwise |
+| **status** (right) | `moveto <account> --watch`, while the tab is focused (always with `tabs = "all"`) | the account's status, read-only; `paused: tab not focused` otherwise |
 | **agent** (bottom right) | `fabric-view agent --agent <account> --in-tab`, as the operator | the agent's screen, as the fleet board opens it on Enter; `prefix+a` shows it, and `prefix+a` again shows the harness (see Views) |
 
 This directory exists only in gzapi-org's fork; upstream merges never
@@ -298,9 +298,9 @@ A failed list read is tried again at the next map read.
   prompt, since a pane just created may still be running the operator's
   rc file. One still busy after 120 s is said once, and started whenever
   it reaches its prompt. One already running this account's moveto is
-  left as it is. Both hold their ssh only while their tab is the server's
-  focused tab (the focused workspace's active tab, read at each look,
-  every 2 s; with several clients attached, a tab another client shows is
+  left as it is. By default (see Every tab or the focused one) both
+  hold their ssh only while their tab is the server's focused tab (the
+  focused workspace's active tab, read at each look, every 2 s; with several clients attached, a tab another client shows is
   paused): when the tab loses focus the deck hangs up their moveto, as
   closing the pane would, and types `paused: tab not focused` at the
   shell it leaves, trying again at each look until herdr answers and the
@@ -479,7 +479,9 @@ When `moveto --help` lists `--attach`, the account's harness runs in a
 terminal server of the account's own, a user unit outside the deck
 (agent-fabric's part of j167: the unit, enter-ssh's `attach` word and
 moveto `--attach`). The deck's harness pane only attaches to it, and
-connects only while its tab is focused, like the shell and status panes.
+connects only while its tab is focused, like the shell and status panes
+(every tab's stays connected with `tabs = "all"`, see Every tab or the
+focused one).
 Ending the attach (a lost focus, a dropped ssh, a deck restart) ends no
 agent. Until moveto lists `--attach`, everything above holds unchanged.
 
@@ -523,6 +525,39 @@ agent. Until moveto lists `--attach`, everything above holds unchanged.
   still show after their end.
 - **Limits.** A safeguard stop is read from the pane's screen, so it is
   seen only while that tab is attached.
+
+## Every tab or the focused one
+
+One setting in FleetDeck's `config.toml` picks whether only the focused
+account tab stays connected, as above, or every one does:
+
+```toml
+[fleet_deck]
+tabs = "focus"   # the default; "all" keeps every account tab connected
+```
+
+- **`"focus"`** is everything above: an unfocused tab's shell and status
+  panes are hung up and say `paused: tab not focused`, and in attach mode
+  its harness pane is detached and says `detached: tab not focused; the
+  agent keeps running`.
+- **`"all"`** connects every activated account's shell, status and harness
+  panes and keeps them connected: a focus change hangs up nothing and
+  types no paused or detached line. An attach that ends is started again
+  in any tab, as in a focused one, the 15 s halt included. In attach mode the harness pane attaches;
+  without `--attach` in moveto it runs the session in the pane, as before
+  attach mode. `start --auto` then leaves every attach it opened open.
+  Nothing depends on the host: an account reached over ssh on another
+  host is kept as one on this one.
+- **A running deck** takes a change at its next map read (every 10 s), so
+  no deck or agent is restarted. To `"all"`: every paused pane is
+  connected again, its paused line cleared first. Back to `"focus"`: the
+  next look is as the deck's first, and every tab but the focused one is
+  paused. The harness sessions live in the accounts' own servers either
+  way.
+- **A value that is neither word**, or a file that does not parse, is
+  read as `"focus"`; the deck's log says why, once, and
+  `agent-fabric-fleetdeck config check` names the value. The server itself
+  reads none of `[fleet_deck]`.
 
 ## What the deck keeps
 
