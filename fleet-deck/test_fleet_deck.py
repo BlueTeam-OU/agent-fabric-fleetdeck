@@ -700,7 +700,7 @@ class FleetDeckTest(unittest.TestCase):
         self.assertTrue(any("attached, so not stopped here: ui" in line for line in self.said))
         self.assertTrue(any("accounts' own servers" in line for line in self.said))
 
-    def test_stop_all_in_attach_mode_says_the_units_sessions_run_on_not_that_the_stream_lags(self):
+    def test_stop_all_without_a_harness_stop_says_the_units_sessions_run_on_not_that_the_stream_lags(self):
         with mock.patch.object(fleet_deck, "stop_controller", return_value=True), \
              mock.patch.object(fleet_deck, "server_up", return_value=None), \
              mock.patch.object(fleet_deck, "stop_holder"), \
@@ -770,7 +770,8 @@ class FleetDeckTest(unittest.TestCase):
                          [["fabric-ctl", "all", "harness-stop"], ["fabric-ctl", "all", "control-stop"]])
         self.assertEqual([c.kwargs["timeout"] for c in run.call_args_list],
                          [fleet_deck.HARNESS_CTL_S, fleet_deck.CONTROL_CTL_S])
-        self.assertEqual(self.said[-2:], ["harness units: x-01  failed  timeout", "control agents: x-01  failed  timeout"])
+        self.assertEqual(self.said[-4:], ["harness units: fabric-ctl all harness-stop …", "harness units: x-01  failed  timeout",
+                                          "control agents: fabric-ctl all control-stop …", "control agents: x-01  failed  timeout"])
 
     def test_stop_all_goes_on_when_the_server_stop_fails_and_shows_logins_printable(self):
         self.assertTrue(fleet_deck.ensure_server(self.say, self.agent))
