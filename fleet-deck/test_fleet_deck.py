@@ -66,22 +66,37 @@ def stat_fields(pid: int) -> list[str]:
         return handle.read().rsplit(")", 1)[1].split()
 
 
+def carries_stub_dir(pid: int, stub_dir: str) -> bool:
+    """Whether the process's environment names `stub_dir` as STUB_DIR. A
+    zombie's environ reads empty, so it never does; nor another login's."""
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            return b"STUB_DIR=" + os.fsencode(stub_dir) in handle.read().split(b"\0")
+    except OSError:     # another login's, or gone meanwhile
+        return False
+
+
 def stub_processes(stub_dir: str) -> list[int]:
-    """This login's live processes whose environment names `stub_dir` as
-    STUB_DIR. A zombie's environ reads empty, so it is never listed; nor is
-    this process, whose /proc environ is the one it started with."""
-    marker = b"STUB_DIR=" + os.fsencode(stub_dir)
-    found = []
-    for name in os.listdir("/proc"):
-        if not name.isdigit() or int(name) == os.getpid():
-            continue
-        try:
-            with open(f"/proc/{name}/environ", "rb") as handle:
-                if marker in handle.read().split(b"\0"):
-                    found.append(int(name))
-        except OSError:     # another login's, or gone meanwhile
-            pass
-    return found
+    """This login's live processes that carry `stub_dir`; never this one,
+    whose /proc environ is the one it started with."""
+    return [int(name) for name in os.listdir("/proc")
+            if name.isdigit() and int(name) != os.getpid() and carries_stub_dir(int(name), stub_dir)]
+
+
+def kill_stub_process(pid: int, stub_dir: str) -> None:
+    """SIGKILL the process if it still carries `stub_dir`. Checked through a
+    pidfd, so a pid reused since the scan is never signalled."""
+    try:
+        pidfd = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return
+    try:
+        if carries_stub_dir(pid, stub_dir):
+            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    finally:
+        os.close(pidfd)
 
 
 def until(probe, seconds=10.0):
@@ -147,10 +162,7 @@ class FleetDeckTest(unittest.TestCase):
         deadline = time.monotonic() + 10
         while (left := stub_processes(self.dir)) and time.monotonic() < deadline:
             for pid in left:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                kill_stub_process(pid, self.dir)
             time.sleep(0.05)
         shutil.rmtree(self.dir, ignore_errors=True)
         shutil.rmtree(self.sock_dir, ignore_errors=True)
