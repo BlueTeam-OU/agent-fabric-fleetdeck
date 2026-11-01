@@ -171,6 +171,51 @@ impl<'de> Deserialize<'de> for RightClickPassthroughModifierConfig {
 }
 
 fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModifiers>> {
+    parse_mouse_modifier(value, KeyModifiers::empty())
+}
+
+/// The modifier that turns a left drag into FleetDeck's own selection in a
+/// pane whose program reports the mouse (gzapi-org's fork). Every attached
+/// harness turns mouse reporting on, so without it a plain drag can only reach
+/// the program, and Shift+drag is the outer terminal's selection across the
+/// whole deck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseSelectModifierConfig(Option<KeyModifiers>);
+
+impl Default for MouseSelectModifierConfig {
+    fn default() -> Self {
+        Self(Some(KeyModifiers::ALT))
+    }
+}
+
+impl MouseSelectModifierConfig {
+    pub fn modifiers(self) -> Option<KeyModifiers> {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for MouseSelectModifierConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        // Ctrl+click is link activation, decided before a press reaches the
+        // selection, so a value holding ctrl would never select.
+        parse_mouse_modifier(&value, KeyModifiers::CONTROL)
+            .map(Self)
+            .ok_or_else(|| {
+                de::Error::custom(
+                    "mouse_select_modifier must be empty, off, none, disabled, alt/option, cmd/command/super, meta, hyper, or a + separated combination without shift or ctrl",
+                )
+            })
+    }
+}
+
+/// Parses a mouse modifier setting: `Some(None)` disables it, `None` is an
+/// invalid value. Shift is always refused (terminals reserve Shift+mouse), and
+/// so is any modifier in `forbidden`.
+fn parse_mouse_modifier(value: &str, forbidden: KeyModifiers) -> Option<Option<KeyModifiers>> {
     let trimmed = value.trim();
     if trimmed.is_empty()
         || trimmed.eq_ignore_ascii_case("off")
@@ -192,6 +237,9 @@ fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModif
             "shift" => return None,
             _ => return None,
         };
+        if forbidden.intersects(modifier) {
+            return None;
+        }
         modifiers |= modifier;
     }
 
@@ -978,6 +1026,10 @@ pub struct UiConfig {
     pub host_cursor: HostCursorModeConfig,
     /// Modifier that lets right-click gestures pass through to pane apps. Empty disables it.
     pub right_click_passthrough_modifier: RightClickPassthroughModifierConfig,
+    /// Modifier that makes a left drag select text in a pane whose program
+    /// reports the mouse, instead of sending the drag to it. Default: alt.
+    /// Empty disables it.
+    pub mouse_select_modifier: MouseSelectModifierConfig,
     /// Force a full host-terminal redraw when the outer terminal regains focus. Default: true.
     pub redraw_on_focus_gained: bool,
     /// Lines to scroll per mouse wheel notch. Default: 3.
@@ -1332,6 +1384,7 @@ impl Default for UiConfig {
             clipboard_shortcuts: true,
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
+            mouse_select_modifier: MouseSelectModifierConfig::default(),
             redraw_on_focus_gained: true,
             mouse_scroll_lines: None,
             confirm_close: true,
@@ -1385,6 +1438,10 @@ impl UiConfig {
 
     pub fn right_click_passthrough_modifiers(&self) -> Option<KeyModifiers> {
         self.right_click_passthrough_modifier.modifiers()
+    }
+
+    pub fn mouse_select_modifiers(&self) -> Option<KeyModifiers> {
+        self.mouse_select_modifier.modifiers()
     }
 }
 
@@ -1969,6 +2026,56 @@ right_click_passthrough_modifier = "cmd+alt"
                 r#"
 [ui]
 right_click_passthrough_modifier = "{value}"
+"#
+            );
+            assert!(
+                toml::from_str::<Config>(&toml).is_err(),
+                "value {value:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_select_modifier_defaults_to_alt_and_parses() {
+        assert_eq!(
+            Config::default().ui.mouse_select_modifiers(),
+            Some(KeyModifiers::ALT)
+        );
+        for (value, expected) in [
+            ("", None),
+            ("off", None),
+            ("alt", Some(KeyModifiers::ALT)),
+            ("super+alt", Some(KeyModifiers::SUPER | KeyModifiers::ALT)),
+        ] {
+            let toml = format!(
+                r#"
+[ui]
+mouse_select_modifier = "{value}"
+"#
+            );
+            let config: Config = toml::from_str(&toml).unwrap();
+            assert_eq!(
+                config.ui.mouse_select_modifiers(),
+                expected,
+                "value {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mouse_select_modifier_rejects_shift_and_ctrl() {
+        for value in [
+            "shift",
+            "ctrl",
+            "control",
+            "alt+ctrl",
+            "alt+shift",
+            "banana",
+        ] {
+            let toml = format!(
+                r#"
+[ui]
+mouse_select_modifier = "{value}"
 "#
             );
             assert!(

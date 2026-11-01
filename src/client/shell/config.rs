@@ -160,6 +160,7 @@ impl ClientShellConfig {
             mouse_capture: config.ui.mouse_capture,
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
             right_click_passthrough_modifiers: config.ui.right_click_passthrough_modifiers(),
+            mouse_select_modifiers: config.ui.mouse_select_modifiers(),
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
             switch_ascii_input_source_in_prefix: config
                 .experimental
@@ -379,6 +380,7 @@ impl ClientShellConfig {
                 self.mouse_capture = ui.mouse_capture;
                 self.mouse_scroll_lines = ui.mouse_scroll_lines();
                 self.right_click_passthrough_modifiers = ui.right_click_passthrough_modifiers();
+                self.mouse_select_modifiers = ui.mouse_select_modifiers();
                 self.redraw_on_focus_gained = ui.redraw_on_focus_gained;
             }
         }
@@ -544,6 +546,20 @@ mod tests {
             shell.keybinds.prefix,
             vec![(KeyCode::Char('a'), KeyModifiers::CONTROL)]
         );
+    }
+
+    #[test]
+    fn live_reload_applies_the_mouse_select_modifier() {
+        let mut shell = ClientShellConfig::from_config(&Config::default());
+        assert_eq!(shell.mouse_select_modifiers, Some(KeyModifiers::ALT));
+        let next: Config = toml::from_str("[ui]\nmouse_select_modifier = \"super\"").unwrap();
+
+        assert!(shell.apply_live_config(&next, &[], &[]).is_empty());
+        assert_eq!(shell.mouse_select_modifiers, Some(KeyModifiers::SUPER));
+
+        let off: Config = toml::from_str("[ui]\nmouse_select_modifier = \"off\"").unwrap();
+        shell.apply_live_config(&off, &[], &[]);
+        assert_eq!(shell.mouse_select_modifiers, None);
     }
 
     #[test]

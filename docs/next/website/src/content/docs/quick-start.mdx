@@ -29,6 +29,8 @@ Windows Terminal can still intercept URLs it detects in visible text. For reliab
 
 If you configure `ui.right_click_passthrough_modifier`, that modifier plus right-click sends right-click, hold, and drag gestures to mouse-reporting pane apps. To make normal right-click go to one pane app, choose **Send right-clicks to pane** from that pane's menu or run `herdr pane input --current --right-click pane` inside it. Right-click the pane frame to reopen Herdr's menu.
 
+When a pane app reports the mouse, a plain drag goes to the app. Hold alt while you drag to select text in that pane instead; it is copied like any other selection. Change or disable the modifier with `ui.mouse_select_modifier`.
+
 ## Run an agent
 
 Start your coding agent in a pane:

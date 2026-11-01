@@ -475,6 +475,23 @@ impl HerdrPath {
             herdr_owned |= self.absorb(outcome, &mut events);
         }
         herdr_owned |= self.state.mode != ClientShellMode::Terminal || self.state.overlay.is_some();
+        // The select modifier keeps a drag in a mouse-reporting pane for the
+        // client's own selection, so that gesture never reaches the program by
+        // design. A press that has not moved is still pending: a click is
+        // handed to the program on release, and is scored. In a pane that does
+        // not report the mouse a selection is the ordinary outcome, and the
+        // program expects nothing either way.
+        herdr_owned |= self
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(|selection| !selection.is_just_click())
+            && self
+                .state
+                .hits
+                .panes
+                .first()
+                .is_some_and(|pane| pane.mouse_reporting);
         if herdr_owned {
             return None;
         }

@@ -958,6 +958,12 @@
           "description": "Modifier that lets right-click gestures pass through to pane apps. Empty disables it. Accepts ctrl, alt, cmd, super, meta, hyper, or a + separated combination; shift is rejected because many terminals reserve Shift+mouse."
         },
         {
+          "key": "ui.mouse_select_modifier",
+          "type": "string",
+          "default": "\"alt\"",
+          "description": "Modifier that makes a left drag select text in a pane whose program reports the mouse, instead of sending the drag to the program; the selection is copied as any other. Empty disables it. Accepts alt, cmd, super, meta, hyper, or a + separated combination; shift and ctrl are rejected because terminals reserve Shift+mouse and ctrl+click opens links."
+        },
+        {
           "key": "ui.redraw_on_focus_gained",
           "type": "boolean",
           "default": "true",
