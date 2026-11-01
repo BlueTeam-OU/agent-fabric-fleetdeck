@@ -2297,6 +2297,40 @@ class StreamLines(unittest.TestCase):
         self.assertEqual(seen, ["a", "b"])
         self.assertEqual(logs, ["a state record was skipped: bad"])
 
+    def test_close_while_a_child_starts_reaps_it_before_returning(self):
+        # The deck exits as soon as close returns, dropping the reader thread:
+        # a child that thread was still starting would be orphaned.
+        started, proceed = threading.Event(), threading.Event()
+        children = []
+        real = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            child = real(*args, **kwargs)
+            children.append(child)
+            started.set()
+            proceed.wait(10)
+            return child
+
+        stream = Stream(on_line=lambda raw: None, log=lambda line: None, command=("sleep", "60"))
+        with mock.patch.object(fabric_deck.subprocess, "Popen", popen):
+            reader = threading.Thread(target=stream.run, daemon=True)
+            reader.start()
+            self.assertTrue(started.wait(10))
+            release = threading.Timer(0.2, proceed.set)
+            release.start()
+            try:
+                stream.close()
+                code = children[0].poll()
+            finally:
+                proceed.set()
+                release.join()
+                reader.join(10)
+                if children[0].poll() is None:
+                    children[0].kill()
+                    children[0].wait()
+        self.assertIsNotNone(code, "close returned while its child still ran")
+        self.assertFalse(reader.is_alive())
+
 
 class StreamRecordsListed(unittest.TestCase):
     def test_every_way_of_storing_a_record_keeps_listed(self):

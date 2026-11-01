@@ -33,6 +33,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -2667,6 +2668,10 @@ class Stream:
     command: tuple[str, ...] = ("fabric-ctl", "all", "states", "--follow", "--json")
     child: subprocess.Popen | None = None
     closing: bool = False
+    # Held while a child starts and while close() looks for it: close() returns
+    # only after the child is reaped, because the deck exits at once and drops
+    # this daemon thread, orphaning a child it was still starting.
+    starting: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def run(self) -> None:
         import time
@@ -2674,16 +2679,14 @@ class Stream:
         failures = 0
         while not self.closing:
             started = time.monotonic()
-            try:
-                self.child = subprocess.Popen(self.command, stdout=subprocess.PIPE, text=True)
-            except OSError as error:
-                self.log(f"cannot start the state stream: {error}")
-                self.child = None
-            if self.closing and self.child is not None:
-                # close() ran while this child was starting and could not see it.
-                self.child.terminate()
-                self.child.wait()
-                return
+            with self.starting:
+                if self.closing:
+                    return
+                try:
+                    self.child = subprocess.Popen(self.command, stdout=subprocess.PIPE, text=True)
+                except OSError as error:
+                    self.log(f"cannot start the state stream: {error}")
+                    self.child = None
             if self.child is not None and self.child.stdout is not None:
                 for raw in self.child.stdout:
                     try:
@@ -2699,9 +2702,11 @@ class Stream:
             time.sleep(wait)
 
     def close(self) -> None:
-        self.closing = True
-        if self.child is not None:
-            stop_child(self.child)
+        with self.starting:
+            self.closing = True
+            child = self.child
+        if child is not None:
+            stop_child(child)
 
 
 # --------------------------------------------------------------------- run
