@@ -49,7 +49,6 @@
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-ci-platforms.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-restore-drops-plugin-panes.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-sound-paths.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/j180-account-list-cadence.md",
     ".agent-fabric/memory/rust-ui-dev/solution/zbus-fd-cloexec-window.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/fabric-review-next-chain.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/pr-status-needs-gate-counts.md",
@@ -82,10 +81,9 @@
     ".agent-fabric/memory/rust-ui-dev/workflow/mutation-restore-mtime.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/relayed-visual-spec-confirm.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md",
-    ".agent-fabric/memory/fabric-coordinator/workflow.md",
     ".agent-fabric/memory/fabric-coordinator/INDEX.md"
   ],
-  "files_written": 54,
+  "files_written": 52,
   "harvest": {
     "host": "develop-qzapp",
     "in_scope": 1,
@@ -130,6 +128,8 @@
     }
   },
   "held_back": [
+    "fabric-coordinator/workflow:project-index-regen-recipe",
+    "rust-ui-dev/solution:j180-account-list-cadence",
     "rust-ui-dev/threads:j167-fleetdeck-focus-baseline"
   ],
   "hygiene_problems": [],
@@ -146,10 +146,7 @@
   ],
   "oversized_claims": [],
   "project": "herdr",
-  "redactions": [
-    "rust-ui-dev/solution:j180-account-list-cadence body: a /home/<login>/ path -- write the path from the repository root or ~/ -> '~/'",
-    "rust-ui-dev/solution:j180-account-list-cadence body: one account's scratch path -- name the artifact by commit, sha and how to rebuild it -> 'a scratch path'"
-  ],
+  "redactions": [],
   "reharvested_replaced": [],
   "rejected_hygiene": [],
   "replaced_sections": [
@@ -178,11 +175,6 @@
     "rust-ui-dev"
   ],
   "section_writers": {
-    ".agent-fabric/memory/fabric-coordinator/workflow.md#Regenerating a managed project's role INDEX.md when fabric main gains domain slices, without a drain": {
-      "agent": "user",
-      "host": "develop-qzapp",
-      "observed": "2026-10-31"
-    },
     ".agent-fabric/memory/rust-ui-dev/rationale/deck-no-typing-into-sessions.md#Why the Fleet Deck flags an agent with no inbox watch on the board instead of typing a re-arm prompt into its session": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
@@ -287,11 +279,6 @@
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-09"
-    },
-    ".agent-fabric/memory/rust-ui-dev/solution/j180-account-list-cadence.md#j180 FleetDeck: moveto --list read every 60 s (ACCOUNT_LIST_REFRESH_S), map stays 10 s; PR #52; unbound-account retries had kept the list at 10 s": {
-      "agent": "rust-ui-dev-01",
-      "host": "develop-qzapp",
-      "observed": "2026-10-30"
     },
     ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md#why herdr process-info on a moveto pane never shows claude — sudo use_pty puts the account on its own pty": {
       "agent": "rust-ui-dev-01",
@@ -500,8 +487,8 @@
   },
   "title_collisions": [],
   "watermarks": {
-    "rust-ui-dev-01@develop-qzapp": 1793435107999,
+    "rust-ui-dev-01@develop-qzapp": 1793398189999,
     "rust-ui-dev-02@develop-qzapp": 1792322443004,
-    "user@develop-qzapp": 1793427561864
+    "user@develop-qzapp": 1793427560999
   }
 }
