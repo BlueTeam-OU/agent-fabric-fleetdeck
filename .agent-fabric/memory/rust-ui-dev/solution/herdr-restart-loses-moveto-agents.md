@@ -5,7 +5,7 @@ topic: "herdr-restart-loses-moveto-agents"
 description: "What a herdr server stop/restart keeps for moveto agent tabs, measured; consequences for fabric-deck and piece 2"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -39,7 +39,7 @@ available, so it was not a real `sudo -u`.
   `moveto <account>` in it, without creating a duplicate tab.
 - Piece 2's measurement should include this restart case.
 
-See [[herdr-socket-access-design]].
+See [[rationale-carried-2026-10-10]].
 
 *References: herdr-socket-access-design*
 

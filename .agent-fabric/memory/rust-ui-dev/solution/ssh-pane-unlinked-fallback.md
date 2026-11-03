@@ -5,7 +5,7 @@ topic: "ssh-pane-unlinked-fallback"
 description: "Why an ssh harness pane with no ssh_client link still reads RUNNING: the sole-pane fallback (j19, PR #35) and its refusals"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"
