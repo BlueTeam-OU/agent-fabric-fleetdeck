@@ -5,7 +5,7 @@ topic: "ssh-pane-endpoint-match"
 description: "How the deck links an ssh harness pane to its session (ssh_client vs the pane's own socket), and why an agent login cannot run the live check"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

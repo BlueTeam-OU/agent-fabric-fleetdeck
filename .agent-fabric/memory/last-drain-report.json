@@ -15,46 +15,44 @@
   "clipped_descriptions": [],
   "collision_decisions": [
     {
-      "agent": "rust-ui-dev-02",
+      "agent": "rust-ui-dev-01",
       "decision": "supersede",
-      "key": "rust-ui-dev/workflow:fork-ci-traps#herdr fork CI traps — conventional-commit check on PR title and every subject; master has no required checks",
-      "observed_at": "2026-10-15",
+      "key": "rust-ui-dev/solution:zbus-fd-cloexec-window#zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock",
+      "observed_at": "2026-10-18",
       "rule": "same-agent"
     },
     {
       "agent": "rust-ui-dev-02",
       "decision": "supersede",
-      "key": "rust-ui-dev/workflow:fork-local-test-traps#Running the FleetDeck fork's tests and PR tools on develop-qzapp — false failures and the renamed-repo 307",
-      "observed_at": "2026-10-13",
-      "rule": "same-agent"
-    },
-    {
-      "agent": "rust-ui-dev-02",
-      "decision": "supersede",
-      "key": "rust-ui-dev/workflow:mutation-restore-mtime#A mutation check restored from a backup leaves cargo (stale mtime) or Python (stale .pyc, same size and second) running the mutant",
-      "observed_at": "2026-10-15",
+      "key": "rust-ui-dev/threads:focus-on-1004-j20#j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16",
+      "observed_at": "2026-10-16",
       "rule": "same-agent"
     }
   ],
   "files": [
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-prefix-ctrl6.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-host-toolchain.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-restart-loses-moveto-agents.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md",
     ".agent-fabric/memory/shared/intersection-fleet-deck-attention-seam.md",
     ".agent-fabric/memory/python-dev/INDEX.md",
+    "memory/domains/rust-ui-dev/domain/sigstop-is-asynchronous.md",
+    "memory/domains/rust-ui-dev/domain/slint-zero-timers-no-order.md",
+    "memory/domains/rust-ui-dev/domain/vuln-ignore-entries-checked.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/fleetdeck-linux-only-keeps-platform-code.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/rationale-carried-2026-10-10.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-agent-signs-not-lists.md",
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-cache-budget.md",
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-identity.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-agent-row-display.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-baseline.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-ci-platforms.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-prefix-ctrl6.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/herdr-host-toolchain.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/herdr-pane-focus-reporting.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/herdr-restart-loses-moveto-agents.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-restore-drops-plugin-panes.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-sound-paths.md",
-    ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md",
     ".agent-fabric/memory/rust-ui-dev/solution/zbus-fd-cloexec-window.md",
+    ".agent-fabric/memory/rust-ui-dev/workflow/fabric-review-next-chain.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/pr-status-needs-gate-counts.md",
+    ".agent-fabric/memory/rust-ui-dev/workflow/review-tools-bound-to-clone.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/workflow-carried-2026-10-10.md",
     ".agent-fabric/memory/rust-ui-dev/INDEX.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/deck-no-typing-into-sessions.md",
@@ -68,11 +66,11 @@
     ".agent-fabric/memory/rust-ui-dev/solution/plugin-pane-label-is-title.md",
     ".agent-fabric/memory/rust-ui-dev/solution/ssh-pane-endpoint-match.md",
     ".agent-fabric/memory/rust-ui-dev/solution/ssh-pane-unlinked-fallback.md",
-    ".agent-fabric/memory/rust-ui-dev/threads/threads-carried-2026-10-12.md",
     ".agent-fabric/memory/rust-ui-dev/threads/deck-jobs-working-delivered-j22.md",
     ".agent-fabric/memory/rust-ui-dev/threads/deck-pane-tabs-j18.md",
     ".agent-fabric/memory/rust-ui-dev/threads/focus-on-1004-j20.md",
     ".agent-fabric/memory/rust-ui-dev/threads/tab-rows-config-j21.md",
+    ".agent-fabric/memory/rust-ui-dev/threads/threads-carried-2026-10-12.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/codex-review-gateway.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/commit-only-on-green.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/deck-delivery-read-back.md",
@@ -82,28 +80,30 @@
     ".agent-fabric/memory/rust-ui-dev/workflow/fork-local-test-traps.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/mutation-restore-mtime.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/relayed-visual-spec-confirm.md",
-    ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md"
+    ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md",
+    ".agent-fabric/memory/fabric-coordinator/INDEX.md"
   ],
-  "files_written": 46,
+  "files_written": 52,
   "harvest": {
     "host": "develop-qzapp",
-    "in_scope": 27,
-    "next_watermark": 1792322443004,
+    "in_scope": 1,
+    "next_watermark": 1793427561864,
     "provisional_agent": 0,
-    "reflection": 3,
+    "reflection": 0,
     "since_watermark": 0,
     "skipped_no_roles_class": []
   },
   "harvest_sources": {
     "rust-ui-dev-01@develop-qzapp": {
       "host": "develop-qzapp",
-      "in_scope": 21,
-      "next_watermark": 1792331849681,
+      "in_scope": 30,
+      "next_watermark": 1793435108307,
       "provisional_agent": 0,
       "reflection": 0,
       "since_watermark": 0,
       "skipped_no_roles_class": [
         "feedback-act-without-asking.md",
+        "fleet-hold-2026-10-28.md",
         "herdr-start-notes.md",
         "memory-files-by-project.md"
       ]
@@ -116,9 +116,22 @@
       "reflection": 3,
       "since_watermark": 0,
       "skipped_no_roles_class": []
+    },
+    "user@develop-qzapp": {
+      "host": "develop-qzapp",
+      "in_scope": 1,
+      "next_watermark": 1793427561864,
+      "provisional_agent": 0,
+      "reflection": 0,
+      "since_watermark": 0,
+      "skipped_no_roles_class": []
     }
   },
-  "held_back": [],
+  "held_back": [
+    "fabric-coordinator/workflow:project-index-regen-recipe",
+    "rust-ui-dev/solution:j180-account-list-cadence",
+    "rust-ui-dev/threads:j167-fleetdeck-focus-baseline"
+  ],
   "hygiene_problems": [],
   "memory_helpful": {},
   "memory_marks": {},
@@ -126,26 +139,30 @@
   "memory_use": {},
   "merge_target_unresolved": [],
   "migrated": [
-    "rust-ui-dev/threads: threads.md -> threads/threads-carried-2026-10-12.md"
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-prefix-ctrl6.md: links to corrected memories pointed at the slice they were written into",
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-host-toolchain.md: links to corrected memories pointed at the slice they were written into",
+    ".agent-fabric/memory/rust-ui-dev/solution/herdr-restart-loses-moveto-agents.md: links to corrected memories pointed at the slice they were written into",
+    ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md: links to corrected memories pointed at the slice they were written into"
   ],
   "oversized_claims": [],
   "project": "herdr",
-  "redactions": [
-    "rust-ui-dev/threads:focus-on-1004-j20 body: external project name -> '[redacted]'"
-  ],
+  "redactions": [],
+  "reharvested_replaced": [],
   "rejected_hygiene": [],
-  "retired_in_siblings": [],
-  "retitles": [
+  "replaced_sections": [
     {
-      "agent": "rust-ui-dev-02",
-      "decided_by": "same-agent",
-      "key": "rust-ui-dev/workflow:mutation-restore-mtime#A mutation check restored from a backup leaves cargo (stale mtime) or Python (stale .pyc, same size and second) running the mutant",
-      "new_heading": "A mutation check restored from a backup leaves cargo (stale mtime) or Python (stale .pyc, same size and second) running the mutant",
-      "old_heading": "A mutation check restored with cp/mv from a backup leaves cargo running the mutant — touch the file after restoring",
-      "project": "herdr",
-      "slice": ".agent-fabric/memory/rust-ui-dev/workflow/mutation-restore-mtime.md"
+      "heading": "zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock",
+      "home": ".agent-fabric/memory/rust-ui-dev/solution",
+      "key": "b3cd48bbd47d0c5b"
+    },
+    {
+      "heading": "j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16",
+      "home": ".agent-fabric/memory/rust-ui-dev/threads",
+      "key": "974f5d92e4f70f2f"
     }
   ],
+  "retired_in_siblings": [],
+  "retitles": [],
   "review_horizons": {
     "aged": [],
     "reads_state": "ok",
@@ -153,6 +170,7 @@
     "unread_from": "2026-12-07"
   },
   "roles": [
+    "fabric-coordinator",
     "python-dev",
     "rust-ui-dev"
   ],
@@ -191,6 +209,11 @@
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
       "observed": "2026-10-14"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-agent-signs-not-lists.md#How FleetDeck decides an ssh-agent holds the deck key (signature, not listing), and why the desktop keyring proxy never counts": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-30"
     },
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-cache-budget.md#FleetDeck CI's 10 GB Actions cache — which keys churn, why debian saves were slow, how to measure a cache's worth": {
       "agent": "rust-ui-dev-01",
@@ -337,6 +360,11 @@
       "host": "develop-qzapp",
       "observed": "2026-10-18"
     },
+    ".agent-fabric/memory/rust-ui-dev/workflow/fabric-review-next-chain.md#fabric-review next: feed it the previous round's generated request json, not the original yaml, or the round number and range go wrong": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-28"
+    },
     ".agent-fabric/memory/rust-ui-dev/workflow/fork-build-zig.md#How to build the FleetDeck fork on develop-qzapp — Zig 0.16 is not on the host; rust-ui-dev-02 keeps one in its home": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
@@ -367,6 +395,11 @@
       "host": "develop-qzapp",
       "observed": "2026-10-18"
     },
+    ".agent-fabric/memory/rust-ui-dev/workflow/review-tools-bound-to-clone.md#fabric-review MCP tools only serve the session's own clone: review another repository's PR from a session launched in that repository": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-27"
+    },
     ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md#With an `upstream` remote in the FleetDeck clone, gh targets herdrdev/herdr by default — pin gh to the fork before any gh write": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
@@ -381,45 +414,81 @@
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-12"
+    },
+    "memory/domains/rust-ui-dev/domain/sigstop-is-asynchronous.md#kill -STOP returns before a multi-threaded process is stopped; a test that needs it stopped must wait for every /proc/<pid>/task/*/stat to read T": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-18"
+    },
+    "memory/domains/rust-ui-dev/domain/slint-zero-timers-no-order.md#Two Slint zero-delay timers scheduled in one turn fire in no promised order; coalesce \"latest wins\" requests into one scheduled task": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-19"
+    },
+    "memory/domains/rust-ui-dev/domain/vuln-ignore-entries-checked.md#Accepting a known vulnerability on a build-tool classpath (an OSV or cargo-deny ignore): the entry says what was checked and when, and expires early on a new stable release": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-20"
     }
   },
   "shared_slices": 1,
   "shared_topics": [
     "intersection:fleet-deck-attention-seam"
   ],
-  "stamp": "2026-10-18",
+  "stamp": "2026-10-31",
+  "superseded_harvests": [
+    "rust-ui-dev/solution:herdr-pane-focus-reporting#What a herdr pane learns about its own focus (DECSET 1004): changes only, never the state at enable; and why a focused plugin tab did not move clients: memory 'herdr-pane-focus-reporting' is text an applied correction or supersede replaced (last-drain-report.json replaced_sections or applied_corrections); not written — update or delete 'herdr-pane-focus-reporting'"
+  ],
   "telemetry": {
-    "rust-ui-dev": {
-      "admitted": 45,
-      "candidates": 48,
+    "fabric-coordinator": {
+      "admitted": 1,
+      "candidates": 1,
       "merged_into_existing": 0,
-      "observations_in": 48,
-      "rejected": 3
+      "observations_in": 1,
+      "rejected": 0
+    },
+    "rust-ui-dev": {
+      "admitted": 52,
+      "candidates": 56,
+      "merged_into_existing": 0,
+      "observations_in": 56,
+      "rejected": 4
     }
   },
   "telemetry_sources": {
     "rust-ui-dev-01@develop-qzapp": {
       "rust-ui-dev": {
-        "admitted": 18,
-        "candidates": 21,
+        "admitted": 26,
+        "candidates": 30,
         "merged_into_existing": 0,
-        "observations_in": 21,
-        "rejected": 3
+        "observations_in": 30,
+        "rejected": 4
       }
     },
     "rust-ui-dev-02@develop-qzapp": {
       "rust-ui-dev": {
-        "admitted": 27,
-        "candidates": 27,
+        "admitted": 26,
+        "candidates": 26,
         "merged_into_existing": 0,
-        "observations_in": 27,
+        "observations_in": 26,
+        "rejected": 0
+      }
+    },
+    "unattributed": {},
+    "user@develop-qzapp": {
+      "fabric-coordinator": {
+        "admitted": 1,
+        "candidates": 1,
+        "merged_into_existing": 0,
+        "observations_in": 1,
         "rejected": 0
       }
     }
   },
   "title_collisions": [],
   "watermarks": {
-    "rust-ui-dev-01@develop-qzapp": 1792331849681,
-    "rust-ui-dev-02@develop-qzapp": 1792322443004
+    "rust-ui-dev-01@develop-qzapp": 1793398189999,
+    "rust-ui-dev-02@develop-qzapp": 1792322443004,
+    "user@develop-qzapp": 1793427560999
   }
 }

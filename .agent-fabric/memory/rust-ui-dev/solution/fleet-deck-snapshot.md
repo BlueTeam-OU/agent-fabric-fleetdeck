@@ -5,7 +5,7 @@ topic: "fleet-deck-snapshot"
 description: "How an agent reads Fleet Deck's views as text (fleet-deck snapshot), and why a non-operator login sees ? in half the board"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

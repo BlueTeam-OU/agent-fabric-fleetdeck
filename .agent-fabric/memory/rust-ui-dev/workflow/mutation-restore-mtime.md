@@ -5,7 +5,7 @@ topic: "mutation-restore-mtime"
 description: A mutation check restored from a backup leaves cargo (stale mtime) or Python (stale .pyc, same size and second) running the mutant
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

@@ -5,13 +5,14 @@ topic: "zbus-fd-cloexec-window"
 description: zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
     project: herdr
     working_copy: herdr
 derived_from:
+  - 7591baed2e0686bd
   - d63b173417c0335b
 ---
 
@@ -23,7 +24,7 @@ Measured 2026-10-18 (j107) in the herdr fork's src/platform/linux/shutdown.rs, z
 - So the leak is only a race: a std::process::Command fork on another thread between recvmsg and that drop. Panes are safe because portable-pty's close_random_fds closes fds above 2 in the child. Worst cost is a shutdown delayed to logind's InhibitDelayMaxSec.
 - A first naive test passed before any fix. Mutation check: clearing FD_CLOEXEC on the inhibitor makes the child-spawn test fail.
 - No z-galaxy/zbus issue or PR mentions CLOEXEC (searched 2026-10-18). The real fix is upstream (pass CMSG_CLOEXEC on Linux). In-tree it would mean a custom zbus socket: judged not worth it for this bounded race.
-- Commit a5066a6a (test + note) is on the j106 branch, local only, so #42's reviewed head 7d3e21df stays intact.
+- The test and the note are BlueTeam-OU/agent-fabric-fleetdeck#43 (f19e1764, opened 2026-10-18). The test is #[ignore] (needs dbus-daemon) and no recipe or CI step runs it: a pre-existing gap the #43 review named.
 
 Related: [[herdr-host-toolchain]]
 

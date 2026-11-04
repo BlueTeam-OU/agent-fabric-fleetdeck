@@ -5,7 +5,7 @@ topic: "fork-ci-traps"
 description: "herdr fork CI traps — conventional-commit check on PR title and every subject; master has no required checks"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "fleetdeck-ci-cache-budget"
 description: "FleetDeck CI's 10 GB Actions cache — which keys churn, why debian saves were slow, how to measure a cache's worth"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

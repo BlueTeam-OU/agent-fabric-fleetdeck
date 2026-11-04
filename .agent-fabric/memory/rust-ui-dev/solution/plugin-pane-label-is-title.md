@@ -5,7 +5,7 @@ topic: "plugin-pane-label-is-title"
 description: "FleetDeck labels a plugin pane with its manifest title and lists an overlay in its tab — a title equal to a deck role label is read as the deck's pane"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

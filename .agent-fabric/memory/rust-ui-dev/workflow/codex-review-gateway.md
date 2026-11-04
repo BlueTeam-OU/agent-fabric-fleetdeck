@@ -5,7 +5,7 @@ topic: "codex-review-gateway"
 description: "How the second review engine (Codex) runs from this login, how review rounds are posted so the gate stays honest, and how a re-review brief is derived"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

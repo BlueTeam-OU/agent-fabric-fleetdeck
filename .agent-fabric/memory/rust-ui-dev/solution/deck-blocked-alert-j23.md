@@ -5,7 +5,7 @@ topic: "deck-blocked-alert-j23"
 description: Why a deck tab stays red after a permission prompt is answered, and where the blocked alert is (not) suppressed
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

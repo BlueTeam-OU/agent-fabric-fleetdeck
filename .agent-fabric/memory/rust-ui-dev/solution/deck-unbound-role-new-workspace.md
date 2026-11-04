@@ -5,7 +5,7 @@ topic: "deck-unbound-role-new-workspace"
 description: "Why FleetDeck put a new account's tab in workspace New, and why herdr cannot move it afterwards"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

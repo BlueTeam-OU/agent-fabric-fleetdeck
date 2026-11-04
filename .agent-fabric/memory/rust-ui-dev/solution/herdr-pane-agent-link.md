@@ -5,7 +5,7 @@ topic: "herdr-pane-agent-link"
 description: How herdr gives panes SSH_AUTH_SOCK, why panes ask for the fabric_deck passphrase, and why a registration must not live in the deck controller
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

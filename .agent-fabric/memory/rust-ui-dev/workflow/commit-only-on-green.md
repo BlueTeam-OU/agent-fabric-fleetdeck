@@ -5,7 +5,7 @@ topic: "commit-only-on-green"
 description: "Never put a commit or push in the same command line after a test run whose status is not captured — a `;` or a pipe lets a red suite commit and push"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

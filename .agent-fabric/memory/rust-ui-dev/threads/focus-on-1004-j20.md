@@ -5,7 +5,7 @@ topic: "focus-on-1004-j20"
 description: "j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-18"
+distilled_at: "2026-10-31"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"
@@ -31,7 +31,7 @@ j20 (follow-up to FleetDeck #36, see [[deck-pane-tabs-j18]]), branch develop-qza
   operator's deck (617a0951, 120/120 panes kept, ^[[I on set, control ^[[O^[[I, agent pane live without a key).
 - MERGED 2026-10-16: BlueTeam-OU/agent-fabric-fleetdeck#38 at 6b47d9e6 (3 work, 4 fix). Not live until the operator
   runs fleet-deck/install + handoff (Rust change), see [[deck-delivery-read-back]]. Open owner choice: accept the
-  tracker's documented limit (C1 CSI breaking into strings/[redacted]/intermediates unseen) or a vendored libghostty-vt
+  tracker's documented limit (C1 CSI breaking into strings/DCS/intermediates unseen) or a vendored libghostty-vt
   hook reporting each applied DECSET; five review rounds each found another table divergence of the hand parser.
 - 2026-10-16: tests (b4fac6a5) and deck docs (76286065) added; PR BlueTeam-OU/agent-fabric-fleetdeck#38 opened,
   blind review dispatched on 76286065. Live-checked on a throwaway debug server (no client -> \e[O although pane list
