@@ -6722,6 +6722,103 @@ fn terminal_attach_frame_keeps_the_attached_terminals_scroll_bar() {
 }
 
 #[test]
+fn terminal_attach_scroll_bar_thumb_follows_the_servers_scroll_position() {
+    with_terminal_session_test_server(|server, runtime_terminal_id, terminal_id, _pane_id| {
+        let mut bytes = Vec::new();
+        for line in 0..200 {
+            bytes.extend_from_slice(format!("line {line:03}\r\n").as_bytes());
+        }
+        server.app.terminal_runtimes.insert(
+            runtime_terminal_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 65536, &bytes),
+        );
+        let (writer, _control, render) = test_client_writer();
+        assert!(!server.handle_server_event(ServerEvent::ClientConnected {
+            client_id: 7,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_mouse: false,
+            writer,
+        }));
+        assert!(
+            server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                client_id: 7,
+                terminal_id,
+                takeover: false,
+            })
+        );
+        // Frames may be diffs of the one before, so they are read as the attach client's host
+        // terminal reads them: in order, into one screen.
+        let host = crate::terminal::TerminalRuntime::test_with_scrollback_bytes(80, 24, 4096, b"");
+        let frame_thumb = |server: &mut HeadlessServer| {
+            server.render_and_stream();
+            while let Ok(message) = render.try_recv() {
+                if let ServerMessage::Terminal(frame) = read_server_message(message) {
+                    host.test_process_pty_bytes(&frame.bytes);
+                }
+            }
+            host.visible_text()
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.ends_with('\u{2590}'))
+                .map(|(row, _)| row)
+                .collect::<Vec<_>>()
+        };
+        let scroll = |server: &mut HeadlessServer, source, direction, lines| {
+            assert!(server.handle_server_event(ServerEvent::ClientAttachScroll {
+                client_id: 7,
+                source,
+                direction,
+                lines,
+                column: Some(10),
+                row: Some(5),
+                modifiers: 0,
+            }));
+        };
+
+        let live = frame_thumb(server);
+        assert_eq!(
+            live.last(),
+            Some(&23),
+            "at the live end the thumb is at the bottom"
+        );
+
+        let page_up = || AttachScrollSource::PageKey {
+            input: b"\x1b[5~".to_vec(),
+        };
+        scroll(server, page_up(), AttachScrollDirection::Up, 23);
+        let one_page = frame_thumb(server);
+        assert!(
+            !one_page.is_empty() && one_page[0] < live[0],
+            "{live:?} -> {one_page:?}"
+        );
+        scroll(server, page_up(), AttachScrollDirection::Up, 23);
+        let two_pages = frame_thumb(server);
+        assert!(two_pages[0] < one_page[0], "{one_page:?} -> {two_pages:?}");
+
+        scroll(
+            server,
+            AttachScrollSource::Wheel,
+            AttachScrollDirection::Down,
+            200,
+        );
+        assert_eq!(
+            frame_thumb(server),
+            live,
+            "the wheel brings it back to the live end"
+        );
+
+        // ui.pane_scrollbars = false: no track and no thumb in the attach either.
+        server.app.state.pane_scrollbars = false;
+        scroll(server, page_up(), AttachScrollDirection::Up, 23);
+        assert!(frame_thumb(server).is_empty());
+        assert!(!host.visible_text().contains('\u{2595}'));
+    });
+}
+
+#[test]
 fn pending_terminal_resize_does_not_take_shell_foreground_or_geometry() {
     let mut server = test_headless_server();
     server.clients.insert(
