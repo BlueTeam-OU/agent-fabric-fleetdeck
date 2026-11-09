@@ -12,7 +12,7 @@ origin:
     project: herdr
     working_copy: herdr
 derived_from:
-  - 7257e6f956554be9
+  - b7e34e552c25b874
 ---
 
 ## after a reboot or unit restart, an account's harness pane can sit at a bare shell instead of moveto's --wait prompt, so fleet-deck start --auto activates nothing
@@ -39,13 +39,13 @@ sourcing /etc/profile.d (flatpak, grepconf.sh, readlink) when ensure asks, and
 running_program() took any non-shell pid for a session, so it typed nothing.
 Fixed in agent-fabric PR #443 (66324c90): settle window and read-back.
 
-A second fault blocks the same boot: fleet-deck's DeckFleet.waiting reads the
-prompt with `pane read --source recent`. That read comes back empty on an
-attached pane; `--source visible` shows the prompt. So start --auto in attach
-mode presses nobody. Reported to rust-ui-dev-01 (OBSERVATION
-01a193ea-c676-7012-a98d-38b40654e0b9). Until it is fixed, focus each tab and
-press Enter by hand.
+A second fault blocked the same boot until 2026-10-31: fleet-deck's
+DeckFleet.waiting read the prompt with `pane read --source recent`, which comes
+back empty on an attached pane, so start --auto in attach mode pressed nobody.
+Reported to rust-ui-dev-01 (OBSERVATION 01a193ea-c676-7012-a98d-38b40654e0b9);
+fixed in herdr fork commit 6b12fbec: waiting reads `--source visible` for an
+attach (`fleet-deck/fleet_deck.py::waiting`). No Enter by hand is needed.
 
-*Anchors: `agent-fabric:tools/fabric/control/harness_pane.py::def ensure`, `fleet-deck/boot.py::PROMPT_WAIT_S`*
+*Anchors: `agent-fabric:tools/fabric/control/harness_pane.py::def ensure`, `fleet-deck/boot.py::PROMPT_WAIT_S`, `fleet-deck/fleet_deck.py::waiting`*
 
-*Observed 2026-10-31 (fabric-coordinator)*
+*Observed 2026-11-09 (fabric-coordinator)*

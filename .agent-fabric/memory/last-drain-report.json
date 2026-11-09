@@ -100,7 +100,7 @@
   "harvest": {
     "host": "develop-qzapp",
     "in_scope": 6,
-    "next_watermark": 1793820525993,
+    "next_watermark": 1794196994106,
     "provisional_agent": 0,
     "reflection": 0,
     "since_watermark": 0,
@@ -133,7 +133,7 @@
     "user@develop-qzapp": {
       "host": "develop-qzapp",
       "in_scope": 6,
-      "next_watermark": 1793820525993,
+      "next_watermark": 1794196994106,
       "provisional_agent": 0,
       "reflection": 0,
       "since_watermark": 0,
@@ -231,7 +231,7 @@
     ".agent-fabric/memory/fabric-coordinator/solution/harness-pane-enter-lost-at-start.md#after a reboot or unit restart, an account's harness pane can sit at a bare shell instead of moveto's --wait prompt, so fleet-deck start --auto activates nothing": {
       "agent": "user",
       "host": "develop-qzapp",
-      "observed": "2026-10-31"
+      "observed": "2026-11-09"
     },
     ".agent-fabric/memory/fabric-coordinator/workflow/arm-refused-ruleset-lacks-fabric-armed.md#fabric-pr arm refuses on a repo whose ruleset predates ADR-019 A 2026-11-01 (no fabric/armed required check); applying it is the owner's decision (j551)": {
       "agent": "user",
@@ -644,6 +644,6 @@
   "watermarks": {
     "rust-ui-dev-01@develop-qzapp": 1793786882189,
     "rust-ui-dev-02@develop-qzapp": 1792322443004,
-    "user@develop-qzapp": 1793820525993
+    "user@develop-qzapp": 1794196994106
   }
 }
