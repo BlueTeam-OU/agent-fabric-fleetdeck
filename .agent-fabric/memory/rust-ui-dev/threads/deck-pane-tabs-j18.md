@@ -5,7 +5,7 @@ topic: "deck-pane-tabs-j18"
 description: "FleetDeck sub-tab row (j18) — the design, the owner's F1-F4 chord, what is committed and what is left"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

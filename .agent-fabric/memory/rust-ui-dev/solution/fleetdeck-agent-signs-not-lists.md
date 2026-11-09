@@ -5,7 +5,7 @@ topic: "fleetdeck-agent-signs-not-lists"
 description: "How FleetDeck decides an ssh-agent holds the deck key (signature, not listing), and why the desktop keyring proxy never counts"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

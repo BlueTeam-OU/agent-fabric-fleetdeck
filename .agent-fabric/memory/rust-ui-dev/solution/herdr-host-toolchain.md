@@ -5,7 +5,7 @@ topic: "herdr-host-toolchain"
 description: "What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -13,6 +13,7 @@ origin:
     working_copy: herdr
 derived_from:
   - 3e02d29b970bf3c8
+  - 8772d0374830d478
   - d0740a7f949183e9
 ---
 
@@ -58,6 +59,10 @@ See [[rationale-carried-2026-10-10]].
   contains the pattern, so the command exits 144 mid-way (2026-10-11, stopping Xvfb).
   Use `pkill -x Xvfb` or a pid file.
 
-*References: herdr-socket-access-design*
+**Cargo tests inside a FleetDeck pane** (seen 2026-11-01, PR #56): the pane exports HERDR_CONFIG_PATH (the operator's config.toml) besides HERDR_SOCKET_PATH and friends; unsetting only the sockets left 13 config/client_mode tests red. Unset every HERDR_* and AGENT_FABRIC_FLEETDECK: `env $(env | grep -o '^HERDR[A-Z_]*' | sed 's/^/-u /') -u AGENT_FABRIC_FLEETDECK cargo nextest run ...`.
+
+**Handing a release build to another account** (j193, 2026-11-02): ~/ is mode 0700, so ~/fleetdeck-builds is not readable by others; put the copy in `/var/tmp/<job>-fleetdeck-<sha>/` (755). A rebuild of the same commit with `just build` (PATH must include ~/.cargo/bin) was bit-identical to the earlier one (2813fdb2, sha256 3e9b1073), ~3.5 min from a cold target.
+
+*References: rationale-carried-2026-10-10*
 
 *Observed 2026-10-07 (rust-ui-dev)*

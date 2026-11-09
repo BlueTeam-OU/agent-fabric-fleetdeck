@@ -5,7 +5,7 @@ topic: "moveto-wait-prompt-stays"
 description: "After Enter, moveto --wait's prompt stays the pane's last line during the silent refresh — never read \"prompt visible\" as \"moveto ended\""
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

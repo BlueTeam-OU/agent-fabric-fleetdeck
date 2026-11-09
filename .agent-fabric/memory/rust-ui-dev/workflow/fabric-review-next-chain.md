@@ -5,7 +5,7 @@ topic: "fabric-review-next-chain"
 description: "fabric-review next: feed it the previous round's generated request json, not the original yaml, or the round number and range go wrong"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

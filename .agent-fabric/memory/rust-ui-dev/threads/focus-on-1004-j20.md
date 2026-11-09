@@ -5,7 +5,7 @@ topic: "focus-on-1004-j20"
 description: "j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

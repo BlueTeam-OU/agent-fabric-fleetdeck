@@ -5,7 +5,7 @@ topic: "relayed-visual-spec-confirm"
 description: "A visual or interaction spec the coordinator relays from the owner has been misread twice; before building, restate what is coloured/shown and confirm it against the owner's own words"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

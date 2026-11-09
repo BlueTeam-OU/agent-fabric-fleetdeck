@@ -5,7 +5,7 @@ topic: "fork-local-test-traps"
 description: "Running the FleetDeck fork's tests and PR tools on develop-qzapp — false failures and the renamed-repo 307"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

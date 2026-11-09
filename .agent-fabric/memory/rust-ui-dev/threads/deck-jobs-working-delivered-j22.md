@@ -5,7 +5,7 @@ topic: "deck-jobs-working-delivered-j22"
 description: "j22 (REQUEST 01a14483, coordinator): deck job counts split working vs delivered; on PR #37; state and how to read back"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

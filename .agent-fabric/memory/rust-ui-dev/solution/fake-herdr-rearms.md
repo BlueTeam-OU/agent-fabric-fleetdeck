@@ -5,7 +5,7 @@ topic: "fake-herdr-rearms"
 description: "fleet-deck FakeHerdr — a pane re-arms \"moveto --wait\" one settle after any run; assert a restore's decision by the runs since, not by counts"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

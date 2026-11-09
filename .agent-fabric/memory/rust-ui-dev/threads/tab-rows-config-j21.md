@@ -5,7 +5,7 @@ topic: "tab-rows-config-j21"
 description: "j21 — the owner's requirements for the tab row and sub-tab row: colours, order per tab, spacing (2026-10-16)"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

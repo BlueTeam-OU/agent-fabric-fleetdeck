@@ -5,7 +5,7 @@ topic: "fork-renamed-fleetdeck"
 description: "The herdr fork repository is BlueTeam-OU/agent-fabric-fleetdeck (renamed 2026-10-11); when to switch origin"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"
