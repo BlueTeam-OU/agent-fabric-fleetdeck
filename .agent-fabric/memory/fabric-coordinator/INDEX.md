@@ -3,7 +3,7 @@ role: "fabric-coordinator"
 class: index
 description: "What fabric-coordinator knows and where it lives."
 tier: 1
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 ---
 
 # fabric-coordinator — knowledge index
@@ -31,6 +31,7 @@ control plane checked out beside it.
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/apm.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/apm.md) — microsoft/apm, Agent Package Manager (Python, MIT, v0.34.0 2026-10-19) — not adopted; borrow lockfile deployed-file hashes, rebuild-in-scratch drift audit, tighten-only policy merge, text vs executable trust gate
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/apostrophe-breaks-quoted-python.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/apostrophe-breaks-quoted-python.md) — An apostrophe in a comment inside a shell script's single-quoted python block silently ends the quote; bash -n passes and the failure surfaces as a runtime syntax error far from the edit
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/autonat-client-crate-facts.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/autonat-client-crate-facts.md) — What libp2p-autonat 0.15.0's v2 CLIENT actually does — measured, and contradicting several accepted documents
+- [`../agent-fabric/memory/domains/fabric-coordinator/domain/binnacle-tideos-eval-kit.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/binnacle-tideos-eval-kit.md) — binnacle / TideOS Eval Kit: MIT pure-Rust dispatcher over 15 agent-eval CLIs (error analysis → judge calibration → paired stats → CI gate → close the loop); not adopted (8 days old, 0-star tools, README-level claims, Windows-built…
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/bndr.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/bndr.md) — bndr: MIT Go one-binary Linux dashboard that finds loopback HTTP dev servers via /proc/net/tcp and bridges them onto the LAN; not adopted (shared host namespace = every login's ports incl. relay/agentd/InterWeave exposed, no auth, 0…
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/cliproxyapi.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/cliproxyapi.md) — router-for-me/CLIProxyAPI (MIT Go, 56.7k stars): exposes subscription OAuth logins (Claude Code, Codex, Gemini/Antigravity, Grok, Kimi, Devin) as OpenAI/Claude/Gemini APIs with multi-account round-robin; not adopted (one process holding…
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/cloudflare-tsrs-upstream-sync.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/cloudflare-tsrs-upstream-sync.md) — Cloudflare/VoidZero tsrs (Rust port of TypeScript, 2026-10): production-grade players run an AI-made port kept faithful by an agent upstream-sync loop (daily diff review → tracking issues, nightly upstream test suite as a compatibility…
@@ -55,6 +56,18 @@ control plane checked out beside it.
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/software-factory-loops-graphs-harnesses.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/software-factory-loops-graphs-harnesses.md) — the "software factory" article (2026-09-11) — planning and execution loops, a dependency graph, a harness, an outer loop; what it claims and where the fabric already matches
 - [`../agent-fabric/memory/domains/fabric-coordinator/domain/yamux-silent-downgrade.md`](../agent-fabric/memory/domains/fabric-coordinator/domain/yamux-silent-downgrade.md) — Tuning libp2p yamux via any setter silently swaps the muxer to vulnerable yamux 0.12.1, and cargo-deny cannot see it; InterWeave now guards it with check_yamux_muxer.sh
 - [`../agent-fabric/memory/shared/domain-claude-code-attribution-reminder.md`](../agent-fabric/memory/shared/domain-claude-code-attribution-reminder.md) — The attribution key is written by runtime/claude-code/user-settings.py, run from tools/fabric/bootstrap.py (shared)
+
+## solution
+
+- [`.agent-fabric/memory/fabric-coordinator/solution/deck-boot-summary-not-in-deck-log.md`](.agent-fabric/memory/fabric-coordinator/solution/deck-boot-summary-not-in-deck-log.md) — fleet-deck start --auto prints its "up: N; skipped" boot summary to its own terminal, not deck.log; use presence instead
+- [`.agent-fabric/memory/fabric-coordinator/solution/harness-pane-enter-lost-at-start.md`](.agent-fabric/memory/fabric-coordinator/solution/harness-pane-enter-lost-at-start.md) — after a reboot or unit restart, an account's harness pane can sit at a bare shell instead of moveto's --wait prompt, so fleet-deck start --auto activates nothing
+
+## workflow
+
+- [`.agent-fabric/memory/fabric-coordinator/workflow/arm-refused-ruleset-lacks-fabric-armed.md`](.agent-fabric/memory/fabric-coordinator/workflow/arm-refused-ruleset-lacks-fabric-armed.md) — fabric-pr arm refuses on a repo whose ruleset predates ADR-019 A 2026-11-01 (no fabric/armed required check); applying it is the owner's decision (j551)
+- [`.agent-fabric/memory/fabric-coordinator/workflow/deck-build-distribution-is-owners-command.md`](.agent-fabric/memory/fabric-coordinator/workflow/deck-build-distribution-is-owners-command.md) — how a merged herdr fleet-deck change reaches the operator deck: ff the shared checkout and run its fleet-deck/install, the owner's command from a terminal
+- [`.agent-fabric/memory/fabric-coordinator/workflow/deck-live-readback-recipe.md`](.agent-fabric/memory/fabric-coordinator/workflow/deck-live-readback-recipe.md) — how to read back fleet deck attach behaviour live on the operator deck (tab focus, tabs setting, ssh counts) without miscounting
+- [`.agent-fabric/memory/fabric-coordinator/workflow/review-next-needs-card-base.md`](.agent-fabric/memory/fabric-coordinator/workflow/review-next-needs-card-base.md) — fabric-review next refuses a round-1 request whose range base is a ref name (origin/master) until card_base is set
 
 ## recall
 

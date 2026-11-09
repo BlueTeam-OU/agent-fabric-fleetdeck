@@ -8,7 +8,7 @@ knowledge_scope: full
 shared_with:
   - "python-dev"
   - "rust-ui-dev"
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

@@ -5,7 +5,7 @@ topic: "upstream-remote-gh-default"
 description: "With an `upstream` remote in the FleetDeck clone, gh targets herdrdev/herdr by default — pin gh to the fork before any gh write"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

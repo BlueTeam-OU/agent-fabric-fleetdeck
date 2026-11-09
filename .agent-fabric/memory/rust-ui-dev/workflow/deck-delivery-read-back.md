@@ -5,7 +5,7 @@ topic: "deck-delivery-read-back"
 description: "How a merged FleetDeck change reaches the owner's live deck (Python views vs Rust binary), why the operator does it, and how to write a read-back that proves something"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

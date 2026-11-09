@@ -5,7 +5,7 @@ topic: "herdr-restart-loses-moveto-agents"
 description: "What a herdr server stop/restart keeps for moveto agent tabs, measured; consequences for fabric-deck and piece 2"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -41,6 +41,6 @@ available, so it was not a real `sudo -u`.
 
 See [[rationale-carried-2026-10-10]].
 
-*References: herdr-socket-access-design*
+*References: rationale-carried-2026-10-10*
 
 *Observed 2026-10-07 (rust-ui-dev)*

@@ -5,7 +5,7 @@ topic: "review-tools-bound-to-clone"
 description: "fabric-review MCP tools only serve the session's own clone: review another repository's PR from a session launched in that repository"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

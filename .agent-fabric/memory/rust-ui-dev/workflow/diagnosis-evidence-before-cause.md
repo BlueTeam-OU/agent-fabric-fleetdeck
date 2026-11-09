@@ -5,7 +5,7 @@ topic: "diagnosis-evidence-before-cause"
 description: "When diagnosing a live deck miss reported by the owner, get the timestamped evidence (the operator's deck.log) and check the code or docs before naming a cause or building a fix; three claims in one thread were withdrawn"
 tier: 1
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"

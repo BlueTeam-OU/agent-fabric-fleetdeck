@@ -5,7 +5,7 @@ topic: "zbus-fd-cloexec-window"
 description: zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"

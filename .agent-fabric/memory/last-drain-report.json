@@ -17,15 +17,8 @@
     {
       "agent": "rust-ui-dev-01",
       "decision": "supersede",
-      "key": "rust-ui-dev/solution:zbus-fd-cloexec-window#zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock",
-      "observed_at": "2026-10-18",
-      "rule": "same-agent"
-    },
-    {
-      "agent": "rust-ui-dev-02",
-      "decision": "supersede",
-      "key": "rust-ui-dev/threads:focus-on-1004-j20#j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16",
-      "observed_at": "2026-10-16",
+      "key": "rust-ui-dev/solution:herdr-host-toolchain#What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts",
+      "observed_at": "2026-10-07",
       "rule": "same-agent"
     }
   ],
@@ -41,20 +34,35 @@
     "memory/domains/rust-ui-dev/domain/vuln-ignore-entries-checked.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/fleetdeck-linux-only-keeps-platform-code.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/rationale-carried-2026-10-10.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/attach-pane-scroll-bar.md",
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-agent-signs-not-lists.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-attach-facts.md",
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-cache-budget.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-warnings-j207.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-deck-cost-numbers.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-focus-code-map.md",
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-identity.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-stream-close-race.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/harness-server-stale-binary.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-agent-row-display.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-baseline.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-fork-ci-platforms.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-restore-drops-plugin-panes.md",
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-sound-paths.md",
+    ".agent-fabric/memory/rust-ui-dev/solution/j180-account-list-cadence.md",
     ".agent-fabric/memory/rust-ui-dev/solution/zbus-fd-cloexec-window.md",
+    ".agent-fabric/memory/rust-ui-dev/threads/j167-fleetdeck-focus-baseline.md",
+    ".agent-fabric/memory/rust-ui-dev/threads/j188-deck-tabs-setting.md",
+    ".agent-fabric/memory/rust-ui-dev/threads/j192-modifier-drag-selection.md",
+    ".agent-fabric/memory/rust-ui-dev/workflow/agent-survived-kill-check.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/fabric-review-next-chain.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/pr-status-needs-gate-counts.md",
+    ".agent-fabric/memory/rust-ui-dev/workflow/review-submitted-at-order.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/review-tools-bound-to-clone.md",
+    ".agent-fabric/memory/rust-ui-dev/workflow/shell-client-live-mouse-check.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/workflow-carried-2026-10-10.md",
     ".agent-fabric/memory/rust-ui-dev/INDEX.md",
+    ".agent-fabric/memory/fabric-coordinator/INDEX.md",
     ".agent-fabric/memory/rust-ui-dev/rationale/deck-no-typing-into-sessions.md",
     ".agent-fabric/memory/rust-ui-dev/solution/deck-blocked-alert-j23.md",
     ".agent-fabric/memory/rust-ui-dev/solution/deck-unbound-role-new-workspace.md",
@@ -81,13 +89,18 @@
     ".agent-fabric/memory/rust-ui-dev/workflow/mutation-restore-mtime.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/relayed-visual-spec-confirm.md",
     ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md",
-    ".agent-fabric/memory/fabric-coordinator/INDEX.md"
+    ".agent-fabric/memory/fabric-coordinator/solution/deck-boot-summary-not-in-deck-log.md",
+    ".agent-fabric/memory/fabric-coordinator/solution/harness-pane-enter-lost-at-start.md",
+    ".agent-fabric/memory/fabric-coordinator/workflow/arm-refused-ruleset-lacks-fabric-armed.md",
+    ".agent-fabric/memory/fabric-coordinator/workflow/deck-build-distribution-is-owners-command.md",
+    ".agent-fabric/memory/fabric-coordinator/workflow/deck-live-readback-recipe.md",
+    ".agent-fabric/memory/fabric-coordinator/workflow/review-next-needs-card-base.md"
   ],
-  "files_written": 52,
+  "files_written": 72,
   "harvest": {
     "host": "develop-qzapp",
-    "in_scope": 1,
-    "next_watermark": 1793427561864,
+    "in_scope": 6,
+    "next_watermark": 1794196994106,
     "provisional_agent": 0,
     "reflection": 0,
     "since_watermark": 0,
@@ -96,8 +109,8 @@
   "harvest_sources": {
     "rust-ui-dev-01@develop-qzapp": {
       "host": "develop-qzapp",
-      "in_scope": 30,
-      "next_watermark": 1793435108307,
+      "in_scope": 41,
+      "next_watermark": 1793786882189,
       "provisional_agent": 0,
       "reflection": 0,
       "since_watermark": 0,
@@ -119,19 +132,15 @@
     },
     "user@develop-qzapp": {
       "host": "develop-qzapp",
-      "in_scope": 1,
-      "next_watermark": 1793427561864,
+      "in_scope": 6,
+      "next_watermark": 1794196994106,
       "provisional_agent": 0,
       "reflection": 0,
       "since_watermark": 0,
       "skipped_no_roles_class": []
     }
   },
-  "held_back": [
-    "fabric-coordinator/workflow:project-index-regen-recipe",
-    "rust-ui-dev/solution:j180-account-list-cadence",
-    "rust-ui-dev/threads:j167-fleetdeck-focus-baseline"
-  ],
+  "held_back": [],
   "hygiene_problems": [],
   "memory_helpful": {},
   "memory_marks": {},
@@ -144,10 +153,15 @@
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-restart-loses-moveto-agents.md: links to corrected memories pointed at the slice they were written into",
     ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md: links to corrected memories pointed at the slice they were written into"
   ],
+  "oversized_by_origin": {},
+  "oversized_claim_details": [],
   "oversized_claims": [],
   "project": "herdr",
   "redactions": [],
-  "reharvested_replaced": [],
+  "reharvested_replaced": [
+    "rust-ui-dev/solution:zbus-fd-cloexec-window#zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock: memory 'zbus-fd-cloexec-window' carries other text than the section 'zbus 6.0 receives SCM_RIGHTS fds without MSG_CMSG_CLOEXEC; the returned OwnedFd is a CLOEXEC dup, so only a fork during the call leaks the logind lock' a correction replaced (claim key 34ab7b92835ea149, replaced b3cd48bbd47d0c5b); written",
+    "rust-ui-dev/threads:focus-on-1004-j20#j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16: memory 'focus-on-1004-j20' carries other text than the section \"j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16\" a correction replaced (claim key edc1ff41f75d235d, replaced 974f5d92e4f70f2f); written"
+  ],
   "rejected_hygiene": [],
   "replaced_sections": [
     {
@@ -159,12 +173,46 @@
       "heading": "j20 — the server answers a pane's DECSET 1004 with its viewers' real focus; merged as #38; limit accepted; deployed and read back 2026-10-16",
       "home": ".agent-fabric/memory/rust-ui-dev/threads",
       "key": "974f5d92e4f70f2f"
+    },
+    {
+      "heading": "What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts",
+      "home": ".agent-fabric/memory/rust-ui-dev/solution",
+      "key": "5637f7c93f03b76a"
     }
   ],
   "retired_in_siblings": [],
   "retitles": [],
   "review_horizons": {
-    "aged": [],
+    "aged": [
+      {
+        "class": "solution",
+        "days": 31,
+        "horizon_days": 30,
+        "key": ".agent-fabric/memory/rust-ui-dev/solution/herdr-agent-row-display.md#what a person actually reads in herdr's agent sidebar for a reported pane, and the report-metadata rules that bite",
+        "observed": "2026-10-08"
+      },
+      {
+        "class": "solution",
+        "days": 32,
+        "horizon_days": 30,
+        "key": ".agent-fabric/memory/rust-ui-dev/solution/herdr-host-toolchain.md#What building and checking the herdr fork needs on develop-qzapp beyond cargo, and which test failures are host artefacts",
+        "observed": "2026-10-07"
+      },
+      {
+        "class": "solution",
+        "days": 32,
+        "horizon_days": 30,
+        "key": ".agent-fabric/memory/rust-ui-dev/solution/herdr-restart-loses-moveto-agents.md#What a herdr server stop/restart keeps for moveto agent tabs, measured; consequences for fabric-deck and piece 2",
+        "observed": "2026-10-07"
+      },
+      {
+        "class": "solution",
+        "days": 31,
+        "horizon_days": 30,
+        "key": ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md#why herdr process-info on a moveto pane never shows claude — sudo use_pty puts the account on its own pty",
+        "observed": "2026-10-08"
+      }
+    ],
     "reads_state": "ok",
     "unread": [],
     "unread_from": "2026-12-07"
@@ -175,6 +223,36 @@
     "rust-ui-dev"
   ],
   "section_writers": {
+    ".agent-fabric/memory/fabric-coordinator/solution/deck-boot-summary-not-in-deck-log.md#fleet-deck start --auto prints its \"up: N; skipped\" boot summary to its own terminal, not deck.log; use presence instead": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
+    ".agent-fabric/memory/fabric-coordinator/solution/harness-pane-enter-lost-at-start.md#after a reboot or unit restart, an account's harness pane can sit at a bare shell instead of moveto's --wait prompt, so fleet-deck start --auto activates nothing": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-11-09"
+    },
+    ".agent-fabric/memory/fabric-coordinator/workflow/arm-refused-ruleset-lacks-fabric-armed.md#fabric-pr arm refuses on a repo whose ruleset predates ADR-019 A 2026-11-01 (no fabric/armed required check); applying it is the owner's decision (j551)": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-11-04"
+    },
+    ".agent-fabric/memory/fabric-coordinator/workflow/deck-build-distribution-is-owners-command.md#how a merged herdr fleet-deck change reaches the operator deck: ff the shared checkout and run its fleet-deck/install, the owner's command from a terminal": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
+    ".agent-fabric/memory/fabric-coordinator/workflow/deck-live-readback-recipe.md#how to read back fleet deck attach behaviour live on the operator deck (tab focus, tabs setting, ssh counts) without miscounting": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
+    ".agent-fabric/memory/fabric-coordinator/workflow/review-next-needs-card-base.md#fabric-review next refuses a round-1 request whose range base is a ref name (origin/master) until card_base is set": {
+      "agent": "user",
+      "host": "develop-qzapp",
+      "observed": "2026-10-31"
+    },
     ".agent-fabric/memory/rust-ui-dev/rationale/deck-no-typing-into-sessions.md#Why the Fleet Deck flags an agent with no inbox watch on the board instead of typing a re-arm prompt into its session": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
@@ -189,6 +267,11 @@
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-07"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/attach-pane-scroll-bar.md#Why a deck pane running `terminal attach` (moveto --attach) had no scroll bar, how j189 / PR #57 restores it, and how to check it live": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
     },
     ".agent-fabric/memory/rust-ui-dev/solution/deck-blocked-alert-j23.md#Why a deck tab stays red after a permission prompt is answered, and where the blocked alert is (not) suppressed": {
       "agent": "rust-ui-dev-02",
@@ -215,20 +298,50 @@
       "host": "develop-qzapp",
       "observed": "2026-10-30"
     },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-attach-facts.md#Measured facts about FleetDeck's terminal attach, the nested guard, headless servers and the deck's typing lock, from j167 part 2": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-03"
+    },
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-cache-budget.md#FleetDeck CI's 10 GB Actions cache — which keys churn, why debian saves were slow, how to measure a cache's worth": {
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-18"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-ci-warnings-j207.md#FleetDeck CI warnings (j207, 2026-11-04): build.rs contributor-policy cargo:warning removed in #62; keep it out on upstream sync; rerun by the head's run id": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-04"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-deck-cost-numbers.md#What the FleetDeck deck cost before and after j167's focus-only panes, and how to measure it on this host (what auto mode refuses)": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-03"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-focus-code-map.md#Where the FleetDeck deck's focus rule lives (panes, focus signals, hang-up, views) and the design j167 chose for focus-only tabs and the per-account harness server": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-03"
     },
     ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-identity.md#The herdr fork is Agent Fabric FleetDeck (agent-fabric-fleetdeck) from 0.10.0: what was renamed, what kept HERDR_* on purpose, the foreign-pane rule, and the release guards against Herdr's tags": {
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-10"
     },
+    ".agent-fabric/memory/rust-ui-dev/solution/fleetdeck-stream-close-race.md#j191 / PR #59: why a fleet-deck stub stream outlived its test; close() vs Popen in a daemon thread; tests sweep processes by STUB_DIR in /proc environ": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
     ".agent-fabric/memory/rust-ui-dev/solution/fork-renamed-fleetdeck.md#The herdr fork repository is BlueTeam-OU/agent-fabric-fleetdeck (renamed 2026-10-11); when to switch origin": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
       "observed": "2026-10-11"
+    },
+    ".agent-fabric/memory/rust-ui-dev/solution/harness-server-stale-binary.md#A fleetdeck fix that is merged and installed is still missing on the deck: the account's harness server predates it (exe '(deleted)'); check the start time before you write code": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-04"
     },
     ".agent-fabric/memory/rust-ui-dev/solution/herdr-agent-row-display.md#what a person actually reads in herdr's agent sidebar for a reported pane, and the report-metadata rules that bite": {
       "agent": "rust-ui-dev-01",
@@ -280,6 +393,11 @@
       "host": "develop-qzapp",
       "observed": "2026-10-09"
     },
+    ".agent-fabric/memory/rust-ui-dev/solution/j180-account-list-cadence.md#j180 FleetDeck: moveto --list read every 60 s (ACCOUNT_LIST_REFRESH_S), map stays 10 s; PR #52; unbound-account retries had kept the list at 10 s": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-10-30"
+    },
     ".agent-fabric/memory/rust-ui-dev/solution/moveto-sudo-own-pty.md#why herdr process-info on a moveto pane never shows claude — sudo use_pty puts the account on its own pty": {
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
@@ -325,6 +443,21 @@
       "host": "develop-qzapp",
       "observed": "2026-10-16"
     },
+    ".agent-fabric/memory/rust-ui-dev/threads/j167-fleetdeck-focus-baseline.md#j167 FleetDeck focus-only tabs and per-account harness server: closed 2026-11-01; which PRs carried it and the lessons it left": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-03"
+    },
+    ".agent-fabric/memory/rust-ui-dev/threads/j188-deck-tabs-setting.md#j188 / FleetDeck PR #56: [fleet_deck] tabs = focus|all; state of review, arming and the live read-back": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
+    ".agent-fabric/memory/rust-ui-dev/threads/j192-modifier-drag-selection.md#j192: a modifier+drag in a mouse-reporting deck pane (e.g. an attached harness) makes a deck selection; where the routing lives and the plan sent": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
     ".agent-fabric/memory/rust-ui-dev/threads/tab-rows-config-j21.md#j21 — the owner's requirements for the tab row and sub-tab row: colours, order per tab, spacing (2026-10-16)": {
       "agent": "rust-ui-dev-02",
       "host": "develop-qzapp",
@@ -339,6 +472,11 @@
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-10"
+    },
+    ".agent-fabric/memory/rust-ui-dev/workflow/agent-survived-kill-check.md#How to show from my own account that another account's agent session survived a kill of the deck's attach: presence start time plus the states row": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
     },
     ".agent-fabric/memory/rust-ui-dev/workflow/codex-review-gateway.md#How the second review engine (Codex) runs from this login, how review rounds are posted so the gate stays honest, and how a re-review brief is derived": {
       "agent": "rust-ui-dev-02",
@@ -395,10 +533,20 @@
       "host": "develop-qzapp",
       "observed": "2026-10-18"
     },
+    ".agent-fabric/memory/rust-ui-dev/workflow/review-submitted-at-order.md#fabric-review next refused a re-review range because GitHub returned future submitted_at times for earlier reviews; the workaround is a full review with pr": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
+    },
     ".agent-fabric/memory/rust-ui-dev/workflow/review-tools-bound-to-clone.md#fabric-review MCP tools only serve the session's own clone: review another repository's PR from a session launched in that repository": {
       "agent": "rust-ui-dev-01",
       "host": "develop-qzapp",
       "observed": "2026-10-27"
+    },
+    ".agent-fabric/memory/rust-ui-dev/workflow/shell-client-live-mouse-check.md#How to prove a FleetDeck shell-client mouse/selection change through a real client in a pty, and the DISPLAY=:0 trap that writes the operator's clipboard": {
+      "agent": "rust-ui-dev-01",
+      "host": "develop-qzapp",
+      "observed": "2026-11-01"
     },
     ".agent-fabric/memory/rust-ui-dev/workflow/upstream-remote-gh-default.md#With an `upstream` remote in the FleetDeck clone, gh targets herdrdev/herdr by default — pin gh to the fork before any gh write": {
       "agent": "rust-ui-dev-02",
@@ -435,33 +583,31 @@
   "shared_topics": [
     "intersection:fleet-deck-attention-seam"
   ],
-  "stamp": "2026-10-31",
-  "superseded_harvests": [
-    "rust-ui-dev/solution:herdr-pane-focus-reporting#What a herdr pane learns about its own focus (DECSET 1004): changes only, never the state at enable; and why a focused plugin tab did not move clients: memory 'herdr-pane-focus-reporting' is text an applied correction or supersede replaced (last-drain-report.json replaced_sections or applied_corrections); not written — update or delete 'herdr-pane-focus-reporting'"
-  ],
+  "stamp": "2026-11-08",
+  "superseded_harvests": [],
   "telemetry": {
     "fabric-coordinator": {
-      "admitted": 1,
-      "candidates": 1,
+      "admitted": 6,
+      "candidates": 6,
       "merged_into_existing": 0,
-      "observations_in": 1,
+      "observations_in": 6,
       "rejected": 0
     },
     "rust-ui-dev": {
-      "admitted": 52,
-      "candidates": 56,
+      "admitted": 63,
+      "candidates": 67,
       "merged_into_existing": 0,
-      "observations_in": 56,
+      "observations_in": 67,
       "rejected": 4
     }
   },
   "telemetry_sources": {
     "rust-ui-dev-01@develop-qzapp": {
       "rust-ui-dev": {
-        "admitted": 26,
-        "candidates": 30,
+        "admitted": 37,
+        "candidates": 41,
         "merged_into_existing": 0,
-        "observations_in": 30,
+        "observations_in": 41,
         "rejected": 4
       }
     },
@@ -477,18 +623,27 @@
     "unattributed": {},
     "user@develop-qzapp": {
       "fabric-coordinator": {
-        "admitted": 1,
-        "candidates": 1,
+        "admitted": 6,
+        "candidates": 6,
         "merged_into_existing": 0,
-        "observations_in": 1,
+        "observations_in": 6,
         "rejected": 0
       }
     }
   },
   "title_collisions": [],
+  "unresolved_links": [
+    {
+      "heading": "kill -STOP returns before a multi-threaded process is stopped; a test that needs it stopped must wait for every /proc/<pid>/task/*/stat to read T",
+      "in": "link",
+      "slice": "memory/domains/rust-ui-dev/domain/sigstop-is-asynchronous.md",
+      "target": "zbus-fd-cloexec-window",
+      "why": "other corpus"
+    }
+  ],
   "watermarks": {
-    "rust-ui-dev-01@develop-qzapp": 1793398189999,
+    "rust-ui-dev-01@develop-qzapp": 1793786882189,
     "rust-ui-dev-02@develop-qzapp": 1792322443004,
-    "user@develop-qzapp": 1793427560999
+    "user@develop-qzapp": 1794196994106
   }
 }

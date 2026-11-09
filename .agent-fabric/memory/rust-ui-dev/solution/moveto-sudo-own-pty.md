@@ -5,7 +5,7 @@ topic: "moveto-sudo-own-pty"
 description: "why herdr process-info on a moveto pane never shows claude — sudo use_pty puts the account on its own pty"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-10-31"
+distilled_at: "2026-11-08"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -23,6 +23,6 @@ To tell whether the harness runs in a pane, walk /proc/<pid>/stat ppid links dow
 
 Related: [[herdr-restart-loses-moveto-agents]], [[rationale-carried-2026-10-10]].
 
-*References: herdr-restart-loses-moveto-agents, herdr-socket-access-design*
+*References: herdr-restart-loses-moveto-agents, rationale-carried-2026-10-10*
 
 *Observed 2026-10-08 (rust-ui-dev)*
