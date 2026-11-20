@@ -5,7 +5,7 @@ topic: "plugin-pane-label-is-title"
 description: "FleetDeck labels a plugin pane with its manifest title and lists an overlay in its tab — a title equal to a deck role label is read as the deck's pane"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-11-08"
+distilled_at: "2026-11-17"
 origin:
   - agent: "rust-ui-dev-02"
     host: "develop-qzapp"
@@ -47,8 +47,6 @@ toggle and other plugin actions one press at a time.
 - `pane list` `focused` is true only for the active tab's focused pane, at most one pane in all.
 - A pane's shell starts as `/bin/bash` with no arguments. A "bare shell" check must allowlist
   options: `-c`, fish `--command=` and scripts read what is typed.
-
-*References: panes*
 
 *Anchors: `fleet-deck/herdr-plugin.toml::this agent`, `fleet-deck/fabric_view.py::OVERLAY_TITLE`, `src/app/actions.rs::apply_pane_zoom`*
 

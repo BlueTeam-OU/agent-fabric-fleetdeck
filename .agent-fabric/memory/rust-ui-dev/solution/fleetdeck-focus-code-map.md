@@ -5,7 +5,7 @@ topic: "fleetdeck-focus-code-map"
 description: "Where the FleetDeck deck's focus rule lives (panes, focus signals, hang-up, views) and the design j167 chose for focus-only tabs and the per-account harness server"
 tier: 2
 knowledge_scope: full
-distilled_at: "2026-11-08"
+distilled_at: "2026-11-17"
 origin:
   - agent: "rust-ui-dev-01"
     host: "develop-qzapp"
@@ -27,6 +27,6 @@ The deck code is `fleet-deck/` in the FleetDeck fork (BlueTeam-OU/agent-fabric-f
 
 Design (j167, approved by fabric-coordinator, REPLY 01a17ba4): each account runs a headless FleetDeck server (`--session harness`) as a user unit whose pane runs `enter --wait`. enter-ssh's word `attach` execs `terminal attach <pane>`, and moveto `--attach` reaches it. The deck's harness pane only attaches and is hung up off focus, which ends no agent. Rejected: saved machines and `--remote` (a whole-UI switch), tmux (a second multiplexer and prefix), dtach and abduco (not installed). The unit, enter-ssh, moveto and fabric-ctl are agent-fabric's (#435, #441); the deck side is the fork's (#49, #50, #54).
 
-*References: events, j188-deck-tabs-setting*
+*References: j188-deck-tabs-setting*
 
 *Observed 2026-11-03 (rust-ui-dev)*
